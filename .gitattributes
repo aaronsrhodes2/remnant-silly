@@ -1,0 +1,18 @@
+# Normalize line endings across platforms.
+# Shell scripts and Dockerfiles MUST be LF — CRLF breaks them inside Linux
+# containers. Everything else gets auto-detection.
+
+* text=auto
+
+# Always LF, regardless of host OS
+*.sh      text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+entrypoint.sh text eol=lf
+
+# Binary files — never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

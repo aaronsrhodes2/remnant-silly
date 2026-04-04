@@ -31,15 +31,17 @@ services:
       timeout: 5s
       retries: 60        # allow ~10 minutes for first-run model download
       start_period: 30s
-    # GPU is OPTIONAL for Ollama — Mistral runs fine on CPU (slow-ish).
-    # Uncomment the deploy block below to enable GPU acceleration.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # GPU acceleration for Ollama. Safe to enable on cards with >= 12 GB VRAM
+    # since SD fp16 (~4 GB) + Mistral 7B Q4 (~5 GB) coexist comfortably.
+    # On 8 GB cards, comment this block out to keep Mistral on CPU and avoid
+    # VRAM eviction between image/text turns.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # ----------------------------------------------------------------------
   # Flask + Stable Diffusion — image generation backend. GPU REQUIRED
