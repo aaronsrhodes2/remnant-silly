@@ -798,3 +798,91 @@
     text-overflow: ellipsis;
     text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
 }
+
+/* ============================================
+   Character detail modal — opened by clicking a roster card.
+   Shows a large avatar + name + description + known facts.
+   ============================================ */
+.img-gen-character-detail {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+.img-gen-character-detail-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+}
+.img-gen-character-detail-card {
+    position: relative;
+    width: min(460px, 92vw);
+    max-height: 88vh;
+    overflow-y: auto;
+    background: linear-gradient(180deg, rgba(20, 24, 32, 0.98), rgba(10, 12, 16, 0.98));
+    border: 2px solid rgba(255, 255, 255, 0.25);
+    border-radius: 14px;
+    padding: 24px 22px 20px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 60px rgba(0, 255, 255, 0.12);
+    color: #e8e8e8;
+    text-align: center;
+}
+.img-gen-character-detail-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: transparent;
+    border: none;
+    color: #bbb;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+.img-gen-character-detail-close:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+}
+.img-gen-character-detail-avatar {
+    width: 220px;
+    height: 220px;
+    margin: 4px auto 14px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 3px solid currentColor;
+    background: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.08);
+}
+.img-gen-character-detail-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.img-gen-character-detail-name {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    margin-bottom: 12px;
+    text-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+}
+.img-gen-character-detail-body {
+    font-size: 13px;
+    line-height: 1.55;
+}
+.img-gen-character-detail-desc {
+    color: #d8d8d8;
+    margin-bottom: 12px;
+    font-style: italic;
+    padding: 0 6px;
+}
+.img-gen-character-detail-meta {
+    font-size: 11px;
+    color: #9a9a9a;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 10px;
+    margin-top: 10px;
+}
