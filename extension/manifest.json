@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Aaron",
-    "version": "2.2.2",
+    "version": "2.3.0",
     "description": "Automatically generates and displays images from AI narration, with synesthetic sensory coloring, auto-NPC cards with locked signature colors, a left-side NPC roster + active-speaker spotlight, player avatar auto-update, post-reset scene safety net with Flask readiness wait, and a codex for items/lore. Shipped as part of the Dockerized The Remnant Fortress stack.",
     "homepage": "https://github.com/SillyTavern/SillyTavern",
     "minimum_client_version": "1.10.0",

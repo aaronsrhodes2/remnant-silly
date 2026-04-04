@@ -217,6 +217,30 @@ const SENSE_MARKERS = {
     TASTE:             { cssClass: 'sense-taste',             triggersImage: false, triggersReset: false },
     TOUCH:             { cssClass: 'sense-touch',             triggersImage: false, triggersReset: false },
     ENVIRONMENT:       { cssClass: 'sense-environment',       triggersImage: false, triggersReset: false },
+    // v2.3.0: the six sensory marker types get collapsed into an icon bar
+    // above each message instead of being rendered inline. GENERATE_IMAGE
+    // is also stripped from prose since its payload surfaces as an actual
+    // image in the gallery — no reason to also print its description.
+};
+
+// Marker types that are lifted out of the prose flow and into the sense
+// bar above each message. Hover an icon → description in the bar's text
+// area. Click to sticky-select. GENERATE_IMAGE is stripped but NOT shown
+// in the bar (it's already the gallery image).
+const SENSE_BAR_TYPES = new Set(['SIGHT', 'SMELL', 'SOUND', 'TASTE', 'TOUCH', 'ENVIRONMENT']);
+const SENSE_STRIP_TYPES = new Set([...SENSE_BAR_TYPES, 'GENERATE_IMAGE']);
+const SENSE_ICONS = {
+    SIGHT:       '\u{1F441}',       // eye
+    SMELL:       '\u{1F443}',       // nose
+    SOUND:       '\u{1F442}',       // ear
+    TASTE:       '\u{1F445}',       // tongue
+    TOUCH:       '\u270B',           // raised hand
+    ENVIRONMENT: '\u{1F32C}\u{FE0F}', // wind face
+};
+const SENSE_LABELS = {
+    SIGHT: 'sight', SMELL: 'smell', SOUND: 'sound',
+    TASTE: 'taste', TOUCH: 'touch', ENVIRONMENT: 'atmosphere',
+};
     INTRODUCE:         { cssClass: 'sense-introduce',         triggersImage: false, triggersReset: false },
     RESET_STORY:       { cssClass: 'sense-reset',             triggersImage: false, triggersReset: true  },
     ITEM:              { cssClass: 'sense-item',              triggersImage: false, triggersReset: false },
@@ -353,7 +377,12 @@ function transformMessageText(messageText) {
         if (idx === -1) continue;
 
         let replacement;
-        if (m.type === 'RESET_STORY') {
+        // Icon-bar senses and GENERATE_IMAGE are pulled out of prose.
+        // The sense bar (rendered by updateMessageDisplay) holds the
+        // description; the gallery holds the image.
+        if (SENSE_STRIP_TYPES.has(m.type)) {
+            replacement = '';
+        } else if (m.type === 'RESET_STORY') {
             const flavor = escapeHtml(m.description || 'temporal displacement');
             replacement = `<div class="sense-reset">⟲ the timeline frays — ${flavor}</div>`;
         } else if (m.type === 'ITEM' || m.type === 'LORE') {
@@ -439,6 +468,134 @@ function transformMessageText(messageText) {
     return result;
 }
 
+// Build (or refresh) the sense bar above a message. Each icon is a
+// clickable chip; hover shows the sense description in the bar's text
+// area, click sticks a selection until another is clicked. Newly-added
+// icons flash once so you can spot fresh senses without expanding them.
+function renderSenseBar($mes, markers) {
+    // Group by type — we show ONE icon per sense type per message, even
+    // if the narrator emitted several SMELL markers (the sense bar text
+    // area cycles through them via a "…" suffix if multiple exist).
+    const byType = {};
+    for (const m of markers) {
+        if (!SENSE_BAR_TYPES.has(m.type)) continue;
+        if (!m.description) continue;
+        (byType[m.type] ||= []).push(m);
+    }
+
+    const presentTypes = Object.keys(byType);
+    let $bar = $mes.find('.img-gen-sense-bar').first();
+    if (presentTypes.length === 0) {
+        // No senses this message — remove any stale bar.
+        $bar.remove();
+        return;
+    }
+
+    // Create the bar if absent; otherwise remember which icons were
+    // already there so we can flash only the new ones.
+    let prevTypes = new Set();
+    if ($bar.length === 0) {
+        $bar = $('<div class="img-gen-sense-bar">' +
+            '<div class="img-gen-sense-icons"></div>' +
+            '<div class="img-gen-sense-text" data-empty="1">hover or click a sense…</div>' +
+        '</div>');
+        const $mesText = $mes.find('.mes_text').first();
+        if ($mesText.length) {
+            $mesText.before($bar);
+        } else {
+            $mes.append($bar);
+        }
+    } else {
+        $bar.find('.img-gen-sense-icon').each(function () {
+            prevTypes.add($(this).attr('data-type'));
+        });
+    }
+
+    const $icons = $bar.find('.img-gen-sense-icons').empty();
+    for (const type of ['SIGHT', 'SMELL', 'SOUND', 'TASTE', 'TOUCH', 'ENVIRONMENT']) {
+        const entries = byType[type];
+        if (!entries) continue;
+        // Concatenate multiple entries with " · " so one icon can
+        // carry several markers from the same turn.
+        const descParts = entries.map(e => {
+            const attr = e.attribution ? `${e.attribution}: ` : '';
+            return attr + e.description;
+        });
+        const fullDesc = descParts.join(' · ');
+        const label = SENSE_LABELS[type] || type.toLowerCase();
+        const icon = SENSE_ICONS[type] || '•';
+        const wasNew = !prevTypes.has(type);
+        const $chip = $(`<button type="button" class="img-gen-sense-icon sense-${type.toLowerCase()}${wasNew ? ' sense-flash' : ''}" data-type="${type}" data-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${icon}</button>`);
+        $chip.attr('data-desc', fullDesc);
+        $icons.append($chip);
+        if (wasNew) {
+            // Remove the flash class after the animation so repeated
+            // re-renders don't accumulate state.
+            setTimeout(() => $chip.removeClass('sense-flash'), 1400);
+        }
+    }
+}
+
+// Attach hover + click handlers for sense icons. Delegated at #chat so a
+// single handler covers every message. Click = sticky selection (stays
+// until another icon is clicked OR the user clicks the text area to
+// clear). Hover = temporary preview that reverts to the sticky selection
+// on mouseout.
+function bindSenseBarHandlers() {
+    const $chat = $('#chat');
+    $chat.off('.imgGenSenseBar');
+
+    function applyActive($bar, $icon, sticky) {
+        const $text = $bar.find('.img-gen-sense-text');
+        const desc = $icon.attr('data-desc') || '';
+        const label = $icon.attr('data-label') || '';
+        $text.attr('data-empty', null);
+        $text.html(`<span class="img-gen-sense-text-label">${escapeHtml(label)}</span> ${escapeHtml(desc)}`);
+        if (sticky) {
+            $bar.find('.img-gen-sense-icon').removeClass('sense-sticky');
+            $icon.addClass('sense-sticky');
+        }
+    }
+
+    function revertToSticky($bar) {
+        const $sticky = $bar.find('.img-gen-sense-icon.sense-sticky');
+        if ($sticky.length) {
+            applyActive($bar, $sticky, false);
+        } else {
+            const $text = $bar.find('.img-gen-sense-text');
+            $text.attr('data-empty', '1').text('hover or click a sense…');
+        }
+    }
+
+    $chat.on('mouseenter.imgGenSenseBar', '.img-gen-sense-icon', function () {
+        const $icon = $(this);
+        const $bar = $icon.closest('.img-gen-sense-bar');
+        applyActive($bar, $icon, false);
+    });
+    $chat.on('mouseleave.imgGenSenseBar', '.img-gen-sense-icon', function () {
+        const $bar = $(this).closest('.img-gen-sense-bar');
+        revertToSticky($bar);
+    });
+    $chat.on('click.imgGenSenseBar', '.img-gen-sense-icon', function (e) {
+        e.preventDefault();
+        const $icon = $(this);
+        const $bar = $icon.closest('.img-gen-sense-bar');
+        // Toggle off if the sticky is re-clicked.
+        if ($icon.hasClass('sense-sticky')) {
+            $icon.removeClass('sense-sticky');
+            revertToSticky($bar);
+        } else {
+            applyActive($bar, $icon, true);
+        }
+    });
+    $chat.on('click.imgGenSenseBar', '.img-gen-sense-text', function (e) {
+        e.preventDefault();
+        const $bar = $(this).closest('.img-gen-sense-bar');
+        $bar.find('.img-gen-sense-icon').removeClass('sense-sticky');
+        revertToSticky($bar);
+    });
+}
+
 // Replace the rendered text of a message with the marker-transformed HTML.
 // SillyTavern tags each message DIV with `mesid="<N>"`, not `data-message-id`.
 function updateMessageDisplay(messageId) {
@@ -447,10 +604,20 @@ function updateMessageDisplay(messageId) {
     const message = chat[messageId];
     if (!message || !message.mes) return;
 
+    const markers = detectSenseMarkers(message.mes);
     const transformedText = transformMessageText(message.mes);
+
+    const $mes = $(`#chat .mes[mesid="${messageId}"]`);
+    if ($mes.length === 0) return;
+
+    // Inject / refresh the sense bar above the message regardless of
+    // whether any inline markers remain — the sense bar is the new home
+    // for the six sensory channels.
+    try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
+
     if (transformedText === message.mes) return;
 
-    const messageElement = $(`#chat .mes[mesid="${messageId}"]`).find('.mes_text');
+    const messageElement = $mes.find('.mes_text');
     if (messageElement.length === 0) {
         console.warn(`[Image Generator] Could not find .mes_text for mesid=${messageId}`);
         return;
@@ -1703,6 +1870,7 @@ function initializeExtension() {
     createSidePanel();
     createNpcRosterPanel();
     createSpeakerSpotlight();
+    bindSenseBarHandlers();
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
