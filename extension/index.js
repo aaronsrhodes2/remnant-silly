@@ -30,7 +30,7 @@ import {
     doNewChat,
 } from '../../../script.js';
 
-import { user_avatar } from '../../../personas.js';
+import { user_avatar } from '../../personas.js';
 
 // Use SillyTavern's built-in CORS proxy to reach the local Flask/SD backend
 // without cross-origin blocks. Requires enableCorsProxy: true in config.yaml.
