@@ -118,9 +118,37 @@ const REMNANT_COLOR = '#ab47bc';  // violet — deliberate thematic match
 // (canonically the fortress historian), not a separately-introduced NPC,
 // so his visual is the Narrator's card image. Locked so later scene-time
 // logic never tries to regenerate him.
+// Fetch a same-origin URL (e.g. /thumbnail?...) and return a data: URL
+// the Flask backend can decode locally. We do this in the browser where
+// ST session cookies / auth headers work; the SD backend only sees an
+// inline base64 blob and never has to reach back through ST.
+async function urlToDataUrl(url) {
+    if (!url) return null;
+    if (url.startsWith('data:')) return url;
+    try {
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) return null;
+        const blob = await resp.blob();
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    } catch (err) {
+        console.warn('[Image Generator] urlToDataUrl failed for', url, err);
+        return null;
+    }
+}
+
 function seedRemnantNpc() {
     const settings = initSettings();
-    if (settings.npcs[REMNANT_NAME] && settings.npcs[REMNANT_NAME].locked) return;
+    if (settings.npcs[REMNANT_NAME] && settings.npcs[REMNANT_NAME].locked
+        && settings.npcs[REMNANT_NAME].reference_image_url
+        && String(settings.npcs[REMNANT_NAME].reference_image_url).startsWith('data:')) {
+        // Already seeded with an inlined data URL — nothing to do.
+        return;
+    }
 
     let portraitUrl = null;
     let phrase = 'towering obsidian silhouette shot through with veins of amber circuitry, faceless head crowned with a ring of void-black light, ancient and patient';
@@ -153,6 +181,23 @@ function seedRemnantNpc() {
         first_seen: (settings.npcs[REMNANT_NAME] && settings.npcs[REMNANT_NAME].first_seen) || new Date().toISOString(),
     };
     saveSettingsDebounced();
+
+    // Asynchronously upgrade the reference_image_url to an inline data
+    // URL so the SD backend's IP-Adapter can actually fetch it. Relative
+    // paths like /thumbnail?... fail when Flask tries to requests.get()
+    // them, which is why scene images of The Remnant diverge from his
+    // locked avatar. Fire-and-forget.
+    if (portraitUrl && !portraitUrl.startsWith('data:')) {
+        urlToDataUrl(portraitUrl).then((dataUrl) => {
+            if (!dataUrl) return;
+            const s = initSettings();
+            if (!s.npcs[REMNANT_NAME]) return;
+            s.npcs[REMNANT_NAME].reference_image_url = dataUrl;
+            s.npcs[REMNANT_NAME].portrait_image = dataUrl;
+            saveSettingsDebounced();
+            console.log('[Image Generator] Remnant reference upgraded to inline data URL');
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -437,11 +482,18 @@ function injectNpcContextIntoPrompt(description) {
 // Image generation
 // ---------------------------------------------------------------------------
 
-async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 180000, reference_images = null, reference_scale = null } = {}) {
+// Default negative prompt. SD1.5 cannot render readable English text,
+// and when it tries it produces garbled pseudo-glyphs baked into the
+// image. We broadly suppress text/letters/writing unless a caller
+// overrides. (Environmental signs are better handled by leaving them
+// unrendered and letting the narrator's prose describe them.)
+const DEFAULT_NEGATIVE_PROMPT = 'blurry, low quality, distorted, deformed, text, letters, words, writing, typography, watermark, signature, caption, subtitle, logo, scribbles, handwriting, gibberish, captions, labels, UI, frame';
+
+async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 180000, reference_images = null, reference_scale = null, negative_prompt = DEFAULT_NEGATIVE_PROMPT } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        const body = { prompt, steps, guidance_scale: guidance };
+        const body = { prompt, negative_prompt, steps, guidance_scale: guidance };
         if (Array.isArray(reference_images) && reference_images.length > 0) {
             body.reference_images = reference_images;
             if (typeof reference_scale === 'number') body.reference_scale = reference_scale;
@@ -783,7 +835,19 @@ function normalizePhrase(s) {
 // as the ST user avatar, and store as a reference for future scenes.
 async function handlePlayerUpdate(messageText) {
     const markers = detectSenseMarkers(messageText).filter(m => m.type === 'UPDATE_PLAYER');
-    if (markers.length === 0) return;
+    if (markers.length === 0) {
+        // Visible in the console so it's obvious when the narrator
+        // failed to emit the marker vs. when the extension silently
+        // dropped it. Helps diagnose "player avatar didn't update"
+        // reports.
+        if (/UPDATE_PLAYER/i.test(messageText)) {
+            console.warn('[Image Generator] Message contains "UPDATE_PLAYER" text but detectSenseMarkers matched zero markers — check bracket syntax in the narrator output.');
+        } else {
+            console.log('[Image Generator] handlePlayerUpdate: no [UPDATE_PLAYER] marker in this turn.');
+        }
+        return;
+    }
+    console.log('[Image Generator] handlePlayerUpdate: marker found →', markers[markers.length - 1].description);
 
     const settings = initSettings();
     // Most recent marker wins if there are multiple in one message.
