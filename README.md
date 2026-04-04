@@ -46,12 +46,18 @@ toh-silly/
 │   └── image_gallery.py          Persistent image storage/lookup
 ├── game-content/
 │   └── game_master_prompt.txt    Game Master instructions for Mistral
-└── extension/                SillyTavern extension (v1.2.0)
-    ├── manifest.json
-    ├── index.js
-    ├── style.css
-    ├── locales/
-    └── templates/
+├── extension/                SillyTavern extension (v1.3.0)
+│   ├── manifest.json
+│   ├── index.js
+│   ├── style.css
+│   ├── locales/
+│   └── templates/
+├── docker-compose.yml        one-command full stack
+├── .env.example
+└── docker/
+    ├── ollama/               Ollama + auto-pull entrypoint
+    ├── flask-sd/             Flask + Stable Diffusion (CUDA)
+    └── sillytavern/          SillyTavern + pre-seeded config + character card
 ```
 
 ## Sensory marker system
@@ -71,7 +77,65 @@ Each marker is rendered inline in a distinct color:
 Quotes are preferred but optional — the regex accepts both quoted and
 unquoted descriptions.
 
-## Installation
+## Quickstart — Docker (recommended)
+
+The entire stack runs in one command. No credentials, no API keys, no
+accounts — everything is local inference against Ollama and Stable Diffusion.
+
+### Prerequisites
+- Docker 24+ and Docker Compose v2
+- **NVIDIA GPU** with up-to-date drivers
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed on the host
+- ~15 GB free disk (models download on first run into named volumes)
+
+### Run it
+
+```bash
+git clone https://github.com/aaronsrhodes2/remnant-silly.git
+cd remnant-silly
+docker compose up
+```
+
+First boot takes 5–15 minutes while models download:
+- Ollama pulls `mistral` (~4 GB)
+- Stable Diffusion v1.5 downloads from HuggingFace on first image request (~4 GB)
+
+Subsequent boots are fast — model weights persist in docker volumes.
+
+When the logs show `remnant-sillytavern  | SillyTavern is listening...`, open:
+
+**http://localhost:8001**
+
+The Remnant character is pre-seeded. Point Text Completions at
+`http://ollama:11434` (pre-configured in the included config) and start talking.
+
+### Configuration
+
+All optional. Copy `.env.example` to `.env` to override:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HOST_PORT` | `8001` | Port SillyTavern is exposed on |
+| `OLLAMA_MODEL` | `mistral` | Which model Ollama auto-pulls |
+
+### Architecture inside the container network
+
+```
+Host :8001 ─────▶ sillytavern (SillyTavern UI + /proxy/ middleware)
+                       │
+                       ├─▶ ollama:11434      (Mistral text generation)
+                       └─▶ flask-sd:5000     (Stable Diffusion, GPU)
+```
+
+Only port 8001 is published to the host. `ollama` and `flask-sd` are
+invisible to your machine and to the outside world — they exist only on
+the internal compose network. The browser only ever talks to SillyTavern,
+which server-side proxies image requests to Flask via the built-in
+`/proxy/` middleware. Same-origin. No CORS. No secrets anywhere.
+
+---
+
+## Manual install (for development)
 
 ### Prerequisites
 
@@ -142,6 +206,24 @@ In SillyTavern, configure Text Completions → Ollama → `http://localhost:1143
    right-side gallery panel.
 
 ## Version history
+
+### 1.3.0 — Dockerized distribution
+- Full-stack `docker compose up` experience: three services (Ollama,
+  Flask+SD, SillyTavern) on an internal network, only port 8001 exposed
+- Zero-input install: no API keys, no accounts, no config files to edit
+- Ollama auto-pulls the configured model on first boot via an init
+  entrypoint; healthchecks gate SillyTavern startup until dependencies
+  are actually ready
+- Flask backend reads `FLASK_HOST`, `FLASK_PORT`, and `IMAGE_GALLERY_DIR`
+  from env vars so the same code runs native and in-container
+- `image_gallery.py` honors `IMAGE_GALLERY_DIR`, falling back to the
+  native-dev location for backward compatibility
+- SillyTavern image pre-seeds `config.yaml` (CORS proxy on, listen:true)
+  and drops in The Remnant character card so the user has zero setup
+- Extension `IMG_GEN_API` URL is patched at build time to use the docker
+  service name (`flask-sd`) instead of `localhost`
+- Model weights persist in named volumes (`ollama-data`, `hf-cache`)
+  so only the first boot pays the download cost
 
 ### 1.2.0 — Synesthetic narration
 - Multi-sensory marker system: six marker types render as colored spans

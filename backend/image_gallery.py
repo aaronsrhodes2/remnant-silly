@@ -11,7 +11,16 @@ from pathlib import Path
 import hashlib
 
 class ImageGallery:
-    def __init__(self, gallery_dir="~/SillyTavern/data/default-user/images"):
+    def __init__(self, gallery_dir=None):
+        # Resolution order:
+        #   1. explicit constructor arg
+        #   2. IMAGE_GALLERY_DIR env var (used by the Docker image)
+        #   3. native-dev default under ~/SillyTavern
+        if gallery_dir is None:
+            gallery_dir = os.environ.get(
+                'IMAGE_GALLERY_DIR',
+                '~/SillyTavern/data/default-user/images'
+            )
         self.gallery_dir = Path(gallery_dir).expanduser()
         self.gallery_dir.mkdir(parents=True, exist_ok=True)
         self.index_file = self.gallery_dir / "index.json"

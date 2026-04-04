@@ -1,0 +1,99 @@
+# The Remnant Fortress — full stack, one command
+#
+# Usage:
+#   docker compose up
+#   open http://localhost:${HOST_PORT:-8001}
+#
+# Three services on a private network. Only SillyTavern is exposed to the
+# host. Browser talks to SillyTavern; SillyTavern server-side talks to
+# ollama and flask-sd via docker DNS names. No CORS, no credentials,
+# no cross-origin anything.
+
+services:
+
+  # ----------------------------------------------------------------------
+  # Ollama — local LLM runtime. Pulls `mistral` on first boot.
+  # ----------------------------------------------------------------------
+  ollama:
+    build: ./docker/ollama
+    container_name: remnant-ollama
+    restart: unless-stopped
+    expose:
+      - "11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q ${OLLAMA_MODEL:-mistral} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60        # allow ~10 minutes for first-run model download
+      start_period: 30s
+    # GPU is OPTIONAL for Ollama — Mistral runs fine on CPU (slow-ish).
+    # Uncomment the deploy block below to enable GPU acceleration.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ----------------------------------------------------------------------
+  # Flask + Stable Diffusion — image generation backend. GPU REQUIRED
+  # (or wildly slow on CPU). Downloads SD v1.5 weights on first request.
+  # ----------------------------------------------------------------------
+  flask-sd:
+    build: ./docker/flask-sd
+    container_name: remnant-flask-sd
+    restart: unless-stopped
+    expose:
+      - "5000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - flask-gallery:/data/gallery
+    environment:
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=5000
+      - IMAGE_GALLERY_DIR=/data/gallery
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; urllib.request.urlopen('http://localhost:5000/api/health'); sys.exit(0)\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ----------------------------------------------------------------------
+  # SillyTavern — web UI. THE ONLY SERVICE EXPOSED TO THE HOST.
+  # Pre-configured: extension installed, CORS proxy on, listen all.
+  # ----------------------------------------------------------------------
+  sillytavern:
+    build: ./docker/sillytavern
+    container_name: remnant-sillytavern
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8001}:8000"
+    volumes:
+      - sillytavern-data:/home/node/app/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+      flask-sd:
+        condition: service_healthy
+
+volumes:
+  ollama-data:
+  hf-cache:
+  flask-gallery:
+  sillytavern-data:

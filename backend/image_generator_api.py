@@ -20,6 +20,9 @@ import torch
 import io
 import base64
 import time
+# Look for image_gallery.py next to this script (Docker layout) and also
+# in the user's home dir (native dev layout) for backward compatibility.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.expanduser('~'))
 from image_gallery import ImageGallery
 
@@ -223,7 +226,9 @@ def index():
     '''.format(device)
 
 if __name__ == '__main__':
+    host = os.environ.get('FLASK_HOST', '127.0.0.1')
+    port = int(os.environ.get('FLASK_PORT', '5000'))
     print(f"Starting Image Generator API")
     print(f"Device: {device}")
-    print(f"Running on http://localhost:5000")
-    app.run(host='127.0.0.1', port=5000, debug=False)
+    print(f"Running on http://{host}:{port}")
+    app.run(host=host, port=port, debug=False)

@@ -1,0 +1,25 @@
+# SillyTavern pre-seeded config for The Remnant Fortress stack.
+# Keep this minimal — upstream defaults apply for anything not set here.
+
+# Bind to all interfaces inside the container; docker compose publishes
+# the port to the host.
+listen: true
+protocol:
+  ipv4: true
+  ipv6: false
+port: 8000
+
+# Disable the whitelist so requests from the host network can reach us
+# through the compose port mapping. (The stack is local-only anyway.)
+whitelistMode: false
+
+# CRITICAL: enables the built-in /proxy/:url middleware that the
+# image-generator extension uses to reach flask-sd without browser CORS.
+enableCorsProxy: true
+
+# No login — this is a local single-user stack.
+basicAuthMode: false
+enableUserAccounts: false
+
+# No auto-updater inside a container.
+autorun: false

@@ -28,6 +28,7 @@ Thumbs.db
 # Secrets (defense in depth — none exist today, but guard future)
 .env
 .env.*
+!.env.example
 *.key
 *.pem
 secrets.json
