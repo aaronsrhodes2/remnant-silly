@@ -30,6 +30,8 @@ import {
     doNewChat,
 } from '../../../script.js';
 
+import { user_avatar } from '../../../personas.js';
+
 // Use SillyTavern's built-in CORS proxy to reach the local Flask/SD backend
 // without cross-origin blocks. Requires enableCorsProxy: true in config.yaml.
 const IMG_GEN_API = '/proxy/http://localhost:5000';
@@ -869,16 +871,27 @@ async function handlePlayerUpdate(messageText) {
             return;
         }
 
-        // Upload to ST as a user persona avatar. Replicates personas.js
-        // uploadUserAvatar() — fetch the data URL, wrap as FormData, POST.
+        // Upload to ST as a user persona avatar. The goal is to REPLACE
+        // the currently-active persona's avatar file so the message
+        // header avatar (the ? next to "MSgt Aaron Rhodes") flips to
+        // Aaron's portrait immediately. Uploading to a new filename
+        // does NOT achieve this — ST only shows `user_avatar`, the
+        // active persona's key. So we overwrite that exact file and
+        // then cache-bust + DOM-refresh.
         let avatarPath = null;
         try {
+            // Fall back to 'user-default.png' if no persona is active yet
+            // (fresh install edge case). In practice user_avatar is set
+            // by the time any chat is open.
+            const targetName = (typeof user_avatar === 'string' && user_avatar) ? user_avatar : 'user-default.png';
+            console.log('[Image Generator] Overwriting active persona avatar:', targetName);
+
             const blobResp = await fetch(portrait.image);
             const blob = await blobResp.blob();
             const file = new File([blob], 'avatar.png', { type: 'image/png' });
             const formData = new FormData();
             formData.append('avatar', file);
-            formData.append('overwrite_name', 'aaron.png');
+            formData.append('overwrite_name', targetName);
             const uploadResp = await fetch('/api/avatars/upload', {
                 method: 'POST',
                 headers: getRequestHeaders({ omitContentType: true }),
@@ -887,7 +900,42 @@ async function handlePlayerUpdate(messageText) {
             });
             if (uploadResp.ok) {
                 const data = await uploadResp.json().catch(() => ({}));
-                avatarPath = (data && data.path) || 'aaron.png';
+                avatarPath = (data && data.path) || targetName;
+
+                // Cache-bust: force the browser to re-fetch the file ST
+                // caches aggressively, and without this the <img> element
+                // keeps showing the old image even after upload.
+                try {
+                    await fetch(`/User Avatars/${encodeURIComponent(avatarPath)}?t=${Date.now()}`, { cache: 'reload' });
+                    await fetch(getThumbnailUrl('persona', avatarPath) + `&t=${Date.now()}`, { cache: 'reload' });
+                } catch (_) { /* ignore */ }
+
+                // Force-refresh every in-chat user avatar <img> by bumping
+                // the src with a cache-busting query string. Replicates
+                // personas.reloadUserAvatar() (which is not exported).
+                try {
+                    const bust = `?t=${Date.now()}`;
+                    const personaUrl = getThumbnailUrl('persona', avatarPath) + `&t=${Date.now()}`;
+                    $('.mes').each(function () {
+                        const img = $(this).find('.avatar img');
+                        if ($(this).attr('is_user') === 'true') {
+                            img.attr('src', personaUrl);
+                        }
+                    });
+                    // Top-bar + persona block previews
+                    $('#user_avatar_block img[src*="' + avatarPath + '"]').each(function () {
+                        const base = String($(this).attr('src') || '').split('?')[0];
+                        $(this).attr('src', base + bust);
+                    });
+                } catch (_) { /* ignore */ }
+
+                // Emit PERSONA_CHANGED so other listeners (e.g. chat
+                // avatar strip) refresh cleanly.
+                try {
+                    if (eventSource && event_types && event_types.PERSONA_CHANGED) {
+                        await eventSource.emit(event_types.PERSONA_CHANGED, avatarPath);
+                    }
+                } catch (_) { /* ignore */ }
             } else {
                 console.warn('[Image Generator] Player avatar upload failed:', uploadResp.statusText);
             }
