@@ -48,6 +48,376 @@
     text-shadow: 0 0 2px rgba(129, 212, 250, 0.3);
 }
 
+/* ============================================
+   INTRODUCE marker — compact "new character" badge.
+   Inline color is set per-NPC from the signature palette.
+   ============================================ */
+.sense-introduce {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 0 2px;
+    border: 1px solid currentColor;
+    border-radius: 10px;
+    font-size: 0.85em;
+    font-weight: 600;
+    font-style: normal;
+    letter-spacing: 0.3px;
+    cursor: help;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* Attributed sensory marker (e.g. [SMELL(Sherri): "..."]).
+   Name is bold in the NPC's signature color (inline style),
+   and the sensed phrase stays in the sense's color. */
+.sense-attributed {
+    display: inline;
+    font-style: italic;
+}
+.sense-attributed .npc-name {
+    font-style: normal;
+    font-weight: 700;
+    margin-right: 2px;
+}
+
+/* ============================================
+   ITEM / LORE inline markers — gold for items, cyan-teal
+   for lore. Prefix glyph provided by JS; tooltip shows
+   the narrator's full flavor text.
+   ============================================ */
+.sense-item {
+    display: inline;
+    color: #ffab00;
+    font-weight: 600;
+    font-style: normal;
+    border-bottom: 1px solid rgba(255, 171, 0, 0.6);
+    text-shadow: 0 0 4px rgba(255, 171, 0, 0.3);
+    cursor: help;
+    padding: 0 1px;
+}
+.sense-lore {
+    display: inline;
+    color: #4dd0e1;
+    font-weight: 600;
+    font-style: normal;
+    border-bottom: 1px dotted rgba(77, 208, 225, 0.7);
+    text-shadow: 0 0 4px rgba(77, 208, 225, 0.3);
+    cursor: help;
+    padding: 0 1px;
+}
+
+/* ============================================
+   Codex panel — two collapsible-style sections
+   (Items + Lore) that sit below the thumbnail
+   strip in the right gallery panel.
+   ============================================ */
+.img-gen-codex {
+    border-top: 1px solid rgba(0, 212, 255, 0.2);
+    padding: 10px 14px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.img-gen-codex-section {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(0, 212, 255, 0.15);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.img-gen-codex-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(0, 212, 255, 0.08);
+    border-bottom: 1px solid rgba(0, 212, 255, 0.15);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.img-gen-codex-section[data-section="items"] .img-gen-codex-glyph { color: #ffab00; }
+.img-gen-codex-section[data-section="lore"]  .img-gen-codex-glyph { color: #4dd0e1; }
+.img-gen-codex-glyph {
+    font-size: 14px;
+}
+.img-gen-codex-title {
+    flex: 1;
+    color: #cfd8dc;
+}
+.img-gen-codex-count {
+    font-size: 10px;
+    font-weight: 600;
+    color: #00d4ff;
+    background: rgba(0, 212, 255, 0.12);
+    padding: 2px 8px;
+    border-radius: 8px;
+    min-width: 18px;
+    text-align: center;
+}
+.img-gen-codex-entries {
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.img-gen-codex-entries::-webkit-scrollbar {
+    width: 5px;
+}
+.img-gen-codex-entries::-webkit-scrollbar-thumb {
+    background: rgba(0, 212, 255, 0.3);
+    border-radius: 3px;
+}
+.img-gen-codex-empty {
+    color: #555;
+    font-size: 11px;
+    font-style: italic;
+    padding: 4px 0;
+}
+.img-gen-codex-entry {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.img-gen-codex-entry:last-child {
+    border-bottom: none;
+}
+.img-gen-codex-section[data-section="items"] .img-gen-codex-name { color: #ffab00; }
+.img-gen-codex-section[data-section="lore"]  .img-gen-codex-name { color: #4dd0e1; }
+.img-gen-codex-name {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.3;
+}
+.img-gen-codex-desc {
+    font-size: 11px;
+    color: #9e9e9e;
+    line-height: 1.35;
+    margin-top: 2px;
+}
+
+/* ============================================
+   RESET_STORY marker — inline "the timeline frays" notice.
+   ============================================ */
+.sense-reset {
+    display: block;
+    margin: 10px 0;
+    padding: 10px 14px;
+    border: 1px dashed #b388ff;
+    border-radius: 6px;
+    background: rgba(179, 136, 255, 0.08);
+    color: #d1c4e9;
+    font-style: italic;
+    font-size: 0.95em;
+    letter-spacing: 0.5px;
+    text-align: center;
+    text-shadow: 0 0 6px rgba(179, 136, 255, 0.4);
+}
+
+/* Full-screen overlay shown during the countdown before doNewChat fires. */
+.img-gen-reset-overlay {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(20, 10, 40, 0.85) 0%, rgba(0, 0, 0, 0.95) 100%);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeInReset 0.6s ease-out;
+}
+@keyframes fadeInReset {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.img-gen-reset-inner {
+    text-align: center;
+    color: #e1bee7;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    max-width: 600px;
+    padding: 40px;
+}
+.img-gen-reset-title {
+    font-size: 38px;
+    font-weight: 300;
+    letter-spacing: 6px;
+    margin-bottom: 20px;
+    text-shadow: 0 0 20px rgba(179, 136, 255, 0.8);
+    animation: flicker 0.9s ease-in-out infinite alternate;
+}
+@keyframes flicker {
+    from { opacity: 0.75; text-shadow: 0 0 20px rgba(179, 136, 255, 0.5); }
+    to   { opacity: 1;    text-shadow: 0 0 30px rgba(179, 136, 255, 1);   }
+}
+.img-gen-reset-sub {
+    font-size: 15px;
+    font-style: italic;
+    color: #b39ddb;
+    margin-bottom: 30px;
+    line-height: 1.5;
+}
+.img-gen-reset-counter {
+    font-size: 72px;
+    font-weight: 200;
+    color: #ce93d8;
+    text-shadow: 0 0 30px rgba(206, 147, 216, 0.8);
+}
+
+/* ============================================
+   Spoken NPC dialogue — larger and bolder than narration,
+   with the NPC name tinted in their signature color (set
+   inline via style=""; fallback color lives on .npc-name).
+   ============================================ */
+.npc-dialogue {
+    display: inline;
+    font-size: 1.08em;
+    font-weight: 600;
+    color: #f2f2f2;
+}
+.npc-dialogue .npc-name {
+    font-weight: 800;
+    margin-right: 3px;
+}
+.npc-dialogue .npc-line {
+    font-style: normal;
+}
+
+/* ============================================
+   UPDATE_PLAYER / UPDATE_APPEARANCE badges —
+   small inline "appearance updated" chips.
+   ============================================ */
+.sense-update-player {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 0 2px;
+    border: 1px solid #00d4ff;
+    border-radius: 10px;
+    font-size: 0.85em;
+    font-weight: 600;
+    font-style: normal;
+    letter-spacing: 0.3px;
+    color: #00d4ff;
+    background: rgba(0, 212, 255, 0.08);
+    cursor: help;
+}
+.sense-update-appearance {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 0 2px;
+    border: 1px solid currentColor;
+    border-radius: 10px;
+    font-size: 0.85em;
+    font-weight: 600;
+    font-style: normal;
+    letter-spacing: 0.3px;
+    cursor: help;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* ============================================
+   Active-speaker spotlight panel — large-ish
+   card sitting between the left NPC roster strip
+   and the chat text. Shows whoever spoke most
+   recently, in their signature color.
+   ============================================ */
+.img-gen-speaker-spotlight {
+    position: fixed;
+    left: 92px;
+    top: 80px;
+    width: 180px;
+    max-height: 60vh;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 14px 10px 12px 10px;
+    z-index: 998;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    box-shadow: 0 0 24px rgba(0, 212, 255, 0.12);
+    transition: border-color 0.4s ease, box-shadow 0.4s ease;
+    animation: slideInLeft 0.3s ease-out;
+}
+.img-gen-speaker-avatar {
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.5);
+    border: 3px solid currentColor;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.img-gen-speaker-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.img-gen-speaker-avatar-pending {
+    color: #777;
+    font-size: 48px;
+    font-weight: 200;
+}
+.img-gen-speaker-name {
+    font-size: 15px;
+    font-weight: 800;
+    text-align: center;
+    letter-spacing: 0.5px;
+    text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+    max-width: 160px;
+    overflow-wrap: break-word;
+}
+.img-gen-speaker-phrase {
+    font-size: 10px;
+    font-style: italic;
+    color: #9e9e9e;
+    text-align: center;
+    line-height: 1.35;
+    max-height: 4.5em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+/* ============================================
+   Chat gutter — ensure ST's chat wrapper leaves
+   room for the left roster + spotlight on the
+   left, and the gallery panel + a small breathing
+   gap on the right, so text doesn't clip.
+   Spotlight occupies 92-282px, so chat should
+   start no earlier than ~296px.
+   ============================================ */
+#sheld {
+    margin-left: 296px !important;
+    margin-right: calc(30% + 20px) !important;
+}
+@media (max-width: 1200px) {
+    #sheld {
+        margin-right: calc(35% + 20px) !important;
+    }
+}
+@media (max-width: 900px) {
+    #sheld {
+        margin-left: 100px !important;
+    }
+    .img-gen-speaker-spotlight {
+        display: none !important;
+    }
+}
+@media (max-width: 768px) {
+    #sheld {
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+    }
+}
+
 
 .img-gen-panel {
     position: fixed;
@@ -125,70 +495,164 @@
     text-align: center;
 }
 
-.img-gen-gallery {
-    flex: 1;
-    overflow-y: auto;
-    padding: 15px;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 15px;
+/* ============================================
+   Gallery layout: main image + nav + thumbnails
+   ============================================ */
+
+.img-gen-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 8px 8px 8px;
+    flex-shrink: 0;
 }
 
-.img-gen-item {
-    background: rgba(0, 0, 0, 0.3);
+.img-gen-main-frame {
+    flex: 1;
+    position: relative;
+    aspect-ratio: 1;
+    background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(0, 212, 255, 0.3);
     border-radius: 8px;
     overflow: hidden;
-    transition: transform 0.2s, border-color 0.2s;
-    cursor: pointer;
-}
-
-.img-gen-item:hover {
-    transform: scale(1.02);
-    border-color: #00d4ff;
-    box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
-}
-
-.img-gen-item img {
-    width: 100%;
-    height: auto;
-    display: block;
-    border-radius: 4px;
-    aspect-ratio: 1;
-    object-fit: cover;
-}
-
-.img-gen-description {
-    padding: 10px;
-    font-size: 12px;
-    margin: 0;
-    color: #b0b0b0;
-    line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-}
-
-.img-gen-character {
-    padding: 0 10px 10px 10px;
-    font-size: 11px;
-    font-weight: bold;
-    margin: 0;
-    color: #00d4ff;
-    background: rgba(0, 212, 255, 0.1);
-    border-top: 1px solid rgba(0, 212, 255, 0.2);
-}
-
-.img-gen-empty {
     display: flex;
     align-items: center;
     justify-content: center;
+    min-width: 0;
+}
+
+.img-gen-main-frame:hover {
+    border-color: #00d4ff;
+    box-shadow: 0 0 15px rgba(0, 212, 255, 0.15);
+}
+
+.img-gen-main-img {
+    width: 100%;
     height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.img-gen-main-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     color: #666;
-    font-size: 14px;
+    font-size: 13px;
     text-align: center;
+    padding: 10px;
+}
+
+.img-gen-nav {
+    flex-shrink: 0;
+    width: 32px;
+    height: 48px;
+    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    color: #00d4ff;
+    font-size: 18px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.2s, border-color 0.2s, transform 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.img-gen-nav:hover:not(:disabled) {
+    background: rgba(0, 212, 255, 0.2);
+    border-color: #00d4ff;
+}
+
+.img-gen-nav:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+.img-gen-nav:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+}
+
+.img-gen-main-meta {
+    padding: 0 14px 10px 14px;
+    flex-shrink: 0;
+}
+
+.img-gen-counter {
+    display: inline-block;
+    font-size: 11px;
+    color: #00d4ff;
+    background: rgba(0, 212, 255, 0.1);
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-bottom: 6px;
+}
+
+.img-gen-main-desc {
+    margin: 0;
+    font-size: 12px;
+    color: #b0b0b0;
+    line-height: 1.4;
+    max-height: 4.2em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.img-gen-thumbs {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 10px 14px 14px 14px;
+    display: flex;
+    gap: 8px;
+    scroll-behavior: smooth;
+    border-top: 1px solid rgba(0, 212, 255, 0.15);
+}
+
+.img-gen-thumb {
+    flex: 0 0 64px;
+    width: 64px;
+    height: 64px;
+    border-radius: 6px;
+    border: 2px solid rgba(0, 212, 255, 0.2);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.img-gen-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+}
+
+.img-gen-thumb:hover {
+    border-color: rgba(0, 212, 255, 0.7);
+    transform: scale(1.05);
+}
+
+.img-gen-thumb-active {
+    border-color: #00d4ff;
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+}
+
+.img-gen-thumbs::-webkit-scrollbar {
+    height: 6px;
+}
+.img-gen-thumbs::-webkit-scrollbar-track {
+    background: rgba(0, 212, 255, 0.05);
+}
+.img-gen-thumbs::-webkit-scrollbar-thumb {
+    background: rgba(0, 212, 255, 0.3);
+    border-radius: 3px;
 }
 
 /* Scrollbar styling */
@@ -223,4 +687,112 @@
         right: 0;
         top: 0;
     }
+}
+
+/* ============================================
+   NPC roster panel — narrow vertical strip on the
+   LEFT edge. Mirrors the gallery panel aesthetic
+   but narrower. Each card border is tinted inline
+   with the NPC's signature color.
+   ============================================ */
+.img-gen-npc-roster {
+    position: fixed;
+    left: 0;
+    top: 80px;
+    bottom: 10px;
+    width: 82px;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-right: 2px solid #00d4ff;
+    box-shadow: 5px 0 20px rgba(0, 212, 255, 0.1);
+    z-index: 998;
+    overflow: hidden;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+    animation: slideInLeft 0.3s ease-out;
+}
+
+@keyframes slideInLeft {
+    from { transform: translateX(-100%); opacity: 0; }
+    to   { transform: translateX(0);     opacity: 1; }
+}
+
+.img-gen-npc-roster-inner {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.img-gen-npc-roster-inner::-webkit-scrollbar {
+    width: 5px;
+}
+.img-gen-npc-roster-inner::-webkit-scrollbar-thumb {
+    background: rgba(0, 212, 255, 0.3);
+    border-radius: 3px;
+}
+
+.img-gen-npc-empty {
+    color: #555;
+    font-size: 10px;
+    text-align: center;
+    padding: 20px 4px;
+    line-height: 1.4;
+}
+
+.img-gen-npc-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.img-gen-npc-card:hover {
+    transform: scale(1.04);
+    box-shadow: 0 0 10px currentColor;
+}
+
+.img-gen-npc-avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.img-gen-npc-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.img-gen-npc-avatar-pending {
+    color: #777;
+    font-size: 22px;
+    animation: pulse-pending 1.2s ease-in-out infinite;
+}
+@keyframes pulse-pending {
+    0%, 100% { opacity: 0.3; }
+    50%      { opacity: 1;   }
+}
+
+.img-gen-npc-name {
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    max-width: 70px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
 }

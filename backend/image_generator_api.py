@@ -16,6 +16,8 @@ if sys.stdout.encoding != 'utf-8':
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from diffusers import StableDiffusionPipeline
+from PIL import Image
+import requests
 import torch
 import io
 import base64
@@ -52,8 +54,33 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 gallery = ImageGallery()
 model_load_start_time = None
 
+# IP-Adapter support: loaded on first successful pipeline init unless
+# disabled via DISABLE_IP_ADAPTER=1. Adds ~400MB VRAM. Allows the pipeline
+# to accept a reference image (ip_adapter_image) whose identity features
+# are transferred to the generation — used for locking NPC / player
+# appearance across scenes.
+IP_ADAPTER_ENABLED = os.environ.get('DISABLE_IP_ADAPTER', '').strip() != '1'
+ip_adapter_loaded = False
+
+def _fetch_image(url_or_data_url):
+    """Load a reference image from an http(s) URL or a data: URL into a PIL Image."""
+    if not url_or_data_url:
+        return None
+    try:
+        if url_or_data_url.startswith('data:'):
+            header, _, b64part = url_or_data_url.partition(',')
+            raw = base64.b64decode(b64part)
+            return Image.open(io.BytesIO(raw)).convert('RGB')
+        # Normal URL — short timeout so a stale reference never blocks generation.
+        resp = requests.get(url_or_data_url, timeout=6)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content)).convert('RGB')
+    except Exception as e:
+        print(f"[IP-ADAPTER] Failed to load reference image: {e}")
+        return None
+
 def get_pipeline():
-    global pipe, model_load_start_time
+    global pipe, model_load_start_time, ip_adapter_loaded
     if pipe is None:
         model_load_start_time = time.time()
         print("\n[MODEL] Starting to load Stable Diffusion pipeline...")
@@ -71,6 +98,25 @@ def get_pipeline():
         load_time = time.time() - model_load_start_time
         print(f"[MODEL] Model loaded successfully in {load_time:.1f} seconds!")
         sys.stdout.flush()
+
+        # Best-effort IP-Adapter load — enables reference-image conditioning
+        # for locking NPC / player identity across scenes. Failures are
+        # non-fatal; the pipeline still works in text-only mode.
+        if IP_ADAPTER_ENABLED and not ip_adapter_loaded:
+            try:
+                print("[IP-ADAPTER] Loading h94/IP-Adapter (plus, SD1.5)...")
+                sys.stdout.flush()
+                pipe.load_ip_adapter(
+                    "h94/IP-Adapter",
+                    subfolder="models",
+                    weight_name="ip-adapter-plus_sd15.bin",
+                )
+                pipe.set_ip_adapter_scale(0.0)  # neutral by default
+                ip_adapter_loaded = True
+                print("[IP-ADAPTER] Loaded. Reference-image conditioning available.")
+            except Exception as e:
+                print(f"[IP-ADAPTER] Load failed (continuing in text-only mode): {e}")
+            sys.stdout.flush()
     return pipe
 
 @app.route('/api/generate', methods=['POST', 'OPTIONS'])
@@ -93,6 +139,16 @@ def generate_image():
         steps = int(data.get('steps', 25))
         guidance_scale = float(data.get('guidance_scale', 7.5))
 
+        # Optional reference images for IP-Adapter identity transfer.
+        # Accepts either a single URL/data-URL or a list. Unavailable IP-
+        # Adapter → references are silently ignored.
+        ref_raw = data.get('reference_images') or data.get('reference_image')
+        reference_scale = float(data.get('reference_scale', 0.6))
+        if ref_raw and isinstance(ref_raw, str):
+            ref_raw = [ref_raw]
+        elif not ref_raw:
+            ref_raw = []
+
         gen_start_time = time.time()
         print(f"\n{'='*60}")
         print(f"[API] Image generation request")
@@ -104,6 +160,22 @@ def generate_image():
         print(f"[API] Estimated generation time: 30-60 seconds...")
         sys.stdout.flush()
 
+        # Resolve reference images → PIL list if IP-Adapter is available.
+        ref_images = []
+        if ref_raw and ip_adapter_loaded:
+            for ref in ref_raw[:4]:  # cap at 4 to bound memory
+                img = _fetch_image(ref)
+                if img is not None:
+                    ref_images.append(img)
+            if ref_images:
+                pipeline.set_ip_adapter_scale(reference_scale)
+                print(f"[IP-ADAPTER] Using {len(ref_images)} reference image(s) at scale {reference_scale}")
+            else:
+                pipeline.set_ip_adapter_scale(0.0)
+        elif ip_adapter_loaded:
+            # No refs this call — ensure scale is back to zero so text prompts aren't affected.
+            pipeline.set_ip_adapter_scale(0.0)
+
         # Callback to show progress during generation
         def progress_callback(step, timestep, latents):
             if step % 5 == 0 or step == steps - 1:  # Show every 5 steps
@@ -111,17 +183,22 @@ def generate_image():
                 print(f"[PROGRESS] Step {step+1}/{steps} - Elapsed: {elapsed:.1f}s")
                 sys.stdout.flush()
 
+        pipe_kwargs = dict(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            num_inference_steps=steps,
+            guidance_scale=guidance_scale,
+            height=512,
+            width=512,
+            callback=progress_callback,
+            callback_steps=1,
+        )
+        if ref_images:
+            # IP-Adapter in diffusers accepts a single image or a list.
+            pipe_kwargs['ip_adapter_image'] = ref_images if len(ref_images) > 1 else ref_images[0]
+
         with torch.no_grad():
-            image = pipeline(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                num_inference_steps=steps,
-                guidance_scale=guidance_scale,
-                height=512,
-                width=512,
-                callback=progress_callback,
-                callback_steps=1,
-            ).images[0]
+            image = pipeline(**pipe_kwargs).images[0]
 
         gen_time = time.time() - gen_start_time
         print(f"[API] Generation complete in {gen_time:.1f}s, encoding to base64...")
