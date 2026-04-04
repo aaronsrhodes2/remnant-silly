@@ -197,6 +197,16 @@
     margin-top: 2px;
 }
 
+/* Orphaned marker fragment — shown when the LLM truncated mid-marker.
+   A small ellipsis with a title-tip, discreet and unobtrusive. */
+.sense-orphan {
+    display: inline-block;
+    color: #6e6e80;
+    font-style: italic;
+    opacity: 0.7;
+    cursor: help;
+}
+
 /* ============================================
    RESET_STORY marker — inline "the timeline frays" notice.
    ============================================ */

@@ -418,6 +418,24 @@ function transformMessageText(messageText) {
         try { setActiveSpeaker(lastSpeaker); } catch (_) { /* ignore */ }
     }
 
+    // Defensive: strip any orphaned marker fragments that got truncated
+    // by the LLM's response token cap (e.g. `[TOUCH(pocket knife): "the
+    // knife is warm, as if it were…`). Our marker regex requires a
+    // closing `]`, so partial markers fall through to the reader as raw
+    // text. Detect and hide any `[KNOWN_MARKER...` opener that has no
+    // matching `]` within a reasonable window.
+    const markerNames = Object.keys(SENSE_MARKERS).join('|');
+    const orphanRe = new RegExp(`\\[(?:${markerNames})(?:\\([^)]*\\))?(?::[^\\[]*?)?$`, 'i');
+    const orphanMatch = result.match(orphanRe);
+    if (orphanMatch && orphanMatch.index !== undefined) {
+        const before = result.slice(0, orphanMatch.index);
+        // Only strip if the orphan genuinely has no `]` after it —
+        // otherwise we'd eat a valid nested marker.
+        if (result.indexOf(']', orphanMatch.index) === -1) {
+            result = before + '<span class="sense-orphan" title="truncated marker — narrator hit response budget">…</span>';
+        }
+    }
+
     return result;
 }
 
@@ -868,6 +886,29 @@ function normalizePhrase(s) {
 
 // Extract player-update markers and regenerate Aaron's portrait, upload it
 // as the ST user avatar, and store as a reference for future scenes.
+// Slam the locked player portrait data URL directly into every user-message
+// avatar in the current chat DOM + all top-bar persona previews. Used both
+// after a fresh [UPDATE_PLAYER] swap and on chat-changed so that historical
+// chats whose ST persona thumbnail is still cached don't display the old
+// placeholder. Safe to call repeatedly.
+function applyPlayerAvatarToChat() {
+    const settings = initSettings();
+    const portraitUrl = settings.player && settings.player.portrait_image;
+    if (!portraitUrl) return;
+    try {
+        $('#chat .mes').each(function () {
+            const $mes = $(this);
+            const isUser = $mes.attr('is_user') === 'true'
+                || $mes.attr('is_user') === true
+                || $mes.hasClass('user_mes');
+            if (isUser) {
+                $mes.find('.avatar img').attr('src', portraitUrl);
+            }
+        });
+        $('.persona_avatar img, #user_avatar img, #user_avatar_block img').attr('src', portraitUrl);
+    } catch (_) { /* ignore */ }
+}
+
 async function handlePlayerUpdate(messageText) {
     const markers = detectSenseMarkers(messageText).filter(m => m.type === 'UPDATE_PLAYER');
     if (markers.length === 0) {
@@ -943,27 +984,16 @@ async function handlePlayerUpdate(messageText) {
                     await fetch(getThumbnailUrl('persona', avatarPath) + `&t=${Date.now()}`, { cache: 'reload' });
                 } catch (_) { /* ignore */ }
 
-                // Force-refresh every in-chat user avatar <img>. ST's
-                // persona thumbnail endpoint caches aggressively and
-                // returns stale bytes even with cache-busting query
-                // strings, so we bypass it entirely and slam the
-                // portrait data URL directly into every user-message
-                // avatar. New messages will still pick up the swapped
-                // file via normal persona lookup.
-                try {
-                    const directUrl = portrait.image; // data:image/png;base64,...
-                    $('#chat .mes').each(function () {
-                        const $mes = $(this);
-                        const isUser = $mes.attr('is_user') === 'true'
-                            || $mes.attr('is_user') === true
-                            || $mes.hasClass('user_mes');
-                        if (isUser) {
-                            $mes.find('.avatar img').attr('src', directUrl);
-                        }
-                    });
-                    // Top-bar persona preview + any other persona img.
-                    $('.persona_avatar img, #user_avatar img, #user_avatar_block img').attr('src', directUrl);
-                } catch (_) { /* ignore */ }
+                // Stash the portrait on settings.player BEFORE the DOM
+                // swap so applyPlayerAvatarToChat picks it up. (The full
+                // settings.player write happens further down, but that's
+                // fine to duplicate — it's the same data.)
+                const settingsNow = initSettings();
+                settingsNow.player = {
+                    ...(settingsNow.player || {}),
+                    portrait_image: portrait.image,
+                };
+                applyPlayerAvatarToChat();
 
                 // Emit PERSONA_CHANGED so other listeners (e.g. chat
                 // avatar strip) refresh cleanly.
@@ -1543,6 +1573,11 @@ async function onCharacterMessageRendered(messageId) {
     // even if there's nothing to image-generate.
     updateMessageDisplay(messageId);
 
+    // Every new rendered message is a chance for a freshly-inserted
+    // user bubble to be wearing the stale default avatar — slam the
+    // locked portrait URL into all user-message avatars.
+    try { applyPlayerAvatarToChat(); } catch (_) { /* ignore */ }
+
     // Kick off NPC introductions in parallel with scene image generation.
     // Introductions don't block scene images — both streams progress
     // independently so the scene shows up fast.
@@ -1615,6 +1650,13 @@ async function onChatChanged() {
             try { updateMessageDisplay(i); } catch (_) { /* ignore */ }
         }
     }
+
+    // Re-apply the locked player portrait to every user-message avatar.
+    // Necessary because ST's persona thumbnail endpoint aggressively
+    // caches and will keep serving the old default avatar even after
+    // the underlying file was overwritten in a prior session. The data
+    // URL slam bypasses the cache.
+    try { applyPlayerAvatarToChat(); } catch (_) { /* ignore */ }
 
     // Find the most recent non-user message for image-generation retry.
     let lastIdx = -1;
