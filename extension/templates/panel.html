@@ -1,0 +1,20 @@
+<div class="img-gen-panel-header">
+    <h3 class="img-gen-panel-title">🖼️ Image Gallery</h3>
+    <button class="img-gen-close" id="img-gen-close" title="Close panel">✕</button>
+</div>
+<div class="img-gen-status"></div>
+<div class="img-gen-gallery">
+    <div class="img-gen-empty">
+        <p>Awaiting generated images...<br/><small>They'll appear here as the narrator creates scenes</small></p>
+    </div>
+</div>
+
+<script>
+// Close button handler
+document.getElementById('img-gen-close').addEventListener('click', () => {
+    const panel = document.getElementById('image-generator-panel');
+    if (panel) {
+        panel.style.display = 'none';
+    }
+});
+</script>

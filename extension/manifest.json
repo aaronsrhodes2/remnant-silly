@@ -1,0 +1,22 @@
+{
+    "display_name": "Image Generator",
+    "loading_order": 20,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Aaron",
+    "version": "1.2.0",
+    "description": "Automatically generates and displays images from AI narration, with synesthetic multi-sensory text coloring (sight/smell/sound/taste/touch/environment) and visual consistency for NPCs",
+    "homepage": "https://github.com/SillyTavern/SillyTavern",
+    "minimum_client_version": "1.10.0",
+    "settings": {
+        "enabled": true,
+        "autoGenerate": true,
+        "panelPosition": "right",
+        "panelWidth": "30"
+    },
+    "i18n": {
+        "en": "locales/en.json"
+    }
+}

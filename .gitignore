@@ -1,0 +1,34 @@
+# Local tooling
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs & scratch
+*.log
+*.tmp
+
+# Stray generated images / avatars
+*.jpg
+*.jpeg
+*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Secrets (defense in depth — none exist today, but guard future)
+.env
+.env.*
+*.key
+*.pem
+secrets.json
+credentials.json

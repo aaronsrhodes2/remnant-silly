@@ -1,0 +1,226 @@
+/* Image Generator Extension - Side Panel Styling */
+
+/* ============================================
+   Sensory Narration Text Colors
+   Each sense gets a distinct color to give the
+   narration a synesthetic, cinematic feel.
+   ============================================ */
+
+/* Visual / sight - orange (also triggers image generation) */
+.sense-visual {
+    color: #ff8c00;
+    font-style: italic;
+    text-shadow: 0 0 2px rgba(255, 140, 0, 0.3);
+}
+
+/* Smell - green */
+.sense-smell {
+    color: #00c853;
+    font-style: italic;
+    text-shadow: 0 0 2px rgba(0, 200, 83, 0.3);
+}
+
+/* Sound - blue */
+.sense-sound {
+    color: #29b6f6;
+    font-style: italic;
+    text-shadow: 0 0 2px rgba(41, 182, 246, 0.3);
+}
+
+/* Taste / flavor - yellow */
+.sense-taste {
+    color: #ffd600;
+    font-style: italic;
+    text-shadow: 0 0 2px rgba(255, 214, 0, 0.3);
+}
+
+/* Touch / direct tactile contact - violet */
+.sense-touch {
+    color: #ba68c8;
+    font-style: italic;
+    text-shadow: 0 0 2px rgba(186, 104, 200, 0.3);
+}
+
+/* Environment / ambient atmosphere (heat, humidity, wind, pressure) - light blue */
+.sense-environment {
+    color: #81d4fa;
+    font-style: italic;
+    text-shadow: 0 0 2px rgba(129, 212, 250, 0.3);
+}
+
+
+.img-gen-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    height: 100vh;
+    width: 30%;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-left: 2px solid #00d4ff;
+    box-shadow: -5px 0 20px rgba(0, 212, 255, 0.1);
+    overflow-y: auto;
+    z-index: 999;
+    display: flex;
+    flex-direction: column;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    animation: slideInRight 0.3s ease-out;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.img-gen-panel-header {
+    padding: 15px;
+    border-bottom: 1px solid #00d4ff;
+    background: rgba(0, 212, 255, 0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.img-gen-panel-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #00d4ff;
+    margin: 0;
+}
+
+.img-gen-close {
+    background: none;
+    border: none;
+    color: #00d4ff;
+    cursor: pointer;
+    font-size: 20px;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.img-gen-close:hover {
+    background: rgba(0, 212, 255, 0.2);
+}
+
+.img-gen-status {
+    padding: 10px 15px;
+    background: rgba(0, 212, 255, 0.05);
+    color: #00d4ff;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+    display: none;
+    text-align: center;
+}
+
+.img-gen-gallery {
+    flex: 1;
+    overflow-y: auto;
+    padding: 15px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
+}
+
+.img-gen-item {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s, border-color 0.2s;
+    cursor: pointer;
+}
+
+.img-gen-item:hover {
+    transform: scale(1.02);
+    border-color: #00d4ff;
+    box-shadow: 0 0 15px rgba(0, 212, 255, 0.2);
+}
+
+.img-gen-item img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 4px;
+    aspect-ratio: 1;
+    object-fit: cover;
+}
+
+.img-gen-description {
+    padding: 10px;
+    font-size: 12px;
+    margin: 0;
+    color: #b0b0b0;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.img-gen-character {
+    padding: 0 10px 10px 10px;
+    font-size: 11px;
+    font-weight: bold;
+    margin: 0;
+    color: #00d4ff;
+    background: rgba(0, 212, 255, 0.1);
+    border-top: 1px solid rgba(0, 212, 255, 0.2);
+}
+
+.img-gen-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #666;
+    font-size: 14px;
+    text-align: center;
+}
+
+/* Scrollbar styling */
+.img-gen-panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+.img-gen-panel::-webkit-scrollbar-track {
+    background: rgba(0, 212, 255, 0.05);
+}
+
+.img-gen-panel::-webkit-scrollbar-thumb {
+    background: rgba(0, 212, 255, 0.3);
+    border-radius: 4px;
+}
+
+.img-gen-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 212, 255, 0.5);
+}
+
+/* Responsive design */
+@media (max-width: 1200px) {
+    .img-gen-panel {
+        width: 35%;
+    }
+}
+
+@media (max-width: 768px) {
+    .img-gen-panel {
+        position: absolute;
+        width: 100%;
+        right: 0;
+        top: 0;
+    }
+}

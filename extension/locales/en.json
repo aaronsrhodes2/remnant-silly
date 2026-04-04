@@ -1,0 +1,10 @@
+{
+    "extensionName": "Image Generator",
+    "extensionDescription": "Automatically generates and displays images from AI narration with visual consistency for NPCs and locations",
+    "panelTitle": "Image Gallery",
+    "generating": "Generating image...",
+    "generated": "Image generated!",
+    "error": "Error generating image",
+    "characterReference": "Character Visual Reference",
+    "awaitingImages": "Awaiting generated images..."
+}
