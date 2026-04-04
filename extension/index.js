@@ -271,6 +271,20 @@ function getNpcColor(name) {
     return (npc && npc.color) || '#e0e0e0';
 }
 
+// Mix a hex color toward white by `pct` (0-1). Used to tint spoken
+// dialogue text so it visually associates with the NPC's signature
+// color while staying readable against the dark chat background.
+function lightenHex(hex, pct) {
+    const h = String(hex || '').replace('#', '');
+    if (h.length !== 6) return hex;
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    if ([r, g, b].some(v => Number.isNaN(v))) return hex;
+    const mix = (c) => Math.round(c + (255 - c) * pct);
+    return `#${[mix(r), mix(g), mix(b)].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
 // Replace every sensory marker with a color-coded span, then wrap any
 // `Name: "quoted line"` dialogue in a larger bold span tinted with the
 // NPC's signature color. Special marker cases:
@@ -343,7 +357,8 @@ function transformMessageText(messageText) {
         if (!trimmed) return full;
         lastSpeaker = trimmed;
         const color = getNpcColor(trimmed);
-        return `<span class="npc-dialogue"><span class="npc-name" style="color:${color}">${escapeHtml(trimmed)}:</span> <span class="npc-line">&ldquo;${escapeHtml(line)}&rdquo;</span></span>`;
+        const lightColor = lightenHex(color, 0.55);
+        return `<span class="npc-dialogue"><span class="npc-name" style="color:${color}">${escapeHtml(trimmed)}:</span> <span class="npc-line" style="color:${lightColor}">&ldquo;${escapeHtml(line)}&rdquo;</span></span>`;
     });
     if (lastSpeaker) {
         // Fire-and-forget: spotlight DOM update shouldn't block text render.
@@ -721,6 +736,12 @@ async function handleResetStory() {
     }
 
     // Clear extension state that's tied to the old timeline.
+    // Intentionally NOT cleared: settings.player — Aaron's locked
+    // appearance (portrait_phrase, reference_image_url, avatar_key)
+    // persists across timelines so the narrator doesn't have to
+    // re-learn who Aaron is every reset. IP-Adapter conditioning
+    // continues to reference the prior portrait automatically via
+    // injectNpcContextIntoPrompt.
     settings.images = [];
     settings.imageHistory = [];
     settings.npcs = {};

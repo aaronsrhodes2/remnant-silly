@@ -272,7 +272,9 @@
     display: inline;
     font-size: 1.08em;
     font-weight: 600;
-    color: #f2f2f2;
+    /* No default color — children (.npc-name, .npc-line) carry their
+       own inline tint so spoken dialogue visually matches the NPC's
+       signature color (name bold-saturated, line lightened). */
 }
 .npc-dialogue .npc-name {
     font-weight: 800;
