@@ -102,6 +102,9 @@ function initSettings() {
     if (extension_settings[EXTENSION_NAME].player === undefined) {
         extension_settings[EXTENSION_NAME].player = null;
     }
+    if (extension_settings[EXTENSION_NAME].topBarHidden === undefined) {
+        extension_settings[EXTENSION_NAME].topBarHidden = false;
+    }
     // codex: { items: { [name]: { description, first_seen } }, lore: { ... } }
     if (!extension_settings[EXTENSION_NAME].codex) {
         extension_settings[EXTENSION_NAME].codex = { items: {}, lore: {} };
@@ -1261,6 +1264,34 @@ let activeSpeakerName = null;
 // Key is the NPC name or the literal string '__player__' for Aaron.
 let pinnedSpotlightKey = null;
 
+// Floating toggle that hides/shows ST's top icon nav (#top-settings-holder)
+// to give the chat more vertical real estate. A small chevron tab sits at
+// the top-center of the viewport; clicking flips state and persists in
+// extension settings so the preference survives reloads.
+function createTopBarToggle() {
+    if ($('#img-gen-topbar-toggle').length > 0) return;
+    $('body').append(
+        '<button id="img-gen-topbar-toggle" type="button" title="Toggle top menu">' +
+            '<span class="img-gen-topbar-toggle-chevron">\u25B2</span>' +
+        '</button>'
+    );
+    $('#img-gen-topbar-toggle').on('click', function () {
+        const s = initSettings();
+        s.topBarHidden = !s.topBarHidden;
+        saveSettingsDebounced();
+        applyTopBarHidden();
+    });
+    applyTopBarHidden();
+}
+
+function applyTopBarHidden() {
+    const s = initSettings();
+    const hidden = !!s.topBarHidden;
+    $('body').toggleClass('img-gen-topbar-hidden', hidden);
+    $('#img-gen-topbar-toggle .img-gen-topbar-toggle-chevron').text(hidden ? '\u25BC' : '\u25B2');
+    $('#img-gen-topbar-toggle').attr('title', hidden ? 'Show top menu' : 'Hide top menu');
+}
+
 function createSpeakerSpotlight() {
     if ($('#image-generator-speaker-spotlight').length > 0) return;
     $('body').append(`
@@ -1870,6 +1901,7 @@ function initializeExtension() {
     createSidePanel();
     createNpcRosterPanel();
     createSpeakerSpotlight();
+    createTopBarToggle();
     bindSenseBarHandlers();
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
