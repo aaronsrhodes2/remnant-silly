@@ -237,8 +237,11 @@ const SENSE_MARKERS = {
 // Returns: [{ type, attribution, description, fullMatch, cssClass, triggersImage }]
 function detectSenseMarkers(messageText) {
     const markerNames = Object.keys(SENSE_MARKERS).join('|');
+    // Body is optional so keyword-only codex markers like `[LORE(The Fold)]`
+    // or `[ITEM(Amber Key)]` match — the narrator sometimes drops the
+    // `: "..."` when the entry key IS the payload.
     const regex = new RegExp(
-        `\\[(${markerNames})(?:\\(([^)]+)\\))?:\\s*(?:"([^"]+)"|([^\\]]+))\\]`,
+        `\\[(${markerNames})(?:\\(([^)]+)\\))?(?::\\s*(?:"([^"]+)"|([^\\]]+)))?\\]`,
         'gi'
     );
     const matches = [];
@@ -357,9 +360,12 @@ function transformMessageText(messageText) {
             // Codex entries. The bracket name is the entry KEY (goes in
             // the codex panel); the narrator's prose in the same response
             // carries the flavor, so we render the key inline with a
-            // prefix glyph and tooltip, not the full description.
-            const name = escapeHtml(m.attribution || m.description);
-            const tooltip = escapeHtml(m.description);
+            // prefix glyph and tooltip, not the full description. The
+            // body `: "..."` is optional — `[LORE(The Fold)]` alone is
+            // valid and the key IS the display text.
+            const key = m.attribution || m.description || '';
+            const name = escapeHtml(key);
+            const tooltip = escapeHtml(m.description || key);
             const glyph = m.type === 'ITEM' ? '⚜' : '※';
             replacement = `<span class="${m.cssClass}" title="${tooltip}">${glyph} ${name}</span>`;
         } else if (m.type === 'INTRODUCE') {
@@ -489,13 +495,24 @@ function injectNpcContextIntoPrompt(description) {
 // image. We broadly suppress text/letters/writing unless a caller
 // overrides. (Environmental signs are better handled by leaving them
 // unrendered and letting the narrator's prose describe them.)
-const DEFAULT_NEGATIVE_PROMPT = 'blurry, low quality, distorted, deformed, text, letters, words, writing, typography, watermark, signature, caption, subtitle, logo, scribbles, handwriting, gibberish, captions, labels, UI, frame';
+// Weighted text suppression tokens — SD 1.5 honors `(term:weight)` emphasis
+// in both positive and negative prompts. The garbled-text problem is the
+// single most common aesthetic failure, so we hit it hard here and also
+// append a "no text" reminder to every positive prompt.
+const DEFAULT_NEGATIVE_PROMPT = '(text:1.6), (letters:1.6), (words:1.6), (writing:1.6), (typography:1.6), (captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), (labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed';
+const NO_TEXT_SUFFIX = ', (no text:1.4), (no writing:1.4), (no letters:1.4)';
 
 async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 180000, reference_images = null, reference_scale = null, negative_prompt = DEFAULT_NEGATIVE_PROMPT } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        const body = { prompt, negative_prompt, steps, guidance_scale: guidance };
+        // Append the no-text suffix to every positive prompt unless the
+        // caller already baked in their own no-text hint. Belt-and-suspenders
+        // with the weighted negative prompt.
+        const finalPrompt = /no text|no writing|no letters/i.test(prompt)
+            ? prompt
+            : prompt + NO_TEXT_SUFFIX;
+        const body = { prompt: finalPrompt, negative_prompt, steps, guidance_scale: guidance };
         if (Array.isArray(reference_images) && reference_images.length > 0) {
             body.reference_images = reference_images;
             if (typeof reference_scale === 'number') body.reference_scale = reference_scale;
@@ -926,23 +943,26 @@ async function handlePlayerUpdate(messageText) {
                     await fetch(getThumbnailUrl('persona', avatarPath) + `&t=${Date.now()}`, { cache: 'reload' });
                 } catch (_) { /* ignore */ }
 
-                // Force-refresh every in-chat user avatar <img> by bumping
-                // the src with a cache-busting query string. Replicates
-                // personas.reloadUserAvatar() (which is not exported).
+                // Force-refresh every in-chat user avatar <img>. ST's
+                // persona thumbnail endpoint caches aggressively and
+                // returns stale bytes even with cache-busting query
+                // strings, so we bypass it entirely and slam the
+                // portrait data URL directly into every user-message
+                // avatar. New messages will still pick up the swapped
+                // file via normal persona lookup.
                 try {
-                    const bust = `?t=${Date.now()}`;
-                    const personaUrl = getThumbnailUrl('persona', avatarPath) + `&t=${Date.now()}`;
-                    $('.mes').each(function () {
-                        const img = $(this).find('.avatar img');
-                        if ($(this).attr('is_user') === 'true') {
-                            img.attr('src', personaUrl);
+                    const directUrl = portrait.image; // data:image/png;base64,...
+                    $('#chat .mes').each(function () {
+                        const $mes = $(this);
+                        const isUser = $mes.attr('is_user') === 'true'
+                            || $mes.attr('is_user') === true
+                            || $mes.hasClass('user_mes');
+                        if (isUser) {
+                            $mes.find('.avatar img').attr('src', directUrl);
                         }
                     });
-                    // Top-bar + persona block previews
-                    $('#user_avatar_block img[src*="' + avatarPath + '"]').each(function () {
-                        const base = String($(this).attr('src') || '').split('?')[0];
-                        $(this).attr('src', base + bust);
-                    });
+                    // Top-bar persona preview + any other persona img.
+                    $('.persona_avatar img, #user_avatar img, #user_avatar_block img').attr('src', directUrl);
                 } catch (_) { /* ignore */ }
 
                 // Emit PERSONA_CHANGED so other listeners (e.g. chat
