@@ -15,7 +15,9 @@ services:
   # Ollama — local LLM runtime. Pulls `mistral` on first boot.
   # ----------------------------------------------------------------------
   ollama:
-    build: ./docker/ollama
+    build:
+      context: .
+      dockerfile: docker/ollama/Dockerfile
     container_name: remnant-ollama
     restart: unless-stopped
     expose:
@@ -48,7 +50,9 @@ services:
   # (or wildly slow on CPU). Downloads SD v1.5 weights on first request.
   # ----------------------------------------------------------------------
   flask-sd:
-    build: ./docker/flask-sd
+    build:
+      context: .
+      dockerfile: docker/flask-sd/Dockerfile
     container_name: remnant-flask-sd
     restart: unless-stopped
     expose:
@@ -81,7 +85,9 @@ services:
   # Pre-configured: extension installed, CORS proxy on, listen all.
   # ----------------------------------------------------------------------
   sillytavern:
-    build: ./docker/sillytavern
+    build:
+      context: .
+      dockerfile: docker/sillytavern/Dockerfile
     container_name: remnant-sillytavern
     restart: unless-stopped
     ports:

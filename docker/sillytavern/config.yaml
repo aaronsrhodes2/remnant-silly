@@ -9,9 +9,15 @@ protocol:
   ipv6: false
 port: 8000
 
-# Disable the whitelist so requests from the host network can reach us
-# through the compose port mapping. (The stack is local-only anyway.)
-whitelistMode: false
+# The stack is local-only and the only published port is on the host
+# loopback (or LAN if the user chooses). ST 1.17+ refuses to listen on
+# non-localhost without one of: whitelist, basic auth, or user accounts.
+# Use the designed escape hatch for trusted-network deployments.
+whitelistMode: true
+whitelist:
+  - 0.0.0.0/0
+  - ::/0
+securityOverride: true
 
 # CRITICAL: enables the built-in /proxy/:url middleware that the
 # image-generator extension uses to reach flask-sd without browser CORS.
