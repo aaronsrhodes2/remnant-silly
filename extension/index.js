@@ -528,12 +528,27 @@ async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 18000
     }
 }
 
+// Classify a GENERATE_IMAGE marker's attribution slot as either a
+// 'location' (wide establishing / environment shot, eligible to become
+// the chat-window backdrop) or a 'subject' (character-focused, gallery
+// only). Anything unrecognized or missing defaults to 'subject' so an
+// untagged image never hijacks the wallpaper.
+function classifyImageKind(attribution) {
+    const tag = (attribution || '').trim().toLowerCase();
+    if (tag === 'location' || tag === 'place' || tag === 'environment' || tag === 'establishing') {
+        return 'location';
+    }
+    return 'subject';
+}
+
 // Generate a scene image. Injects known-NPC portrait descriptions into the
 // prompt and threads any locked reference-image URLs so the backend's
-// IP-Adapter can lock visual identity across scenes.
-async function generateSceneImage(rawDescription) {
+// IP-Adapter can lock visual identity across scenes. `kind` is carried
+// through to the stored gallery entry so `renderGallery()` can decide
+// whether the image is eligible to become the chat background.
+async function generateSceneImage(rawDescription, kind = 'subject') {
     const { prompt: augmented, reference_images } = injectNpcContextIntoPrompt(rawDescription);
-    console.log('[Image Generator] Scene prompt:', augmented.substring(0, 120), '| refs:', reference_images.length);
+    console.log('[Image Generator] Scene prompt:', augmented.substring(0, 120), '| kind:', kind, '| refs:', reference_images.length);
     const data = await callSdApi(augmented, {
         reference_images: reference_images.length > 0 ? reference_images : null,
         reference_scale: 0.5,
@@ -544,6 +559,7 @@ async function generateSceneImage(rawDescription) {
         image: data.image,
         description: rawDescription, // display the original, not the augmented one
         prompt_sent: augmented,
+        kind,
         timestamp: new Date().toISOString(),
     };
 }
@@ -1021,46 +1037,112 @@ async function handleAppearanceUpdates(messageText) {
 // turns (no blanking) so the reader has a visual anchor for the last-
 // heard voice.
 let activeSpeakerName = null;
+// When non-null, the spotlight is "pinned" to a specific character
+// (clicked from the roster). setActiveSpeaker is suppressed while
+// pinned so the user's selection sticks. Clicking the spotlight
+// itself unpins and returns to active-speaker follow mode.
+// Key is the NPC name or the literal string '__player__' for Aaron.
+let pinnedSpotlightKey = null;
 
 function createSpeakerSpotlight() {
     if ($('#image-generator-speaker-spotlight').length > 0) return;
     $('body').append(`
         <div id="image-generator-speaker-spotlight" class="img-gen-speaker-spotlight" style="display:none">
+            <div class="img-gen-speaker-pin-badge" id="img-gen-speaker-pin-badge" style="display:none" title="Click panel to unpin">📌</div>
             <div class="img-gen-speaker-avatar" id="img-gen-speaker-avatar"></div>
             <div class="img-gen-speaker-name" id="img-gen-speaker-name"></div>
             <div class="img-gen-speaker-phrase" id="img-gen-speaker-phrase"></div>
+            <div class="img-gen-speaker-meta" id="img-gen-speaker-meta" style="display:none"></div>
         </div>
     `);
+    // Click anywhere on the panel to unpin and return to active-speaker mode.
+    $('#image-generator-speaker-spotlight').on('click', function () {
+        if (pinnedSpotlightKey) {
+            pinnedSpotlightKey = null;
+            $('#img-gen-speaker-pin-badge').hide();
+            $('#img-gen-speaker-meta').hide().empty();
+            $('#img-gen-npc-roster-inner .img-gen-npc-card').removeClass('img-gen-npc-card--selected');
+            if (activeSpeakerName) setActiveSpeaker(activeSpeakerName);
+        }
+    });
 }
 
-function setActiveSpeaker(name) {
-    if (!name) return;
-    const settings = initSettings();
-    const npc = settings.npcs[name];
-    if (!npc) {
-        // Unknown speaker — show a placeholder card with just the name.
-        activeSpeakerName = name;
-        const $panel = $('#image-generator-speaker-spotlight');
-        if ($panel.length === 0) return;
-        $panel.css('display', 'flex').css('border-color', '#e0e0e0');
-        $('#img-gen-speaker-avatar').html(`<div class="img-gen-speaker-avatar-pending">?</div>`);
-        $('#img-gen-speaker-name').text(name).css('color', '#e0e0e0');
-        $('#img-gen-speaker-phrase').text('');
-        return;
-    }
-    activeSpeakerName = name;
-    const color = npc.color || '#e0e0e0';
-    const portrait = npc.portrait_image || npc.reference_image_url || null;
+// Populate the spotlight with a character's portrait + name + phrase.
+// Shared by setActiveSpeaker and the pinned detail view.
+function _renderSpotlightFor({ name, color, portrait, phrase, extended = false, metaLines = null }) {
     const $panel = $('#image-generator-speaker-spotlight');
     if ($panel.length === 0) return;
-    $panel.css('display', 'flex').css('border-color', color).css('box-shadow', `0 0 24px ${color}55`);
+    $panel.css('display', 'flex')
+        .css('border-color', color)
+        .css('box-shadow', `0 0 24px ${color}55`);
     const avatarHtml = portrait
         ? `<img src="${portrait}" alt="${escapeHtml(name)}" />`
         : `<div class="img-gen-speaker-avatar-pending">…</div>`;
     $('#img-gen-speaker-avatar').html(avatarHtml);
     $('#img-gen-speaker-name').text(name).css('color', color);
-    const phrase = (npc.description || '').split(/[.!?]/)[0] || '';
-    $('#img-gen-speaker-phrase').text(phrase);
+    $('#img-gen-speaker-phrase').text(phrase || '');
+    if (extended && metaLines && metaLines.length > 0) {
+        $('#img-gen-speaker-meta').html(metaLines.map(escapeHtml).join('<br/>')).show();
+    } else {
+        $('#img-gen-speaker-meta').hide().empty();
+    }
+}
+
+function setActiveSpeaker(name) {
+    if (!name) return;
+    if (pinnedSpotlightKey) {
+        // Remember who spoke most recently so unpinning returns here,
+        // but don't swap the visible panel.
+        activeSpeakerName = name;
+        return;
+    }
+    const settings = initSettings();
+    const npc = settings.npcs[name];
+    activeSpeakerName = name;
+    if (!npc) {
+        _renderSpotlightFor({ name, color: '#e0e0e0', portrait: null, phrase: '' });
+        $('#img-gen-speaker-avatar').html(`<div class="img-gen-speaker-avatar-pending">?</div>`);
+        return;
+    }
+    _renderSpotlightFor({
+        name,
+        color: npc.color || '#e0e0e0',
+        portrait: npc.portrait_image || npc.reference_image_url || null,
+        phrase: (npc.description || '').split(/[.!?]/)[0] || '',
+    });
+}
+
+// Pin the spotlight to a specific character (triggered by clicking a
+// roster card). Shows the full description + metadata in the same
+// inline panel — replaces the old centered modal.
+function pinSpotlightToCharacter(key) {
+    const settings = initSettings();
+    let name, color, portrait, phrase, metaLines;
+    if (key === '__player__') {
+        const p = settings.player || {};
+        name = 'Aaron';
+        color = '#4fc3f7';
+        portrait = p.portrait_image || p.reference_image_url || null;
+        phrase = p.portrait_phrase || 'MSgt Aaron Rhodes — recently-retired combat engineer, abductee.';
+        metaLines = ['controlled by: you'];
+        if (p.updated_at) metaLines.push(`updated: ${new Date(p.updated_at).toLocaleDateString()}`);
+    } else {
+        const npc = (settings.npcs || {})[key];
+        if (!npc) return;
+        name = key;
+        color = npc.color || '#e0e0e0';
+        portrait = npc.portrait_image || npc.reference_image_url || null;
+        phrase = npc.description || '';
+        metaLines = [];
+        if (npc.first_seen) metaLines.push(`met: ${new Date(npc.first_seen).toLocaleDateString()}`);
+        if (npc.locked) metaLines.push('portrait locked');
+    }
+    pinnedSpotlightKey = key;
+    $('#img-gen-speaker-pin-badge').show();
+    _renderSpotlightFor({ name, color, portrait, phrase, extended: true, metaLines });
+    // Highlight the matching roster card.
+    $('#img-gen-npc-roster-inner .img-gen-npc-card').removeClass('img-gen-npc-card--selected');
+    $(`#img-gen-npc-roster-inner .img-gen-npc-card[data-card-key="${key.replace(/"/g, '\\"')}"]`).addClass('img-gen-npc-card--selected');
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,82 +1311,19 @@ function renderNpcRoster() {
     }).join('');
     $inner.html(html);
 
-    // Wire click → open the detail modal for the clicked card.
-    $inner.find('.img-gen-npc-card').off('click.imgGenDetail').on('click.imgGenDetail', function () {
+    // Wire click → pin the speaker spotlight to the clicked character.
+    // This replaces the centered modal with an inline view in the
+    // left-of-chat gutter where the spotlight already lives.
+    $inner.find('.img-gen-npc-card').off('click.imgGenDetail').on('click.imgGenDetail', function (e) {
+        e.stopPropagation();
         const key = $(this).attr('data-card-key');
         if (!key) return;
-        openCharacterDetail(key);
+        pinSpotlightToCharacter(key);
     });
 }
 
-// ---------------------------------------------------------------------------
-// Character detail modal — large avatar + description, opened by clicking
-// a roster card.
-// ---------------------------------------------------------------------------
-
-function ensureCharacterDetailModal() {
-    if ($('#img-gen-character-detail').length > 0) return;
-    $('body').append(`
-        <div id="img-gen-character-detail" class="img-gen-character-detail" style="display:none">
-            <div class="img-gen-character-detail-backdrop" id="img-gen-character-detail-backdrop"></div>
-            <div class="img-gen-character-detail-card" id="img-gen-character-detail-card">
-                <button class="img-gen-character-detail-close" id="img-gen-character-detail-close" title="Close">✕</button>
-                <div class="img-gen-character-detail-avatar">
-                    <img id="img-gen-character-detail-img" src="" alt="" />
-                </div>
-                <div class="img-gen-character-detail-name" id="img-gen-character-detail-name"></div>
-                <div class="img-gen-character-detail-body" id="img-gen-character-detail-body"></div>
-            </div>
-        </div>
-    `);
-    $('#img-gen-character-detail-backdrop, #img-gen-character-detail-close')
-        .on('click', () => { $('#img-gen-character-detail').hide(); });
-    // Escape key also closes.
-    $(document).on('keydown.imgGenDetail', (e) => {
-        if (e.key === 'Escape') $('#img-gen-character-detail').hide();
-    });
-}
-
-function openCharacterDetail(key) {
-    ensureCharacterDetailModal();
-    const settings = initSettings();
-
-    let name, color, portrait, description, metaLines;
-    if (key === '__player__') {
-        const p = settings.player || {};
-        name = 'Aaron (Player)';
-        color = '#4fc3f7';
-        portrait = p.portrait_image || p.reference_image_url || null;
-        description = p.portrait_phrase || 'MSgt Aaron Rhodes — recently-retired combat engineer, abductee of The Remnant.';
-        metaLines = [];
-        if (p.updated_at) metaLines.push(`portrait updated: ${new Date(p.updated_at).toLocaleString()}`);
-        metaLines.push('controlled by: you');
-    } else {
-        const npc = (settings.npcs || {})[key];
-        if (!npc) return;
-        name = key;
-        color = npc.color || '#bdbdbd';
-        portrait = npc.portrait_image || npc.reference_image_url || null;
-        description = npc.description || '(no description yet)';
-        metaLines = [];
-        if (npc.first_seen) metaLines.push(`first met: ${new Date(npc.first_seen).toLocaleString()}`);
-        if (npc.locked) metaLines.push('portrait: locked (anchor character)');
-        if (npc.card_created) metaLines.push('character card: created');
-    }
-
-    $('#img-gen-character-detail-img').attr('src', portrait || '');
-    $('#img-gen-character-detail-name').text(name).css('color', color);
-    $('#img-gen-character-detail-card').css('border-color', color);
-
-    const metaHtml = metaLines.length > 0
-        ? `<div class="img-gen-character-detail-meta">${metaLines.map(escapeHtml).join('<br/>')}</div>`
-        : '';
-    $('#img-gen-character-detail-body').html(`
-        <div class="img-gen-character-detail-desc">${escapeHtml(description)}</div>
-        ${metaHtml}
-    `);
-    $('#img-gen-character-detail').css('display', 'flex');
-}
+// (Character detail is rendered inline in the speaker spotlight via
+// pinSpotlightToCharacter — no centered modal.)
 
 function createSidePanel() {
     const panelHTML = `
@@ -1414,8 +1433,19 @@ function renderGallery() {
     $prev.prop('disabled', currentImageIndex <= 0);
     $next.prop('disabled', currentImageIndex >= images.length - 1);
 
-    // Mirror current image to the ST chat background.
-    updateBackgroundWallpaper(current.image);
+    // Mirror the most recent LOCATION image (not the currently-selected
+    // thumb) to the ST chat background. Subject close-ups stay in the
+    // gallery strip but never become the room backdrop. If nothing in
+    // the gallery is tagged as a location, clear our override so ST's
+    // default background shows through.
+    let backdropUrl = null;
+    for (let i = images.length - 1; i >= 0; i--) {
+        if (images[i] && images[i].kind === 'location') {
+            backdropUrl = images[i].image;
+            break;
+        }
+    }
+    updateBackgroundWallpaper(backdropUrl);
 
     // Thumbnail strip, newest on the left.
     const thumbsHtml = images
@@ -1521,9 +1551,10 @@ async function onCharacterMessageRendered(messageId) {
     const imageMarkers = detectImageMarkers(message.mes);
     for (const marker of imageMarkers) {
         updatePanelStatus(`⏳ Generating image... "${marker.description.substring(0, 50)}..."`);
-        console.log(`[Image Generator] Queue scene: ${marker.description.substring(0, 80)}`);
+        const kind = classifyImageKind(marker.attribution);
+        console.log(`[Image Generator] Queue scene (${kind}): ${marker.description.substring(0, 80)}`);
 
-        const imageData = await generateSceneImage(marker.description);
+        const imageData = await generateSceneImage(marker.description, kind);
         if (imageData) {
             storeSceneImage(imageData);
             snapToNewestImage();
@@ -1554,7 +1585,18 @@ async function onChatChanged() {
     await new Promise(r => setTimeout(r, 600));
     if (!Array.isArray(chat) || chat.length === 0) return;
 
-    // Find the most recent non-user message.
+    // Re-transform EVERY message in the chat. The greeting (message 0)
+    // is frequently rendered before our CHARACTER_MESSAGE_RENDERED
+    // listener is attached, so markers in the first_mes show up as
+    // raw bracket text. Walking the full chat on every chat-change
+    // is cheap and catches that plus any other missed messages.
+    for (let i = 0; i < chat.length; i++) {
+        if (chat[i] && chat[i].mes) {
+            try { updateMessageDisplay(i); } catch (_) { /* ignore */ }
+        }
+    }
+
+    // Find the most recent non-user message for image-generation retry.
     let lastIdx = -1;
     for (let i = chat.length - 1; i >= 0; i--) {
         if (chat[i] && chat[i].is_user === false) { lastIdx = i; break; }
@@ -1562,7 +1604,6 @@ async function onChatChanged() {
     if (lastIdx < 0) return;
 
     const lastMessage = chat[lastIdx];
-    updateMessageDisplay(lastIdx);
 
     // Only retry image generation if we have scene markers AND no image yet.
     const imageMarkers = detectImageMarkers(lastMessage.mes || '');
@@ -1575,7 +1616,8 @@ async function onChatChanged() {
 
     for (const marker of imageMarkers) {
         updatePanelStatus(`⏳ Generating image... "${marker.description.substring(0, 50)}..."`);
-        const imageData = await generateSceneImage(marker.description);
+        const kind = classifyImageKind(marker.attribution);
+        const imageData = await generateSceneImage(marker.description, kind);
         if (imageData) {
             storeSceneImage(imageData);
             snapToNewestImage();
@@ -1602,6 +1644,40 @@ function initializeExtension() {
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+
+    // Delegated click handler for chat-message avatar thumbnails.
+    // Clicking a speaker's avatar in the chat pins the spotlight to
+    // that character and highlights their roster card. The Narrator
+    // IS The Remnant (he records and voices) — clicks on Narrator
+    // messages map to The Remnant's roster card. User messages map
+    // to the player card.
+    $(document).off('click.imgGenChatAvatar').on('click.imgGenChatAvatar', '#chat .mes .avatar', function (e) {
+        const $mes = $(this).closest('.mes');
+        if ($mes.length === 0) return;
+        const isUser = $mes.attr('is_user') === 'true';
+        let key = null;
+        if (isUser) {
+            key = '__player__';
+        } else {
+            const chName = $mes.attr('ch_name') || '';
+            // Narrator → Remnant mapping (both are the same entity).
+            if (chName === 'Narrator' || chName === REMNANT_NAME) {
+                key = REMNANT_NAME;
+            } else if (chName) {
+                key = chName;
+            }
+        }
+        if (!key) return;
+        // Only intercept if we actually have data for this character —
+        // otherwise let ST handle the click normally.
+        const settings = initSettings();
+        const hasData = (key === '__player__' && settings.player)
+            || (key !== '__player__' && settings.npcs && settings.npcs[key]);
+        if (!hasData) return;
+        e.preventDefault();
+        e.stopPropagation();
+        pinSpotlightToCharacter(key);
+    });
 
     currentImageIndex = settings.images.length - 1;
     renderGallery();
