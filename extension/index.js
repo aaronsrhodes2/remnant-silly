@@ -38,9 +38,14 @@ import {
 import { user_avatar } from '../../personas.js';
 import { power_user } from '../../power-user.js';
 
-// Use SillyTavern's built-in CORS proxy to reach the local Flask/SD backend
-// without cross-origin blocks. Requires enableCorsProxy: true in config.yaml.
-const IMG_GEN_API = '/proxy/http://localhost:5000';
+// Reach the local Flask/SD backend through nginx's dedicated passthrough
+// location `/api/flask-sd/`. Previously we tunneled through ST's built-in
+// `/proxy/<url>` endpoint, but that has an SSRF guard that rejects
+// loopback targets with "Circular requests are not allowed", so flask-sd
+// at localhost:5000 is unreachable through it. Going through the nginx
+// gateway (same origin as ST, so no CORS problem) is the clean path and
+// also decouples us from ST's proxy config flags.
+const IMG_GEN_API = '/api/flask-sd';
 const EXTENSION_NAME = 'remnant';
 // v2.6.0 one-shot migration: move legacy 'image-generator' settings blob
 // to the new 'remnant' key on first load.
