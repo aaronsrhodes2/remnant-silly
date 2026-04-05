@@ -37,3 +37,18 @@ Thumbs.db
 *.pem
 secrets.json
 credentials.json
+
+# Large model artifacts (defense in depth — these live inside Docker
+# image layers, not the repo, but guard against anyone ever caching
+# weights into the working tree by accident)
+*.safetensors
+*.gguf
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.bin
+.cache/
+huggingface/
+models/
+!docker/**/models/
