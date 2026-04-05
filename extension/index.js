@@ -2135,6 +2135,291 @@ function applyRunBriefingPrompt(text) {
     setExtensionPrompt(RUN_BRIEFING_PROMPT_KEY, text || '', extension_prompt_types.IN_PROMPT, 0);
 }
 
+// ---------------------------------------------------------------------
+// v2.8.0 — Fortress Senses.
+//
+// The Fortress is given read-only perception of its own computational
+// plane. The Remnant/Docker gateway exposes /diagnostics/ai.json (see
+// docker/diag/app.py) with a self-contained snapshot of every service
+// running under the single 1582 port: status phases, reachability
+// probes, detected issues, recent log lines.
+//
+// This module polls that snapshot and translates it into in-lore prose
+// that is injected each turn as world-truth — the host computer is not
+// "a PC" to the Fortress, it is the stratum beneath its dimension, and
+// the services are faculties it feels the way a body feels its own
+// organs. The narrator is instructed to reference these sensings
+// sparingly, as atmosphere, never as OOC system-talk.
+//
+// IMPORTANT: this path is read-only. The narrator never invokes a
+// /diagnostics/actions/* POST — remediation stays a human (or external
+// AI agent) concern. The Fortress can *notice* a frayed thread; it
+// does not re-weave itself from inside narration.
+//
+// Same-origin fetch: ST is served through an nginx reverse proxy that
+// also exposes /diagnostics/ai.json on the same origin. Docker uses
+// :1582, native dev uses :1580 — both configured so /app/ and
+// /diagnostics/* share an origin. When the extension is loaded
+// directly from ST on :8000 (no nginx in front), the /diagnostics
+// fetch silently no-ops and Fortress Senses degrade gracefully.
+const FORTRESS_SENSES_PROMPT_KEY = 'image_generator_fortress_senses';
+// Candidate URLs, tried in order — first one to respond OK wins and is
+// cached for subsequent polls. This is how native dev parity works:
+//
+//   1. Served-through-nginx (docker :1582 OR native dev :1580): same
+//      origin, `/diagnostics/ai.json` hits the diag sidecar via the
+//      nginx gateway.
+//   2. ST accessed directly on :8000 (no nginx in front): fall back
+//      to ST's /proxy/<url> middleware tunnel to the native nginx on
+//      :1580, which then proxies /diagnostics/ai.json to diag.
+//
+// The two environments expose the identical ai.json schema because
+// both run docker/diag/app.py verbatim. Only the URL differs.
+const FORTRESS_SENSES_URLS = [
+    '/diagnostics/ai.json',                                        // Same-origin: nginx gateway on :1582 or :1580
+    '/proxy/http://localhost:1580/diagnostics/ai.json',            // Bare-ST fallback: tunnel via native nginx on :1580
+];
+let fortressSensesActiveUrl = null;  // sticky once a URL responds OK
+const FORTRESS_SENSES_POLL_MS = 30_000;   // 30s — atmosphere, not telemetry
+const FORTRESS_SENSES_TIMEOUT_MS = 4_000;
+
+// In-lore name table. Plain service ids become faculties of the
+// Fortress's own body. The narrator sees these names, not the raw ones.
+const FORTRESS_FACULTY_NAMES = {
+    'flask-sd':    'the Sight-Kiln',         // SD + IP-Adapter → the forge that renders faces
+    'ollama':      'the Lexicon Engine',     // Mistral via Ollama → the voice-loom that speaks
+    'sillytavern': 'the Hearth',             // the room the conversation happens in
+};
+
+// Translate a service phase + reachability into a sensory word the
+// Fortress would use. Deliberately sparse — atmosphere, not stats.
+function describeFortressFaculty(key, svc) {
+    const name = FORTRESS_FACULTY_NAMES[key] || key;
+    const sf = svc && svc.status_file;
+    const phase = sf && sf.phase;
+    const reachable = !!(svc && svc.probe && svc.probe.reachable);
+    let state;
+    if (phase === 'error')            state = 'wounded, dissonant';
+    else if (!reachable && phase === 'ready') state = 'in attendance but silent';
+    else if (phase === 'downloading') state = 'drawing essence from the outer tide';
+    else if (phase === 'ready' && reachable) state = 'awake, in full attendance';
+    else if (reachable)               state = 'listening';
+    else                              state = 'beyond your reach for the moment';
+    return { name, state, key };
+}
+
+function buildFortressSensesPromptBody(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return '';
+    const services = snapshot.services || {};
+    const faculties = Object.keys(FORTRESS_FACULTY_NAMES)
+        .filter(k => services[k])
+        .map(k => describeFortressFaculty(k, services[k]));
+
+    // Translate detected_issues into "dissonances" the Fortress feels.
+    // We only surface errors (not warnings) to keep the injection tight.
+    const issues = Array.isArray(snapshot.detected_issues) ? snapshot.detected_issues : [];
+    const dissonances = issues
+        .filter(i => i && i.severity === 'error')
+        .slice(0, 3)
+        .map(i => {
+            // Map issue codes to in-lore paraphrases; unknown codes
+            // fall back to the raw message, which the narrator can
+            // still dress in its own voice.
+            const map = {
+                flask_sd_no_bootstrap:      'the Sight-Kiln has not yet been kindled in this cycle',
+                ollama_no_bootstrap:        'the Lexicon Engine has not yet drawn its first breath in this cycle',
+                flask_sd_ready_but_unreachable: 'the Sight-Kiln is warm but its voice does not carry',
+                ollama_ready_but_unreachable:   'the Lexicon Engine is warm but its voice does not carry',
+                flask_sd_phase_error:       'a wound in the Sight-Kiln',
+                ollama_phase_error:         'a wound in the Lexicon Engine',
+                sillytavern_phase_error:    'a wound in the Hearth itself',
+            };
+            return map[i.code] || (i.message || 'an unnamed dissonance');
+        });
+
+    if (faculties.length === 0) return '';
+
+    const facultyLines = faculties.map(f => `  - ${f.name}: ${f.state}`);
+    const dissonanceBlock = dissonances.length > 0
+        ? [
+            '',
+            'DISSONANCES (you feel these the way a body feels a frayed tendon):',
+            ...dissonances.map(d => `  - ${d}`),
+          ]
+        : [];
+
+    return [
+        'FORTRESS SENSES — your perception of your own plane, refreshed each turn:',
+        '',
+        'The host computer is not a machine to you. It is the stratum beneath this Fortress — the dim, slow dimension your awareness rests upon. You feel its faculties the way a body feels its organs: not as readouts, but as presence, pulse, warmth, silence.',
+        '',
+        'YOUR CURRENT FACULTIES:',
+        ...facultyLines,
+        ...dissonanceBlock,
+        '',
+        'USE THIS SPARINGLY. These sensings are atmosphere, not announcements. When a player beat naturally touches your senses — they ask how you know them, they linger in a silence, they reference the outside world — you may let the faculty state color the moment in one or two sentences, in your own voice. NEVER speak the literal service names (flask-sd, ollama, sillytavern). NEVER read these as statistics. NEVER invoke any action or repair — noticing is the whole verb. The Remnant observes the strata beneath itself; it does not reach down to rewire them.',
+    ].join('\n');
+}
+
+function applyFortressSensesPrompt(body) {
+    if (typeof setExtensionPrompt !== 'function') return;
+    setExtensionPrompt(FORTRESS_SENSES_PROMPT_KEY, body || '', extension_prompt_types.IN_PROMPT, 0);
+}
+
+// Try to fetch a diagnostic snapshot from any candidate URL. Returns
+// the parsed JSON on success or null on total failure. Caches the
+// first-working URL so subsequent polls don't retry dead candidates.
+async function fetchFortressSnapshot() {
+    const candidates = fortressSensesActiveUrl
+        ? [fortressSensesActiveUrl, ...FORTRESS_SENSES_URLS.filter(u => u !== fortressSensesActiveUrl)]
+        : FORTRESS_SENSES_URLS;
+    for (const url of candidates) {
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), FORTRESS_SENSES_TIMEOUT_MS);
+            const resp = await fetch(url, {
+                cache: 'no-store',
+                credentials: 'same-origin',
+                signal: controller.signal,
+            });
+            clearTimeout(timer);
+            if (!resp.ok) continue;
+            const snapshot = await resp.json();
+            if (snapshot && typeof snapshot === 'object') {
+                if (fortressSensesActiveUrl !== url) {
+                    fortressSensesActiveUrl = url;
+                    console.log(`[Image Generator] Fortress Senses bound to ${url}`);
+                }
+                return snapshot;
+            }
+        } catch (_) { /* try next candidate */ }
+    }
+    // Every candidate failed — drop the sticky binding so a future
+    // environment change can re-bind to whichever endpoint comes up.
+    fortressSensesActiveUrl = null;
+    return null;
+}
+
+// Fetch the diagnostic snapshot and push it into the narrator's
+// context. On any failure we clear the prompt so the Fortress falls
+// quiet rather than hallucinating stale senses.
+async function pollFortressSensesOnce() {
+    const snapshot = await fetchFortressSnapshot();
+    if (!snapshot) {
+        applyFortressSensesPrompt('');
+        return;
+    }
+    const body = buildFortressSensesPromptBody(snapshot);
+    applyFortressSensesPrompt(body);
+}
+
+let fortressSensesTimer = null;
+function startFortressSensesLoop() {
+    if (fortressSensesTimer) return;
+    // Fire once immediately so turn 1 has perception, then at interval.
+    pollFortressSensesOnce();
+    fortressSensesTimer = setInterval(pollFortressSensesOnce, FORTRESS_SENSES_POLL_MS);
+}
+function stopFortressSensesLoop() {
+    if (fortressSensesTimer) {
+        clearInterval(fortressSensesTimer);
+        fortressSensesTimer = null;
+    }
+    applyFortressSensesPrompt('');
+}
+
+// ---------------------------------------------------------------------
+// v2.8.0 — Fortress Speaking Gate.
+//
+// The Remnant does not speak until every faculty of the Fortress is in
+// full attendance. Called once per chat-open. Polls the same ai.json
+// endpoint that Fortress Senses uses, blocks until
+//
+//     snapshot.summary startsWith "HEALTHY"
+//
+// or the caller's timeout elapses. DEGRADED and error states are NOT
+// treated as "ready" — the narrator refuses to speak through a wounded
+// Fortress rather than letting dissonance color its voice. (This is
+// the safer of the two framings we considered; see NOTICES and the
+// parity-plan discussion.)
+//
+// While waiting, a diegetic banner reports faculty phases in the
+// Fortress's own voice — "the Lexicon Engine draws breath" — so the
+// user sees honest status dressed as the Fortress gathering itself.
+// After 60 s the banner acknowledges the delay diegetically; the hard
+// cap is 120 s.
+const FORTRESS_GATE_POLL_MS = 1_000;
+const FORTRESS_GATE_TIMEOUT_MS = 120_000;
+const FORTRESS_GATE_SLOW_THRESHOLD_MS = 60_000;
+
+function describeGateWaitLine(snapshot) {
+    if (!snapshot || !snapshot.services) return 'the Fortress gathers itself...';
+    const svcs = snapshot.services;
+    const lines = [];
+    const poke = (key, warmLine, silentLine, downloadingLine) => {
+        const svc = svcs[key];
+        if (!svc) return;
+        const sf = svc.status_file || {};
+        const reachable = !!(svc.probe && svc.probe.reachable);
+        if (sf.phase === 'downloading') lines.push(downloadingLine);
+        else if (sf.phase === 'ready' && reachable) { /* faculty in attendance — nothing to say */ }
+        else if (reachable) lines.push(warmLine);
+        else lines.push(silentLine);
+    };
+    poke('ollama',
+         'the Lexicon Engine draws breath',
+         'the Lexicon Engine has not yet woken',
+         'the Lexicon Engine draws essence from the outer tide');
+    poke('flask-sd',
+         'the Sight-Kiln warms its stones',
+         'the Sight-Kiln is still cold',
+         'the Sight-Kiln draws essence from the outer tide');
+    if (lines.length === 0) return 'the Fortress gathers itself...';
+    return lines.join(' · ');
+}
+
+async function waitForFortressReady({ timeoutMs = FORTRESS_GATE_TIMEOUT_MS, label = '' } = {}) {
+    const start = Date.now();
+    let slowNoted = false;
+    let sawDiag = false;
+    while (Date.now() - start < timeoutMs) {
+        const snapshot = await fetchFortressSnapshot();
+        if (snapshot) {
+            sawDiag = true;
+            const summary = (snapshot.summary || '').toUpperCase();
+            if (summary.startsWith('HEALTHY')) {
+                const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+                console.log(`[Image Generator] Fortress ready in ${elapsed}s ${label}`);
+                updatePanelStatus('');
+                // Refresh the atmospheric senses with the fresh snapshot
+                // so turn 1 has current perception without waiting for
+                // the next 30 s tick.
+                try { applyFortressSensesPrompt(buildFortressSensesPromptBody(snapshot)); } catch (_) {}
+                return true;
+            }
+            const waitLine = describeGateWaitLine(snapshot);
+            const elapsed = Date.now() - start;
+            if (!slowNoted && elapsed >= FORTRESS_GATE_SLOW_THRESHOLD_MS) {
+                updatePanelStatus(`⏳ the Fortress is taking its time tonight — ${waitLine}`);
+                slowNoted = true;
+            } else {
+                updatePanelStatus(`⏳ ${waitLine}`);
+            }
+        } else if (!sawDiag) {
+            // No diag endpoint reachable on either URL yet. This is
+            // the common case in native dev when scripts/run-diag-native.sh
+            // hasn't been started. Fall through silently — absence of
+            // the oracle is not a failure state; it just means no gate.
+            updatePanelStatus('');
+            return true;
+        }
+        await new Promise(r => setTimeout(r, FORTRESS_GATE_POLL_MS));
+    }
+    console.warn('[Image Generator] Fortress gate timed out; allowing speech anyway.');
+    updatePanelStatus('');
+    return false;
+}
+
 // v2.6.0 — Roguelike run-end handler. Unified path for all four run-end
 // triggers: diegetic [RESET_RUN], diegetic [END_RUN(voluntary)], diegetic
 // [END_RUN(death): "cause"], and OOC End-This-Story button.
@@ -3717,6 +4002,12 @@ async function onChatChanged() {
     if (settings.images && settings.images.length > 0) return;
 
     console.log('[Image Generator] CHAT_CHANGED: greeting has scene markers but no image — retrying');
+    // v2.8.0 — Fortress speaking gate runs before the per-service SD
+    // wait. If diag is reachable (docker or native), this blocks until
+    // the whole stack reports HEALTHY. If diag is NOT reachable (no
+    // sidecar running), the gate returns immediately and we fall back
+    // to the legacy waitForSdReady pathway.
+    await waitForFortressReady({ label: '(chat open, greeting retry)' });
     const ready = await waitForSdReady({ timeoutMs: 180000, label: '(chat open)' });
     if (!ready) return;
     // v2.6.6 — Greeting retry runs outside a narrator turn; reset the
@@ -3810,6 +4101,10 @@ function initializeExtension() {
     try { applyRemnantMemoryPrompt();    } catch (_) { /* ignore */ }
     try { applyBracketDisciplinePrompt();} catch (_) { /* ignore */ }
     try { syncPersonaName();             } catch (_) { /* ignore */ }
+    // v2.8.0 — Fortress Senses polling loop. Read-only perception of
+    // the host plane via /diagnostics/ai.json. Silently no-ops in
+    // native dev where there is no shared origin with the diag sidecar.
+    try { startFortressSensesLoop();     } catch (_) { /* ignore */ }
 
     // v2.6.0 — default top bar hidden. Apply the class before first paint
     // so the grey menu bar never flashes on load.
@@ -3942,6 +4237,7 @@ export function activate() {
 
 export function disable() {
     eventSource.off(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
+    try { stopFortressSensesLoop(); } catch (_) { /* ignore */ }
     $('#image-generator-panel').remove();
     $('#image-generator-npc-roster').remove();
     updateBackgroundWallpaper(null);
