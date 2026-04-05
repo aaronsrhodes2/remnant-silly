@@ -1,0 +1,6 @@
+# Runtime status files — written by downloaders at first boot and
+# served by the nginx splash. Empty on clean checkout; populated at
+# runtime inside the remnant-status docker volume (or here, in the
+# native dev test loop).
+*.json
+!.gitignore

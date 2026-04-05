@@ -1,0 +1,82 @@
+# docker-compose.dev.yml — dev-only override.
+#
+# Redirects the three frozen-world cache volumes (hf-cache, nginx-cache,
+# ollama-data) to host bind mounts under dev-cache/ so iteration on the
+# docker stack doesn't re-download from the internet on every clean test.
+#
+# HOW IT WORKS
+# ------------
+# nginx is the single egress keyhole for the whole stack — all other
+# services attach to play-net (internal: true). Bootstrap fetches
+# flow through nginx:
+#
+#   - HuggingFace:  hf_hub client -> nginx /hf/ passthrough -> HF.
+#                   Caching is done by the hf_hub client itself into
+#                   the hf-cache volume (HF's own on-disk layout).
+#                   nginx does NOT proxy_cache HF because its protocol
+#                   (API + LFS + Xet redirects, presigned URLs, backend
+#                   migrations) is not a clean fit for a generic HTTP
+#                   cache — we let HF's own library handle that.
+#
+#   - pypi / pytorch.org / ollama.com static CDNs: nginx proxy_cache
+#                   (see /pypi/, /pytorch/, /ollama-dl/ in nginx.conf).
+#                   Unused today; forward-compat for the slimming work.
+#                   Stored in the nginx-cache volume.
+#
+#   - Ollama model registry: the one upstream we DON'T librarian
+#                   through nginx (its protocol isn't cleanly proxyable).
+#                   bootstrap-ollama keeps its own bootstrap-net egress
+#                   and writes into the ollama-data volume.
+#
+# In dev, all three volumes are bind-mounted to dev-cache/ subdirs so
+# `docker compose down -v` doesn't blow away the cache.
+#
+# USAGE
+# -----
+#   scripts/dev-up.sh                 # convenience wrapper (recommended)
+#
+# or the long form:
+#
+#   docker compose \
+#       -f docker-compose.yml \
+#       -f docker-compose.dev.yml \
+#       --profile bootstrap up
+#
+# Production runs DO NOT use this file — plain `docker compose up`
+# ignores it entirely and the named volumes stay as docker-managed
+# local volumes. This override is opt-in.
+#
+# SAFETY
+# ------
+# dev-cache/ is aggressively gitignored (nested + root gitignore
+# blocks). Nothing inside it should ever reach git.
+
+volumes:
+  # hf_hub client cache — populated by bootstrap-flask-sd via
+  # huggingface_hub, which talks to nginx as a passthrough to
+  # huggingface.co + its CDNs. Binding here so a clean `docker
+  # compose down -v` doesn't wipe the ~5 GB of HF weights.
+  hf-cache:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/dev-cache/hf-cache
+      o: bind
+  # nginx upstream proxy_cache — used by the /pypi/, /pytorch/,
+  # /ollama-dl/ location blocks (forward-compat for slimming work;
+  # empty today).
+  nginx-cache:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/dev-cache/nginx-cache
+      o: bind
+  # Ollama model store — hybrid exception (ollama registry protocol
+  # isn't proxyable through nginx, so bootstrap-ollama keeps its own
+  # bootstrap-net egress and writes here).
+  ollama-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/dev-cache/ollama-data
+      o: bind

@@ -1,19 +1,116 @@
-# The Remnant Fortress — full stack, one command
+# The Remnant Fortress — full stack, two-network air-gap edition.
 #
-# Usage:
-#   docker compose up
-#   open http://localhost:${HOST_PORT:-8001}
+# USER WORKFLOW
+# -------------
+#   First boot (one time, needs internet):
+#       docker compose --profile bootstrap up
+#       # open http://localhost:${HOST_PORT:-1582}
+#       # watch the splash show download progress for the models;
+#       # it auto-transitions to the game client when ready.
 #
-# Three services on a private network. Only SillyTavern is exposed to the
-# host. Browser talks to SillyTavern; SillyTavern server-side talks to
-# ollama and flask-sd via docker DNS names. No CORS, no credentials,
-# no cross-origin anything.
+#   Subsequent boots (no internet needed):
+#       docker compose up
+#       # open http://localhost:${HOST_PORT:-1582}
+#
+#   Re-bootstrap (e.g. to update a model):
+#       docker compose --profile bootstrap up
+#
+# ARCHITECTURE
+# ------------
+# Two networks isolate runtime traffic from bootstrap downloads:
+#
+#   bootstrap-net  — default bridge, HAS internet. Only the two
+#                    bootstrap-* services attach here; they download
+#                    models into shared named volumes and exit.
+#   play-net       — internal: true, NO internet. All runtime
+#                    services (nginx, flask-sd, ollama, sillytavern)
+#                    attach here. Zero egress once bootstrap is done.
+#
+# Runtime services block at startup on per-service sentinel files in
+# the remnant-status volume, written by the bootstrap services. On a
+# warm boot (no --profile bootstrap), the sentinels from the previous
+# bootstrap run are still in the persistent remnant-status volume, so
+# runtime services unblock immediately.
+#
+# nginx is the ONLY service published to the host. It serves the
+# splash page during download and reverse-proxies /app/ to the
+# sillytavern service once everything is ready.
 
 services:
 
-  # ----------------------------------------------------------------------
-  # Ollama — local LLM runtime. Pulls `mistral` on first boot.
-  # ----------------------------------------------------------------------
+  # =====================================================================
+  #                             RUNTIME STACK
+  # =====================================================================
+  # All runtime services attach only to play-net (no egress). They are
+  # the default compose graph (no profile), so `docker compose up`
+  # starts this set.
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: remnant-nginx
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-1582}:80"
+    volumes:
+      - remnant-status:/remnant-status:ro
+      # Upstream proxy cache — the "nginx librarian" store. Holds every
+      # byte the stack ever fetches from huggingface.co, pypi, pytorch.org,
+      # ollama.com. In dev this is bind-mounted to dev-cache/nginx-cache
+      # via docker-compose.dev.yml; in prod it's a plain named volume.
+      - nginx-cache:/var/cache/nginx/upstream
+    networks:
+      # nginx is the ONLY service on both networks. play-net carries
+      # client traffic from inside the stack; bootstrap-net is nginx's
+      # lone egress path to the real internet for upstream caching.
+      - play-net
+      - bootstrap-net
+    # nginx has no dependencies — it serves the splash immediately so
+    # the user sees something even while bootstrap is still downloading.
+
+  flask-sd:
+    build:
+      context: .
+      dockerfile: docker/flask-sd/Dockerfile
+    container_name: remnant-flask-sd
+    restart: unless-stopped
+    expose:
+      - "5000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - flask-gallery:/data/gallery
+      - remnant-status:/remnant-status
+    environment:
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=5000
+      - IMAGE_GALLERY_DIR=/data/gallery
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      # Refuse to hit the network — if models aren't cached we fail
+      # loudly instead of silently hanging on a dead connection.
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - STATUS_DIR=/remnant-status
+      # Entrypoint polls for this sentinel before exec'ing the API.
+      - WAIT_FOR_SENTINEL=/remnant-status/flask-sd-ready
+      - WAIT_TIMEOUT_SECONDS=1800
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; urllib.request.urlopen('http://localhost:5000/api/health'); sys.exit(0)\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - play-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   ollama:
     build:
       context: .
@@ -24,19 +121,16 @@ services:
       - "11434"
     volumes:
       - ollama-data:/root/.ollama
+      - remnant-status:/remnant-status
     environment:
       - OLLAMA_HOST=0.0.0.0
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list | grep -q ${OLLAMA_MODEL:-mistral} || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 60        # allow ~10 minutes for first-run model download
-      start_period: 30s
-    # GPU acceleration for Ollama. Safe to enable on cards with >= 12 GB VRAM
-    # since SD fp16 (~4 GB) + Mistral 7B Q4 (~5 GB) coexist comfortably.
-    # On 8 GB cards, comment this block out to keep Mistral on CPU and avoid
-    # VRAM eviction between image/text turns.
+      - MODE=runtime
+      - STATUS_DIR=/remnant-status
+      - WAIT_FOR_SENTINEL=/remnant-status/ollama-ready
+      - WAIT_TIMEOUT_SECONDS=1800
+    networks:
+      - play-net
     deploy:
       resources:
         reservations:
@@ -45,64 +139,154 @@ services:
               count: all
               capabilities: [gpu]
 
-  # ----------------------------------------------------------------------
-  # Flask + Stable Diffusion — image generation backend. GPU REQUIRED
-  # (or wildly slow on CPU). SD v1.5 + IP-Adapter weights are baked into
-  # the image at build time, so no runtime download is needed.
-  # ----------------------------------------------------------------------
-  flask-sd:
-    build:
-      context: .
-      dockerfile: docker/flask-sd/Dockerfile
-    container_name: remnant-flask-sd
-    restart: unless-stopped
-    expose:
-      - "5000"
-    # NOTE: no hf-cache volume. Weights live in the image at
-    # /root/.cache/huggingface. A volume mount would shadow them.
-    volumes:
-      - flask-gallery:/data/gallery
-    environment:
-      - FLASK_HOST=0.0.0.0
-      - FLASK_PORT=5000
-      - IMAGE_GALLERY_DIR=/data/gallery
-      - HF_HOME=/root/.cache/huggingface
-      - TRANSFORMERS_CACHE=/root/.cache/huggingface
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; urllib.request.urlopen('http://localhost:5000/api/health'); sys.exit(0)\" || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  # ----------------------------------------------------------------------
-  # SillyTavern — web UI. THE ONLY SERVICE EXPOSED TO THE HOST.
-  # Pre-configured: extension installed, CORS proxy on, listen all.
-  # ----------------------------------------------------------------------
   sillytavern:
     build:
       context: .
       dockerfile: docker/sillytavern/Dockerfile
     container_name: remnant-sillytavern
     restart: unless-stopped
-    ports:
-      - "${HOST_PORT:-8001}:8000"
+    expose:
+      - "8000"
     volumes:
       - sillytavern-data:/home/node/app/data
-    depends_on:
-      ollama:
-        condition: service_healthy
-      flask-sd:
-        condition: service_healthy
+      - remnant-status:/remnant-status
+    networks:
+      - play-net
+
+  # Diagnostics sidecar — tiny stdlib-only Python service. nginx
+  # proxies host:1582/diagnostics/ai.json and /diagnostics/actions/*
+  # to this container. Attaches ONLY to play-net (no egress); reads +
+  # writes remnant-status so it can reset coordination state and
+  # append to diagnostics.log.
+  diag:
+    build:
+      context: .
+      dockerfile: docker/diag/Dockerfile
+    container_name: remnant-diag
+    restart: unless-stopped
+    expose:
+      - "8700"
+    volumes:
+      - remnant-status:/remnant-status
+    environment:
+      - STATUS_DIR=/remnant-status
+      - FLASK_SD_URL=http://flask-sd:5000
+      - OLLAMA_URL=http://ollama:11434
+      - SILLYTAVERN_URL=http://sillytavern:8000
+      - LISTEN_PORT=8700
+    networks:
+      - play-net
+
+  # =====================================================================
+  #                          BOOTSTRAP STACK
+  # =====================================================================
+  # These services run ONLY when `docker compose --profile bootstrap up`
+  # is invoked. They have internet access via bootstrap-net, populate
+  # the shared model volumes, write per-service sentinel files into
+  # remnant-status, then exit with code 0. They do NOT restart.
+
+  bootstrap-flask-sd:
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: docker/flask-sd/Dockerfile
+    container_name: remnant-bootstrap-flask-sd
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        python /app/download_flask_sd.py
+        touch /remnant-status/flask-sd-ready
+        echo "[bootstrap-flask-sd] done, sentinel written"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - remnant-status:/remnant-status
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+      - STATUS_DIR=/remnant-status
+      # Route all huggingface_hub traffic through nginx. hf_hub respects
+      # HF_ENDPOINT natively — snapshot_download / hf_hub_download / HfApi
+      # all rewrite their base URL to this value. nginx reverse-proxies
+      # to huggingface.co (and to the LFS/Xet CDNs via the redirect
+      # rewrites) WITHOUT attempting to cache; caching is done by the
+      # hf_hub client in its own on-disk store (hf-cache volume). This
+      # keeps nginx as the single egress keyhole while letting HF's own
+      # repository manager handle the protocol correctly.
+      - HF_ENDPOINT=http://nginx/hf
+    networks:
+      # Play-net only — bootstrap-flask-sd has no direct egress. All
+      # HuggingFace traffic goes through nginx on play-net, preserving
+      # the "nginx is the only service that ever touches the internet"
+      # invariant.
+      - play-net
+    restart: "no"
+
+  bootstrap-ollama:
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: docker/ollama/Dockerfile
+    container_name: remnant-bootstrap-ollama
+    # Reuse the image's entrypoint.sh directly (MODE=bootstrap), then
+    # write the sentinel. We clear the image ENTRYPOINT so `command:`
+    # becomes the full invocation rather than args appended to
+    # /entrypoint.sh.
+    entrypoint: []
+    environment:
+      - MODE=bootstrap
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - STATUS_DIR=/remnant-status
+    command:
+      - /bin/sh
+      - -c
+      - |
+        /entrypoint.sh
+        touch /remnant-status/ollama-ready
+        echo "[bootstrap-ollama] done, sentinel written"
+    volumes:
+      - ollama-data:/root/.ollama
+      - remnant-status:/remnant-status
+    networks:
+      - bootstrap-net
+    restart: "no"
+    # ollama's own GPU isn't strictly needed for pulling models (it's
+    # just a registry fetch) — commented for faster first-boot setup.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+networks:
+  bootstrap-net:
+    driver: bridge
+  play-net:
+    driver: bridge
+    internal: true   # no egress — the whole point of Phase B
 
 volumes:
-  ollama-data:
-  flask-gallery:
-  sillytavern-data:
+  hf-cache:           # HuggingFace weights (flask-sd) — the hf_hub client's
+                      # on-disk cache (~/.cache/huggingface/hub layout).
+                      # Populated by bootstrap-flask-sd via huggingface_hub,
+                      # which talks to nginx (HF_ENDPOINT=http://nginx/hf)
+                      # as a passthrough to the real HF hostnames. Caching
+                      # happens HERE, in the client's own store — not in
+                      # nginx. Bind-mounted to dev-cache/hf-cache in dev.
+  ollama-data:        # Ollama models (hybrid exception — bootstrap-ollama
+                      # fetches these directly because ollama's registry
+                      # protocol isn't proxyable through nginx).
+  nginx-cache:        # nginx upstream proxy_cache — caches pypi/pytorch.org/
+                      # ollama.com static CDN fetches (forward-compat for
+                      # the slimming work that moves torch wheels + ollama
+                      # CUDA libs to first-boot download). Empty today.
+                      # Bind-mounted to dev-cache/nginx-cache in dev.
+  sillytavern-data:   # Chats, personas, world info (LIVING world data —
+                      # must NEVER be wiped by automation).
+  flask-gallery:      # Generated images (LIVING world data).
+  remnant-status:     # Shared status JSON + sentinels (persistent).

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Remnant — Diagnostics</title>
+<style>
+  :root {
+    --bg: #14110e;
+    --panel: #1c1814;
+    --ink: #d7c8a8;
+    --dim: #7a6e57;
+    --accent: #d6a85c;
+    --ok: #6fa86a;
+    --warn: #d6a85c;
+    --err: #c46a5a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: "Iosevka", "Consolas", ui-monospace, monospace;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    color: var(--accent);
+    font-weight: normal;
+    letter-spacing: 2px;
+  }
+  .sub { color: var(--dim); margin-bottom: 20px; font-size: 11px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid #2a241d;
+    padding: 12px 14px;
+  }
+  .panel h2 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: normal;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .row .k { color: var(--dim); }
+  .row .v { color: var(--ink); }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+  }
+  .ok { color: var(--ok); }
+  .warn { color: var(--warn); }
+  .err { color: var(--err); }
+  .dim { color: var(--dim); }
+  pre.log {
+    background: #0d0b09;
+    border: 1px solid #2a241d;
+    color: var(--ink);
+    padding: 12px;
+    margin: 0;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+  }
+  .log-line-err { color: var(--err); }
+  .log-line-warn { color: var(--warn); }
+  .footer { color: var(--dim); margin-top: 16px; font-size: 11px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <h1>REMNANT DIAGNOSTICS</h1>
+  <div class="sub">gateway :1582 — refreshing every 2s</div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>gateway</h2>
+      <div id="gateway">loading…</div>
+    </div>
+    <div class="panel">
+      <h2>flask-sd</h2>
+      <div id="flask-sd">loading…</div>
+    </div>
+    <div class="panel">
+      <h2>ollama</h2>
+      <div id="ollama">loading…</div>
+    </div>
+    <div class="panel">
+      <h2>sillytavern</h2>
+      <div id="sillytavern">loading…</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>shared log (/diagnostics/log.txt)</h2>
+    <pre class="log" id="log">loading…</pre>
+  </div>
+
+  <div class="footer">
+    raw endpoints:
+    <a href="/health">/health</a> ·
+    <a href="/status/flask-sd.json">/status/flask-sd.json</a> ·
+    <a href="/status/ollama.json">/status/ollama.json</a> ·
+    <a href="/status/sillytavern.json">/status/sillytavern.json</a> ·
+    <a href="/diagnostics/log.txt">/diagnostics/log.txt</a> ·
+    <a href="/diagnostics/ai.json">/diagnostics/ai.json</a> ·
+    <a href="/diagnostics/actions">/diagnostics/actions</a> ·
+    <a href="/api/flask-sd/api/health">/api/flask-sd/api/health</a> ·
+    <a href="/api/ollama/api/tags">/api/ollama/api/tags</a>
+    <br>
+    <span class="dim">AI agents: GET /diagnostics/ai.json for a single-shot self-contained snapshot (services, issues, suggested actions, catalog).</span>
+  </div>
+
+<script>
+const POLL_MS = 2000;
+
+async function fetchJson(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return { __error: r.status + ' ' + r.statusText };
+    return await r.json();
+  } catch (e) {
+    return { __error: String(e) };
+  }
+}
+
+async function fetchText(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) return '';
+    return await r.text();
+  } catch (e) {
+    return '';
+  }
+}
+
+function phaseBadge(phase) {
+  if (phase === 'ready') return '<span class="badge ok">ready</span>';
+  if (phase === 'downloading') return '<span class="badge warn">downloading</span>';
+  if (phase === 'error') return '<span class="badge err">error</span>';
+  return '<span class="badge dim">' + (phase || 'unknown') + '</span>';
+}
+
+function humanBytes(n) {
+  if (!n && n !== 0) return '—';
+  const units = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n < 10 && i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+function renderService(elId, status, liveProbe) {
+  const el = document.getElementById(elId);
+  if (status.__error) {
+    el.innerHTML = '<div class="row"><span class="k">status</span><span class="v dim">no status file</span></div>'
+      + (liveProbe ? '<div class="row"><span class="k">live</span><span class="v">' + liveProbe + '</span></div>' : '');
+    return;
+  }
+  let html = '<div class="row"><span class="k">phase</span><span class="v">' + phaseBadge(status.phase) + '</span></div>';
+  if (status.error) {
+    html += '<div class="row"><span class="k">error</span><span class="v err">' + escapeHtml(status.error) + '</span></div>';
+  }
+  if (Array.isArray(status.models)) {
+    for (const m of status.models) {
+      const pct = m.bytes_total ? ((m.bytes_done / m.bytes_total) * 100).toFixed(1) : '—';
+      html += '<div class="row"><span class="k">' + escapeHtml(m.name) + '</span>'
+        + '<span class="v">' + humanBytes(m.bytes_done) + ' / ' + humanBytes(m.bytes_total)
+        + (pct !== '—' ? ' (' + pct + '%)' : '') + '</span></div>';
+      if (m.license) {
+        html += '<div class="row"><span class="k dim">└ license</span><span class="v dim">' + escapeHtml(m.license) + '</span></div>';
+      }
+    }
+  }
+  if (liveProbe) {
+    html += '<div class="row"><span class="k">live</span><span class="v">' + liveProbe + '</span></div>';
+  }
+  el.innerHTML = html;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+function colorLog(text) {
+  if (!text) return '<span class="dim">(empty — no services have written milestones yet)</span>';
+  const lines = text.split(/\r?\n/).slice(-200);
+  return lines.map(line => {
+    const esc = escapeHtml(line);
+    if (/\b(error|fail|exception|traceback)\b/i.test(line)) return '<span class="log-line-err">' + esc + '</span>';
+    if (/\b(warn|warning)\b/i.test(line)) return '<span class="log-line-warn">' + esc + '</span>';
+    return esc;
+  }).join('\n');
+}
+
+async function tick() {
+  const [gateway, fsd, oll, st, flaskHealth, ollamaTags, log] = await Promise.all([
+    fetchJson('/health'),
+    fetchJson('/status/flask-sd.json'),
+    fetchJson('/status/ollama.json'),
+    fetchJson('/status/sillytavern.json'),
+    fetchJson('/api/flask-sd/api/health'),
+    fetchJson('/api/ollama/api/tags'),
+    fetchText('/diagnostics/log.txt'),
+  ]);
+
+  // Gateway panel — liveness + poll timestamp.
+  const gwEl = document.getElementById('gateway');
+  if (gateway.__error) {
+    gwEl.innerHTML = '<div class="row"><span class="k">status</span><span class="v err">' + escapeHtml(gateway.__error) + '</span></div>';
+  } else {
+    gwEl.innerHTML = '<div class="row"><span class="k">gateway</span><span class="v ok">ok</span></div>'
+      + '<div class="row"><span class="k">port</span><span class="v">' + gateway.port + '</span></div>'
+      + '<div class="row"><span class="k">polled</span><span class="v dim">' + new Date().toLocaleTimeString() + '</span></div>';
+  }
+
+  // Service panels: status file + live HTTP probe.
+  const fsdProbe = flaskHealth.__error
+    ? '<span class="err">' + escapeHtml(flaskHealth.__error) + '</span>'
+    : '<span class="ok">' + escapeHtml(flaskHealth.status || 'ok') + '</span>'
+      + (flaskHealth.device ? ' <span class="dim">(' + escapeHtml(flaskHealth.device) + ')</span>' : '');
+  const ollProbe = ollamaTags.__error
+    ? '<span class="err">' + escapeHtml(ollamaTags.__error) + '</span>'
+    : '<span class="ok">' + (ollamaTags.models ? ollamaTags.models.length + ' model(s)' : 'ok') + '</span>';
+
+  renderService('flask-sd', fsd, fsdProbe);
+  renderService('ollama', oll, ollProbe);
+  renderService('sillytavern', st, null);
+
+  document.getElementById('log').innerHTML = colorLog(log);
+}
+
+tick();
+setInterval(tick, POLL_MS);
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# dev-cache/ holds multi-GB frozen-world assets that nginx caches
+# from upstream sources (HuggingFace, pytorch.org, ollama.com) plus
+# the ollama model store (registry exception).
+#
+# Nothing in here should ever reach git. Rule: ignore everything
+# except this file, the README, and the .gitkeep placeholders that
+# let the bind-mount subdirs exist before first run.
+
+*
+!.gitignore
+!README.md
+!hf-cache/
+!nginx-cache/
+!ollama-data/
+hf-cache/*
+nginx-cache/*
+ollama-data/*
+!hf-cache/.gitkeep
+!nginx-cache/.gitkeep
+!ollama-data/.gitkeep

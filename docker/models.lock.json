@@ -1,0 +1,46 @@
+{
+  "_comment": "Pinned manifest of the models the Remnant runtime downloads on first boot. Populate 'revision' and 'sha256' fields from a successful bootstrap run (bootstrap-flask-sd and bootstrap-ollama write to stdout). Reproducibility: pinning revision guarantees the same bytes are fetched across end-user machines.",
+  "schema_version": 1,
+  "models": [
+    {
+      "service": "flask-sd",
+      "source": "huggingface",
+      "repo_id": "runwayml/stable-diffusion-v1-5",
+      "revision": null,
+      "variant": "fp16",
+      "license": "CreativeML Open RAIL-M",
+      "license_url": "https://huggingface.co/runwayml/stable-diffusion-v1-5/blob/main/LICENSE.md",
+      "allow_patterns": [
+        "*.json",
+        "*.txt",
+        "tokenizer/*",
+        "feature_extractor/*",
+        "scheduler/*",
+        "text_encoder/*.fp16.safetensors",
+        "text_encoder/config.json",
+        "unet/*.fp16.safetensors",
+        "unet/config.json",
+        "vae/*.fp16.safetensors",
+        "vae/config.json",
+        "model_index.json"
+      ]
+    },
+    {
+      "service": "flask-sd",
+      "source": "huggingface",
+      "repo_id": "h94/IP-Adapter",
+      "revision": null,
+      "filename": "models/ip-adapter-plus_sd15.bin",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/h94/IP-Adapter/blob/main/LICENSE"
+    },
+    {
+      "service": "ollama",
+      "source": "ollama-registry",
+      "model": "mistral",
+      "revision": null,
+      "license": "Apache-2.0",
+      "license_url": "https://ollama.com/library/mistral"
+    }
+  ]
+}

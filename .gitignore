@@ -52,3 +52,21 @@ credentials.json
 huggingface/
 models/
 !docker/**/models/
+
+# Dev cache — bind-mount target for docker-compose.dev.yml. Holds
+# nginx's upstream proxy cache (HuggingFace weights, pip wheels,
+# ollama.com static files — everything nginx librarians) plus the
+# ollama model store (the hybrid-exception upstream). The nested
+# dev-cache/.gitignore is the primary guard; this is belt-and-
+# suspenders.
+dev-cache/hf-cache/**
+dev-cache/nginx-cache/**
+dev-cache/ollama-data/**
+!dev-cache/hf-cache/.gitkeep
+!dev-cache/nginx-cache/.gitkeep
+!dev-cache/ollama-data/.gitkeep
+
+# Native dev runtime staging — PID files, logs, etc. written by
+# scripts/native-up.sh. The status/*.json files in the same dir are
+# tracked (they're the native mirror of the remnant-status volume).
+scripts/splash/status/.native-run/

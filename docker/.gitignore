@@ -1,0 +1,21 @@
+# Defense-in-depth weight-file guard for the docker/ subtree.
+#
+# The root .gitignore on main already blocks these patterns globally
+# (added in commit 34ef2e2). This nested file travels with the docker/
+# subtree to the `docker` branch, so pushes directly to that branch
+# are also protected. See memory project_north_star.md and the
+# runtime-download plan for rationale.
+
+*.safetensors
+*.gguf
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.bin
+.cache/
+huggingface/
+models/
+
+# Allow the pinned manifest itself through — it's just JSON.
+!models.lock.json

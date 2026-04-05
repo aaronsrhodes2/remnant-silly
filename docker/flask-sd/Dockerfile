@@ -12,6 +12,17 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install Python dependencies. torch/cuda already provided by base image.
+#
+# Note: `docker build` runs on docker's default network, not the compose
+# play-net, so routing this pip install through the nginx librarian at
+# /pypi/ isn't free — it would require the nginx container to be up
+# BEFORE the build, plus --add-host=host.docker.internal:host-gateway
+# and --build-arg PIP_INDEX_URL=http://host.docker.internal:1580/pypi/simple.
+# The single-egress invariant (nginx is the only internet-touching
+# process) applies at RUNTIME — enforced by HF_ENDPOINT=http://nginx/hf
+# and play-net internal:true. Build-time fetches are a dev-machine
+# operation outside that boundary, same as `docker pull` of the base
+# image itself.
 COPY docker/flask-sd/requirements.txt .
 RUN pip install -r requirements.txt
 
@@ -19,21 +30,22 @@ RUN pip install -r requirements.txt
 COPY backend/image_generator_api.py .
 COPY backend/image_gallery.py .
 
-# Bake Stable Diffusion v1.5 + IP-Adapter weights into the image so the
-# container is fully self-contained and needs no network at runtime.
-# This mirrors the exact load sequence used by image_generator_api.py so
-# the runtime load hits the cache instead of HuggingFace.
-RUN python -c "import torch; \
-from diffusers import StableDiffusionPipeline; \
-pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', torch_dtype=torch.float16, safety_checker=None); \
-pipe.load_ip_adapter('h94/IP-Adapter', subfolder='models', weight_name='ip-adapter-plus_sd15.bin'); \
-print('[bake] SD v1.5 + IP-Adapter cached at', '/root/.cache/huggingface')"
+# Bootstrap downloader (runs under the bootstrap compose profile with
+# internet). Fills /root/.cache/huggingface via disk-polling progress
+# that nginx's splash displays. Runtime flask-sd never runs this —
+# it reads the already-populated HF cache and has no egress.
+COPY scripts/splash/download_flask_sd.py /app/download_flask_sd.py
+
+# Runtime entrypoint — writes a "ready" status file then execs the API.
+COPY docker/flask-sd/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Create default gallery dir (mounted as a volume in compose)
 RUN mkdir -p /data/gallery
 
 EXPOSE 5000
 
-# Bind to all interfaces so sibling containers can reach us on the
-# compose network. Healthcheck pings /api/health.
-CMD ["python", "image_generator_api.py"]
+# Default entrypoint is the runtime wrapper. The bootstrap service
+# overrides both entrypoint and command in docker-compose.yml to run
+# download_flask_sd.py and exit.
+ENTRYPOINT ["/entrypoint.sh"]

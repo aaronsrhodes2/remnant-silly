@@ -1,0 +1,213 @@
+/* Remnant splash — dark parchment theme, matches the in-game UI vibe. */
+
+:root {
+    --bg:        #0a0a0f;
+    --bg-panel:  #14141c;
+    --fg:        #e8e4d8;
+    --fg-dim:    #8a8577;
+    --accent:    #d4a84b;       /* ember gold */
+    --accent-dim:#6e5624;
+    --ok:        #6ebf62;
+    --err:       #c85050;
+    --bar-bg:    #1f1f2a;
+    --border:    #2a2a36;
+    --mono:      ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: Georgia, "Times New Roman", serif;
+    min-height: 100vh;
+}
+
+main#splash {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 48px 32px;
+}
+
+header h1 {
+    font-size: 48px;
+    font-weight: 400;
+    letter-spacing: 0.15em;
+    margin: 0 0 4px 0;
+    color: var(--accent);
+    text-transform: uppercase;
+}
+
+header .subtitle {
+    font-size: 18px;
+    font-style: italic;
+    color: var(--fg-dim);
+    margin: 0 0 16px 0;
+}
+
+header .explainer {
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--fg);
+    max-width: 62ch;
+    margin: 0 0 32px 0;
+}
+
+#services {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+article.service {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px 20px;
+}
+
+article.service h2 {
+    margin: 0 0 4px 0;
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--accent);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+article.service h2 .phase {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--fg-dim);
+}
+
+article.service.ready h2 .phase  { color: var(--ok); }
+article.service.error h2 .phase  { color: var(--err); }
+
+article.service ul.models {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+article.service li.model {
+    font-size: 13px;
+}
+
+.model-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+}
+
+.model-name {
+    font-family: var(--mono);
+    color: var(--fg);
+}
+
+.model-license {
+    font-size: 11px;
+    color: var(--fg-dim);
+    font-style: italic;
+}
+
+.model-bytes {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+
+.progress {
+    width: 100%;
+    height: 8px;
+    background: var(--bar-bg);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress .bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    transition: width 0.4s ease;
+}
+
+footer {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+}
+
+#overall {
+    display: grid;
+    grid-template-columns: 80px 1fr 60px;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.overall-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--fg-dim);
+}
+
+.overall-pct {
+    font-family: var(--mono);
+    font-size: 13px;
+    text-align: right;
+    color: var(--accent);
+}
+
+.fineprint {
+    font-size: 11px;
+    color: var(--fg-dim);
+    line-height: 1.5;
+    margin: 0;
+}
+
+article.service.pending {
+    opacity: 0.55;
+}
+
+article.service.error {
+    border-color: var(--err);
+}
+
+.error-msg {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(200, 80, 80, 0.08);
+    border-left: 2px solid var(--err);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--err);
+    white-space: pre-wrap;
+}
+
+/* Neutral in-progress detail line (probing, verifying, etc.). Used
+   when the splash wants to show liveness during a long operation
+   that isn't a byte-progress download — shares the box treatment
+   with .error-msg but uses the calm accent-dim palette so it
+   doesn't read as a failure. */
+.detail-msg {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(212, 168, 75, 0.06);
+    border-left: 2px solid var(--accent-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+    white-space: pre-wrap;
+}
