@@ -28,6 +28,9 @@ import {
     getCharacters,
     getThumbnailUrl,
     doNewChat,
+    setExtensionPrompt,
+    extension_prompt_types,
+    saveChatDebounced,
 } from '../../../script.js';
 
 import { user_avatar } from '../../personas.js';
@@ -105,14 +108,40 @@ function initSettings() {
     if (extension_settings[EXTENSION_NAME].topBarHidden === undefined) {
         extension_settings[EXTENSION_NAME].topBarHidden = false;
     }
+    // v2.3.2: persistent "where Aaron is now" memory, injected into the
+    // LLM prompt at depth 1 so the narrator stops drifting back to rooms
+    // Aaron has already left. Updated whenever a [GENERATE_IMAGE(location)]
+    // marker fires.
+    if (extension_settings[EXTENSION_NAME].currentLocation === undefined) {
+        extension_settings[EXTENSION_NAME].currentLocation = null;
+    }
     // codex: { items: { [name]: { description, first_seen } }, lore: { ... } }
     if (!extension_settings[EXTENSION_NAME].codex) {
         extension_settings[EXTENSION_NAME].codex = { items: {}, lore: {} };
     }
     if (!extension_settings[EXTENSION_NAME].codex.items) extension_settings[EXTENSION_NAME].codex.items = {};
     if (!extension_settings[EXTENSION_NAME].codex.lore)  extension_settings[EXTENSION_NAME].codex.lore  = {};
+    // v2.4.7 — The Fold is a built-in item that exists from turn 1 of
+    // any chat. It's the nanovirus-implanted neural comm link The Remnant
+    // opened in Aaron's skull at pod insertion. Seed it programmatically
+    // so existing chats (where first_mes is already in history and its
+    // ITEM marker won't re-fire) still have it in the codex panel.
+    if (!extension_settings[EXTENSION_NAME].codex.items['The Fold']) {
+        extension_settings[EXTENSION_NAME].codex.items['The Fold'] = {
+            name: 'The Fold',
+            description: FOLD_ITEM_DESCRIPTION,
+            first_seen: '1970-01-01T00:00:00.000Z', // sort to top as built-in
+        };
+        try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
+    }
     return extension_settings[EXTENSION_NAME];
 }
+
+// The Fold — always-on neural comm link. Single source of truth for the
+// codex description used by both the init-seed (above) and any narrator
+// ITEM marker that emits the same name (handleCodexEntries dedupes on
+// name, first-write-wins, so this pre-seed takes precedence).
+const FOLD_ITEM_DESCRIPTION = "A nanovirus-installed neural comm implant behind your left ear — the small fresh scar is its access point. Installed by The Remnant while you were in the pod. Always-on, multiverse-ranged: The Remnant's voice reaches you anywhere, any time, directly inside your skull, and you can subvocalize back. You are never alone. Cannot be removed; can be asked to fade or deepen.";
 
 // Name the Remnant is keyed under in settings.npcs and dialogue attribution.
 const REMNANT_NAME = 'The Remnant';
@@ -220,6 +249,12 @@ const SENSE_MARKERS = {
     TASTE:             { cssClass: 'sense-taste',             triggersImage: false, triggersReset: false },
     TOUCH:             { cssClass: 'sense-touch',             triggersImage: false, triggersReset: false },
     ENVIRONMENT:       { cssClass: 'sense-environment',       triggersImage: false, triggersReset: false },
+    INTRODUCE:         { cssClass: 'sense-introduce',         triggersImage: false, triggersReset: false },
+    RESET_STORY:       { cssClass: 'sense-reset',             triggersImage: false, triggersReset: true  },
+    ITEM:              { cssClass: 'sense-item',              triggersImage: false, triggersReset: false },
+    LORE:              { cssClass: 'sense-lore',              triggersImage: false, triggersReset: false },
+    UPDATE_PLAYER:     { cssClass: 'sense-update-player',     triggersImage: false, triggersReset: false },
+    UPDATE_APPEARANCE: { cssClass: 'sense-update-appearance', triggersImage: false, triggersReset: false },
     // v2.3.0: the six sensory marker types get collapsed into an icon bar
     // above each message instead of being rendered inline. GENERATE_IMAGE
     // is also stripped from prose since its payload surfaces as an actual
@@ -243,13 +278,6 @@ const SENSE_ICONS = {
 const SENSE_LABELS = {
     SIGHT: 'sight', SMELL: 'smell', SOUND: 'sound',
     TASTE: 'taste', TOUCH: 'touch', ENVIRONMENT: 'atmosphere',
-};
-    INTRODUCE:         { cssClass: 'sense-introduce',         triggersImage: false, triggersReset: false },
-    RESET_STORY:       { cssClass: 'sense-reset',             triggersImage: false, triggersReset: true  },
-    ITEM:              { cssClass: 'sense-item',              triggersImage: false, triggersReset: false },
-    LORE:              { cssClass: 'sense-lore',              triggersImage: false, triggersReset: false },
-    UPDATE_PLAYER:     { cssClass: 'sense-update-player',     triggersImage: false, triggersReset: false },
-    UPDATE_APPEARANCE: { cssClass: 'sense-update-appearance', triggersImage: false, triggersReset: false },
 };
 
 // Parse all sensory markers. Supports three forms:
@@ -370,6 +398,86 @@ function lightenHex(hex, pct) {
 //     the reader to parse inline).
 //   - Attributed sense markers (e.g. SMELL(Sherri)) render as "Sherri:"
 //     in the NPC color followed by the sensed phrase in the sense color.
+// v2.4.3 / v2.4.4 — Programmatic guardrail. The narrator LLM keeps
+// attributing things to the player character — first as dialogue
+// (`Aaron: "I'll be needing tools."`), then as asterisk stage
+// directions (`Aaron: *pauses*`, `Aaron: *nods*`, `Aaron: *snorts*`).
+// Prompt rules have failed repeatedly; we strip ANY line that starts
+// with a player-side attribution and a colon, regardless of what
+// follows — quoted dialogue, asterisk actions, bare prose, all gone.
+// We mutate chat[i].mes so the LLM doesn't see its own prior
+// Aaron-lines on the next turn and compound the pattern.
+const PLAYER_DIALOGUE_RE = /^[ \t]*(?:Aaron(?:\s+Rhodes)?|MSgt(?:\s+Aaron)?(?:\s+Rhodes)?|Sergeant(?:\s+Rhodes)?|Rhodes|The\s+Sergeant|The\s+Player|Player)\s*:[^\n]*\r?\n?/gmi;
+
+// Also catch inline `Aaron: *action*` fragments embedded mid-paragraph
+// (not at line start). Same attribution set, but the match terminates
+// at the next period, asterisk-close, or dialogue tag so we don't eat
+// legitimate following sentences.
+const PLAYER_INLINE_RE = /(?:^|[.!?]\s+|\*\s*)(Aaron(?:\s+Rhodes)?|MSgt(?:\s+Aaron)?(?:\s+Rhodes)?|Sergeant(?:\s+Rhodes)?|Rhodes|The\s+Sergeant|The\s+Player|Player)\s*:\s*(?:\*[^*\n]*\*|["“][^"”\n]*["”])/gi;
+
+// v2.4.5 — Italic stage-direction fragments where Aaron is the subject:
+// `*Aaron stirs. His pod dissolves...*`, `*Aaron hesitates. He sits up...*`.
+// No colon, no quote — just an asterisk-wrapped prose block that narrates
+// Aaron's body state. Non-greedy to the next `*` so each italic span is
+// removed independently and we don't eat unrelated italics that follow.
+const PLAYER_ITALIC_RE = /\*\s*(?:Aaron(?:\s+Rhodes)?|MSgt\s+Aaron(?:\s+Rhodes)?|Sergeant(?:\s+Rhodes)?|Rhodes|The\s+Sergeant)\b[^*]*?\*/gi;
+
+// v2.4.7 — PLAIN-PROSE pod-reset leak: the narrator keeps re-narrating
+// Aaron's wake-up as bare prose (no asterisks, no colons). E.g.
+// "Aaron stirs. The pod dissolves around him. He sits up, holds out a
+// hand. The room is empty." — slipped past every previous regex.
+// We match entire sentences containing any of the known pod-wake
+// signature phrases and delete them. Each pattern eats one sentence
+// (to the next . ! ? or newline). Anchored with word boundaries so
+// we don't eat legitimate mentions inside image-prompts / quoted text.
+const POD_RESET_SENTENCES = [
+    // Legacy third-person leaks (card is now second-person, but a confused
+    // LLM may still slip into "Aaron stirs..." form — keep scrubbing).
+    /[^.!?\n]*\bAaron\s+stirs?\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bAaron\s+wakes?\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bAaron['\u2019]s\s+eyes?\s+open\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\b(?:the|his)\s+pod\s+(?:dissolves?|is\s+dissolving|begins?\s+to\s+dissolve|unravels?|unravelling|unraveling)\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bhe\s+breathes\s+and\s+blinks\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bhis\s+body\s+floats\s+weightlessly\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bhe\s+(?:sits|climbs)\s+(?:up|out)\s+(?:of\s+(?:the|his)\s+pod)?[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bliquid[- ]metal\s+(?:shell|casing)\b[^.!?\n]*[.!?]?\s*/gi,
+    // v2.5.0 — second-person variants (canonical voice).
+    /[^.!?\n]*\byou\s+stir\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byou\s+wake\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byour\s+eyes?\s+open\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bthe\s+pod\s+(?:dissolves?|is\s+dissolving|begins?\s+to\s+dissolve|unravels?|unravelling|unraveling)\s+around\s+you\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byou\s+breathe\s+and\s+blink\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byour\s+body\s+floats\s+weightlessly\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byou\s+(?:sit|climb)\s+(?:up|out)\s+(?:of\s+(?:the|your)\s+pod)?[^.!?\n]*[.!?]?\s*/gi,
+];
+
+function scrubPlayerDialogue(text) {
+    if (!text) return text;
+    let out = text.replace(PLAYER_DIALOGUE_RE, '');
+    out = out.replace(PLAYER_INLINE_RE, (full, _name, offset) => {
+        // Preserve whatever punctuation/delimiter preceded the match.
+        const lead = full.match(/^(?:[.!?]\s+|\*\s*|^)/);
+        return lead ? lead[0] : '';
+    });
+    out = out.replace(PLAYER_ITALIC_RE, '');
+    // v2.4.7 — plain-prose pod-reset sentence scrub. IMPORTANT: skip
+    // content inside square-bracket markers (image prompts etc.) where
+    // phrases like "Aaron stirs" might legitimately appear in a visual
+    // description. We split on brackets, scrub only outside them, and
+    // rejoin.
+    out = out.replace(/(\[[^\]]*\])|([^\[]+)/g, (full, bracketed, prose) => {
+        if (bracketed) return bracketed;
+        let piece = prose;
+        for (const re of POD_RESET_SENTENCES) {
+            piece = piece.replace(re, '');
+        }
+        return piece;
+    });
+    // Collapse any doubled blank lines the removals left behind.
+    out = out.replace(/\n{3,}/g, '\n\n');
+    return out;
+}
+
 function transformMessageText(messageText) {
     const markers = detectSenseMarkers(messageText);
     let result = messageText;
@@ -435,15 +543,22 @@ function transformMessageText(messageText) {
     // Side effect: tracks the LAST speaker in the message and, after
     // transformation, we call setActiveSpeaker(lastName) so the spotlight
     // panel updates to that NPC.
-    const DIALOGUE_RE = /([A-Z][A-Za-z .'\-]{0,30}):\s*"([^"\n]+)"/g;
+    // v2.4.7 — Allow an optional italic tone marker between the colon
+    // and the quote, e.g. `The Remnant: *dryly* "How does it feel..."`.
+    // Without this, such lines fail to match and stay inline after the
+    // preceding italic block instead of breaking onto their own row.
+    const DIALOGUE_RE = /([A-Z][A-Za-z .'\-]{0,30}):\s*(?:\*([^*\n]{1,40})\*\s*)?"([^"\n]+)"/g;
     let lastSpeaker = null;
-    result = result.replace(DIALOGUE_RE, (full, name, line) => {
+    result = result.replace(DIALOGUE_RE, (full, name, tone, line) => {
         const trimmed = name.trim();
         if (!trimmed) return full;
         lastSpeaker = trimmed;
         const color = getNpcColor(trimmed);
         const lightColor = lightenHex(color, 0.55);
-        return `<span class="npc-dialogue"><span class="npc-name" style="color:${color}">${escapeHtml(trimmed)}:</span> <span class="npc-line" style="color:${lightColor}">&ldquo;${escapeHtml(line)}&rdquo;</span></span>`;
+        const toneHtml = tone
+            ? ` <em class="npc-tone" style="color:${lightColor}">${escapeHtml(tone.trim())}</em>`
+            : '';
+        return `<span class="npc-dialogue"><span class="npc-name" style="color:${color}">${escapeHtml(trimmed)}:</span>${toneHtml} <span class="npc-line" style="color:${lightColor}">&ldquo;${escapeHtml(line)}&rdquo;</span></span>`;
     });
     if (lastSpeaker) {
         // Fire-and-forget: spotlight DOM update shouldn't block text render.
@@ -536,6 +651,21 @@ function renderSenseBar($mes, markers) {
             // re-renders don't accumulate state.
             setTimeout(() => $chip.removeClass('sense-flash'), 1400);
         }
+    }
+
+    // v2.4.6 — auto-select the first sense so the text window shows
+    // real content on load instead of the "hover or click a sense…"
+    // placeholder. Uses priority order (SIGHT→SMELL→SOUND→TASTE→TOUCH
+    // →ENVIRONMENT) already established by the loop above. Marked
+    // sticky so it persists until the user clicks another icon.
+    const $firstChip = $icons.find('.img-gen-sense-icon').first();
+    if ($firstChip.length) {
+        const desc = $firstChip.attr('data-desc') || '';
+        const label = $firstChip.attr('data-label') || '';
+        const $text = $bar.find('.img-gen-sense-text');
+        $text.attr('data-empty', null);
+        $text.html(`<span class="img-gen-sense-text-label">${escapeHtml(label)}</span> ${escapeHtml(desc)}`);
+        $firstChip.addClass('sense-sticky');
     }
 }
 
@@ -744,6 +874,114 @@ function classifyImageKind(attribution) {
         return 'location';
     }
     return 'subject';
+}
+
+// ---------------------------------------------------------------------------
+// Current-location tracking (v2.3.2)
+// ---------------------------------------------------------------------------
+// The narrator kept referring back to rooms Aaron had already left because
+// the LLM has no persistent sense of place beyond whatever the sliding
+// context window happens to contain. We fix that by tracking the latest
+// [GENERATE_IMAGE(location): "..."] marker as the authoritative "where
+// Aaron is now" state, and re-injecting it into every prompt via ST's
+// setExtensionPrompt at IN_CHAT depth 1 — close enough to the turn to
+// dominate "where am I" but not so close it looks like a user message.
+const LOCATION_PROMPT_KEY = 'image_generator_current_location';
+
+function setCurrentLocation(description) {
+    const settings = initSettings();
+    const desc = (description || '').trim();
+    if (!desc) return;
+    if (settings.currentLocation === desc) return;  // no-op
+    settings.currentLocation = desc;
+    saveSettingsDebounced();
+    applyCurrentLocationPrompt();
+    console.log('[Image Generator] Current location updated:', desc.substring(0, 80));
+}
+
+function applyCurrentLocationPrompt() {
+    const settings = initSettings();
+    const desc = settings.currentLocation;
+    if (typeof setExtensionPrompt !== 'function') return;
+    if (!desc) {
+        setExtensionPrompt(LOCATION_PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return;
+    }
+    // v2.4.2: use IN_PROMPT (system-context) position instead of IN_CHAT
+    // because IN_CHAT makes the injection look like a recent chat message
+    // and the LLM literally echoes it back into its response. Also: pure
+    // declarative sentence, no imperatives — imperatives read like stage
+    // directions to the LLM and get included verbatim in the output.
+    const trimmed = desc.length > 240 ? desc.substring(0, 240) + '…' : desc;
+    const injection = `Current scene location (persistent world state): You are in ${trimmed}`;
+    setExtensionPrompt(LOCATION_PROMPT_KEY, injection, extension_prompt_types.IN_PROMPT, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Codex state injection (v2.4.2)
+// ---------------------------------------------------------------------------
+// Mirrors the location-tracking pattern: once an item or lore entry lands
+// in settings.codex, re-inject a compact summary into the LLM prompt so
+// the narrator stays aware of what exists in the world and does not keep
+// re-introducing named things as if it's seeing them for the first time.
+// This is the memory-across-turns layer the narrator otherwise lacks.
+const CODEX_PROMPT_KEY = 'image_generator_codex_state';
+
+function applyCodexStatePrompt() {
+    if (typeof setExtensionPrompt !== 'function') return;
+    const settings = initSettings();
+    const items = settings.codex && settings.codex.items ? settings.codex.items : {};
+    const lore  = settings.codex && settings.codex.lore  ? settings.codex.lore  : {};
+
+    const itemNames = Object.keys(items);
+    const loreNames = Object.keys(lore);
+
+    if (itemNames.length === 0 && loreNames.length === 0) {
+        setExtensionPrompt(CODEX_PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return;
+    }
+
+    // Compact line-per-entry format. Names first so the LLM can scan them
+    // quickly; a short description follows so it remembers what each one
+    // is. Keep the total under ~2000 chars to avoid bloating context on
+    // long runs.
+    const fmt = (bag, label) => {
+        const names = Object.keys(bag);
+        if (names.length === 0) return '';
+        const lines = names.map((n) => {
+            const desc = (bag[n] && bag[n].description) || '';
+            const trimmed = desc.length > 140 ? desc.substring(0, 140) + '…' : desc;
+            return trimmed ? `- ${n}: ${trimmed}` : `- ${n}`;
+        });
+        return `${label}:\n${lines.join('\n')}`;
+    };
+
+    const parts = [];
+    if (itemNames.length > 0) parts.push(fmt(items, 'Known items you have encountered'));
+    if (loreNames.length > 0) parts.push(fmt(lore,  'Known lore / named places / factions'));
+
+    const body = parts.join('\n\n');
+    const capped = body.length > 2000 ? body.substring(0, 2000) + '\n…' : body;
+    const injection = `Persistent world codex (do not re-introduce these; treat as already known):\n${capped}`;
+    setExtensionPrompt(CODEX_PROMPT_KEY, injection, extension_prompt_types.IN_PROMPT, 0);
+}
+
+// Scan a message for the most recent GENERATE_IMAGE(location) marker
+// and update the current-location state from it. Called from both
+// CHARACTER_MESSAGE_RENDERED and CHAT_CHANGED so greetings and mid-chat
+// moves are both captured.
+function updateLocationFromMessage(messageText) {
+    if (!messageText) return;
+    const markers = detectSenseMarkers(messageText);
+    // Walk forward — last one wins if multiple location shots in one turn.
+    let latest = null;
+    for (const m of markers) {
+        if (m.type !== 'GENERATE_IMAGE') continue;
+        if (classifyImageKind(m.attribution) !== 'location') continue;
+        if (!m.description) continue;
+        latest = m.description;
+    }
+    if (latest) setCurrentLocation(latest);
 }
 
 // Generate a scene image. Injects known-NPC portrait descriptions into the
@@ -972,6 +1210,9 @@ function handleCodexEntries(messageText) {
     if (added > 0) {
         saveSettingsDebounced();
         renderCodex();
+        // Re-inject the codex into the LLM prompt so the narrator is
+        // immediately aware of the new entry on the very next turn.
+        try { applyCodexStatePrompt(); } catch (_) { /* ignore */ }
     }
 }
 
@@ -1021,12 +1262,16 @@ async function handleResetStory() {
     settings.imageHistory = [];
     settings.npcs = {};
     settings.codex = { items: {}, lore: {} };
+    settings.currentLocation = null;
     currentImageIndex = -1;
     saveSettingsDebounced();
     updateBackgroundWallpaper(null);
     renderGallery();
     renderNpcRoster();
     renderCodex();
+    // Clear the persistent injections so the new timeline starts blank.
+    try { applyCurrentLocationPrompt(); } catch (_) { /* ignore */ }
+    try { applyCodexStatePrompt();      } catch (_) { /* ignore */ }
 
     // Archive the current chat and start a fresh one. Safe mode — the
     // old chat is preserved in the Narrator's chat history folder.
@@ -1767,6 +2012,17 @@ async function onCharacterMessageRendered(messageId) {
     const settings = initSettings();
     if (!settings.autoGenerate) return;
 
+    // Strip any `Aaron: "..."` dialogue lines the narrator produced for
+    // the player character. This mutates the stored chat entry so the
+    // LLM doesn't see its own prior Aaron-dialogue on the next turn and
+    // treat it as license to continue the pattern.
+    const scrubbed = scrubPlayerDialogue(message.mes);
+    if (scrubbed !== message.mes) {
+        console.log('[Image Generator] Scrubbed player dialogue from narrator response (mesid=' + messageId + ')');
+        message.mes = scrubbed;
+        try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
+    }
+
     // Always re-render the message display so marker spans are applied,
     // even if there's nothing to image-generate.
     updateMessageDisplay(messageId);
@@ -1799,6 +2055,11 @@ async function onCharacterMessageRendered(messageId) {
         // Continue rendering scene images below — the overlay will
         // appear on top of them, then wipe everything.
     }
+
+    // Capture the latest location shot as authoritative "where Aaron is"
+    // state BEFORE kicking off image generation — so even if generation
+    // is slow, the next turn already has the location injection applied.
+    try { updateLocationFromMessage(message.mes); } catch (_) { /* ignore */ }
 
     // Scene images
     const imageMarkers = detectImageMarkers(message.mes);
@@ -1843,11 +2104,50 @@ async function onChatChanged() {
     // listener is attached, so markers in the first_mes show up as
     // raw bracket text. Walking the full chat on every chat-change
     // is cheap and catches that plus any other missed messages.
+    //
+    // v2.3.2: repeat the walk on a delay cascade because ST sometimes
+    // re-renders `.mes_text` AFTER our first pass (markdown formatter,
+    // swipe hydration, etc.), wiping our transformed HTML. Re-walking
+    // at 1.8s / 3.5s / 6s catches every known late-hydration window.
+    // Pre-pass: scrub player dialogue out of every narrator message so
+    // the LLM's rolling context window stops seeing "Aaron: ..." lines
+    // on every subsequent turn (few-shot poison).
+    let anyScrubbed = false;
     for (let i = 0; i < chat.length; i++) {
+        const m = chat[i];
+        if (!m || !m.mes || m.is_user) continue;
+        const cleaned = scrubPlayerDialogue(m.mes);
+        if (cleaned !== m.mes) { m.mes = cleaned; anyScrubbed = true; }
+    }
+    if (anyScrubbed) {
+        console.log('[Image Generator] Scrubbed player dialogue from chat history on load');
+        try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
+    }
+
+    const walkAll = () => {
+        for (let i = 0; i < chat.length; i++) {
+            if (chat[i] && chat[i].mes) {
+                try { updateMessageDisplay(i); } catch (_) { /* ignore */ }
+            }
+        }
+    };
+    walkAll();
+    setTimeout(walkAll, 1800);
+    setTimeout(walkAll, 3500);
+    setTimeout(walkAll, 6000);
+
+    // Rebuild location state from the most recent location marker anywhere
+    // in the chat — scan backwards so the freshest wins. This restores the
+    // "where Aaron is" memory after a page reload or reset.
+    for (let i = chat.length - 1; i >= 0; i--) {
         if (chat[i] && chat[i].mes) {
-            try { updateMessageDisplay(i); } catch (_) { /* ignore */ }
+            const before = (initSettings().currentLocation || '');
+            updateLocationFromMessage(chat[i].mes);
+            if ((initSettings().currentLocation || '') !== before) break;
         }
     }
+    applyCurrentLocationPrompt();
+    applyCodexStatePrompt();
 
     // Re-apply the locked player portrait to every user-message avatar.
     // Necessary because ST's persona thumbnail endpoint aggressively
@@ -1901,8 +2201,13 @@ function initializeExtension() {
     createSidePanel();
     createNpcRosterPanel();
     createSpeakerSpotlight();
-    createTopBarToggle();
     bindSenseBarHandlers();
+
+    // Re-apply the persisted current-location + codex injections so the
+    // LLM keeps tracking "where Aaron is" and what's been named in the
+    // world across reloads and new sessions.
+    try { applyCurrentLocationPrompt(); } catch (_) { /* ignore */ }
+    try { applyCodexStatePrompt();      } catch (_) { /* ignore */ }
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);

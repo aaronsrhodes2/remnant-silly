@@ -208,42 +208,20 @@
 }
 
 /* ============================================
-   TOP BAR TOGGLE (v2.3.1) — hide/show ST's #top-settings-holder icon nav
-   to reclaim vertical chat real estate. A small chevron tab sits at the
-   top-center of the viewport at all times; clicking flips state. The
-   `img-gen-topbar-hidden` class on <body> applies the hide.
+   CHROME STRIP (v2.3.2) — the stack runs as a single-purpose app, so ST's
+   top icon nav and welcome / recent-chats panel are permanently hidden.
+   Timeline reset is the only "chat management" the user cares about, and
+   story state lives in the extension panels, not ST's chrome. The legacy
+   #img-gen-topbar-toggle button from v2.3.1 is also hidden — the new rule
+   is "just gone", no toggle needed.
    ============================================ */
+#top-settings-holder {
+    display: none !important;
+}
+.welcomePanel {
+    display: none !important;
+}
 #img-gen-topbar-toggle {
-    position: fixed;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 100000;
-    width: 48px;
-    height: 18px;
-    padding: 0;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-top: none;
-    border-radius: 0 0 8px 8px;
-    background: rgba(20, 20, 30, 0.85);
-    color: #d0d0d0;
-    font-size: 10px;
-    line-height: 16px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-#img-gen-topbar-toggle:hover {
-    background: rgba(40, 40, 60, 0.95);
-    color: #fff;
-}
-.img-gen-topbar-toggle-chevron {
-    display: inline-block;
-    line-height: 1;
-}
-body.img-gen-topbar-hidden #top-settings-holder {
     display: none !important;
 }
 
@@ -422,7 +400,12 @@ body.img-gen-topbar-hidden #top-settings-holder {
    inline via style=""; fallback color lives on .npc-name).
    ============================================ */
 .npc-dialogue {
-    display: inline;
+    /* v2.4.1 — play-script layout: each spoken line gets its own row so
+       the reader parses dialogue like a script instead of a run-on
+       paragraph. Narration flavor beats sit between these blocks as
+       italicized stage directions. */
+    display: block;
+    margin: 0.55em 0 0.25em 0;
     font-size: 1.08em;
     font-weight: 600;
     /* No default color — children (.npc-name, .npc-line) carry their
@@ -435,6 +418,13 @@ body.img-gen-topbar-hidden #top-settings-holder {
 }
 .npc-dialogue .npc-line {
     font-style: normal;
+}
+/* v2.4.7 — tone marker between name and line, e.g. `The Remnant: *dryly* "..."` */
+.npc-dialogue .npc-tone {
+    font-style: italic;
+    opacity: 0.75;
+    margin-right: 0.25em;
+    font-weight: 500;
 }
 
 /* ============================================

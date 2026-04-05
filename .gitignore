@@ -11,6 +11,7 @@ venv/
 # Logs & scratch
 *.log
 *.tmp
+.scratch*
 
 # Stray generated images / avatars
 *.jpg
