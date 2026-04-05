@@ -47,7 +47,8 @@ services:
 
   # ----------------------------------------------------------------------
   # Flask + Stable Diffusion — image generation backend. GPU REQUIRED
-  # (or wildly slow on CPU). Downloads SD v1.5 weights on first request.
+  # (or wildly slow on CPU). SD v1.5 + IP-Adapter weights are baked into
+  # the image at build time, so no runtime download is needed.
   # ----------------------------------------------------------------------
   flask-sd:
     build:
@@ -57,8 +58,9 @@ services:
     restart: unless-stopped
     expose:
       - "5000"
+    # NOTE: no hf-cache volume. Weights live in the image at
+    # /root/.cache/huggingface. A volume mount would shadow them.
     volumes:
-      - hf-cache:/root/.cache/huggingface
       - flask-gallery:/data/gallery
     environment:
       - FLASK_HOST=0.0.0.0
@@ -102,6 +104,5 @@ services:
 
 volumes:
   ollama-data:
-  hf-cache:
   flask-gallery:
   sillytavern-data:

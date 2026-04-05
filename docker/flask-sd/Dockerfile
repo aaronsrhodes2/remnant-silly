@@ -19,6 +19,16 @@ RUN pip install -r requirements.txt
 COPY backend/image_generator_api.py .
 COPY backend/image_gallery.py .
 
+# Bake Stable Diffusion v1.5 + IP-Adapter weights into the image so the
+# container is fully self-contained and needs no network at runtime.
+# This mirrors the exact load sequence used by image_generator_api.py so
+# the runtime load hits the cache instead of HuggingFace.
+RUN python -c "import torch; \
+from diffusers import StableDiffusionPipeline; \
+pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', torch_dtype=torch.float16, safety_checker=None); \
+pipe.load_ip_adapter('h94/IP-Adapter', subfolder='models', weight_name='ip-adapter-plus_sd15.bin'); \
+print('[bake] SD v1.5 + IP-Adapter cached at', '/root/.cache/huggingface')"
+
 # Create default gallery dir (mounted as a volume in compose)
 RUN mkdir -p /data/gallery
 
