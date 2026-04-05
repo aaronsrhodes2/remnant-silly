@@ -1,0 +1,131 @@
+# docker-compose.warm.yml — zero-copy warm-test override.
+#
+# Rebinds the two heavy model volumes (hf-cache, ollama-data) to
+# the developer's existing host caches so docker compose reads the
+# exact same bytes the native dev workflow already populated, then
+# skips the bootstrap profile entirely by pre-stamping the sentinel
+# files runtime services poll on startup.
+#
+# Why skip bootstrap
+# ------------------
+# The runtime stack implements "cache-first" via its OFFLINE mode:
+#
+#   - Runtime flask-sd runs with HF_HUB_OFFLINE=1 and
+#     TRANSFORMERS_OFFLINE=1, so diffusers loads the pipeline from
+#     hf-cache via local_files_only and never touches the network.
+#   - Runtime ollama reads ~/.ollama/models off disk and serves
+#     without calling registry.ollama.ai.
+#
+# The bootstrap-flask-sd service is ONLY for populating an empty
+# cache over the internet. It uses hf_hub's snapshot_download,
+# which in 0.25+ refuses HEAD-revalidation redirects that don't
+# terminate on huggingface.co — our nginx rewrites Locations to
+# http://nginx/hf/..., which trips the assertion and fails even
+# when the cache is fully populated. Running bootstrap against a
+# warm cache is therefore not just wasteful but actively broken.
+#
+# Warm test = "cache is already full, prove runtime works against
+# it". We use a tiny init container to stamp the sentinel files
+# bootstrap would normally write, then runtime comes up against
+# the host-bind caches. Hot test (later, empty caches) uses
+# docker-compose.dev.yml with --profile bootstrap and exercises
+# the real download path.
+#
+# Usage
+# -----
+#   docker compose -f docker-compose.yml -f docker-compose.warm.yml up
+#
+# (no --profile bootstrap — see above)
+#
+# Do NOT combine with docker-compose.dev.yml — dev.yml binds the
+# same volumes to repo-local dev-cache/, warm.yml binds them to
+# the host user caches. Pick one.
+#
+# First-time setup
+# ----------------
+# If a prior `docker compose up` created docker-managed volumes
+# named remnant-silly_hf-cache or remnant-silly_ollama-data, compose
+# will reuse them instead of applying the driver_opts below. Remove
+# them first:
+#
+#   docker volume ls --format '{{.Name}}' \
+#       | grep -E '^remnant-silly_(hf-cache|ollama-data)$' \
+#       | xargs -r docker volume rm
+#
+# Safe because the bytes are redundant with the host caches this
+# file rebinds to.
+#
+# Host-path config
+# ----------------
+# The `device:` values below come from environment variables set
+# in your .env file (see .env.example for the template):
+#
+#   HOST_HF_HOME      — absolute path to the host's HuggingFace cache
+#                       (e.g. C:/Users/you/.cache/huggingface)
+#   HOST_OLLAMA_DIR   — absolute path to the host's ollama data dir
+#                       (e.g. C:/Users/you/.ollama)
+#
+# Docker Desktop on Windows accepts forward-slash style C:/Users/...
+# for binds. On Linux/macOS use $HOME/.cache/huggingface etc.
+#
+# If you try to run warm.yml without these vars set, compose will
+# fail fast with "variable is not set" — this is intentional, it
+# prevents silently binding to an empty path.
+
+services:
+
+  # Tiny init container that stamps both runtime sentinels so
+  # flask-sd and ollama unblock immediately. Idempotent — safe to
+  # re-run. Uses alpine (small, already cached on most machines).
+  warm-bootstrap:
+    image: alpine:3
+    container_name: remnant-warm-bootstrap
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /remnant-status
+        touch /remnant-status/flask-sd-ready
+        touch /remnant-status/ollama-ready
+        echo "[warm-bootstrap] sentinels stamped"
+    volumes:
+      - remnant-status:/remnant-status
+    networks:
+      - play-net
+    restart: "no"
+
+  # Runtime services depend on the stamper so their
+  # WAIT_FOR_SENTINEL entrypoint polls find the file immediately.
+  flask-sd:
+    depends_on:
+      warm-bootstrap:
+        condition: service_completed_successfully
+
+  ollama:
+    depends_on:
+      warm-bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  # HuggingFace hub client cache — same on-disk layout as the
+  # container expects (models--<org>--<name>/ snapshot dirs).
+  # flask-sd's HF_HOME=/root/.cache/huggingface sees host bytes 1:1,
+  # and runtime's HF_HUB_OFFLINE=1 uses them via local_files_only.
+  hf-cache:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOST_HF_HOME:?set HOST_HF_HOME in your .env — see .env.example}
+      o: bind
+
+  # Ollama model store — same directory layout as the container
+  # (~/.ollama with blobs/ and manifests/ subtrees). Runtime ollama
+  # reads manifests off disk and serves without touching
+  # registry.ollama.ai.
+  ollama-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${HOST_OLLAMA_DIR:?set HOST_OLLAMA_DIR in your .env — see .env.example}
+      o: bind

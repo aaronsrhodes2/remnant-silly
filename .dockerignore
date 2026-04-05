@@ -1,0 +1,75 @@
+# .dockerignore — build-context trim list.
+#
+# docker build does NOT read .gitignore, so this file is the only
+# lever that keeps junk (dev-cache/, .claude/, scratch files) out
+# of the image build context. Without it, the full working tree
+# is shipped to the daemon on every build, which once dev-cache/
+# is populated means tens of GB of pointless bytes per build.
+#
+# This mirrors the spirit of .gitignore — if git shouldn't track it,
+# docker shouldn't build on top of it either. Runtime state that
+# lives in bind-mounted volumes (dev-cache/, host caches rebound
+# via docker-compose.warm.yml) is layered in at container-start
+# time, never baked into image layers, so excluding it here is
+# always correct.
+
+# Git + local tooling
+.git
+.gitignore
+.gitattributes
+.dockerignore
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Dev cache — the whole point is to keep this OUT of build context.
+# Bind-mounted at runtime via docker-compose.dev.yml (repo-local) or
+# docker-compose.warm.yml (host-direct). Never baked into image layers.
+dev-cache/
+
+# Native dev runtime staging (same reasoning — bind-mounted at runtime)
+scripts/splash/status/.native-run/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs & scratch
+*.log
+*.tmp
+.scratch*
+
+# Secrets (defense in depth — none exist today, but guard future)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+credentials.json
+
+# Large model artifacts — images pull these at runtime via the
+# hf_hub client / ollama, never COPY them during build.
+*.safetensors
+*.gguf
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.bin
+.cache/
+huggingface/
+
+# Note: `models/` is NOT excluded here even though .gitignore lists it,
+# because docker/**/models/ is whitelisted in .gitignore and some
+# Dockerfiles may legitimately want to COPY small marker files from
+# those paths. If you add a top-level models/ dir with big weights,
+# add `models/` + `!docker/**/models/` here too.
+
+# HANDOFF notes live at repo root but aren't image material
+HANDOFF.md
