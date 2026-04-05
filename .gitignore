@@ -18,6 +18,9 @@ venv/
 *.jpeg
 *.png
 
+# ...but extension/assets is our curated, pre-generated world art — keep it all
+!extension/assets/**
+
 # OS
 .DS_Store
 Thumbs.db
