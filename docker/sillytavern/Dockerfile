@@ -27,13 +27,26 @@ RUN node -e "const f='/home/node/app/public/scripts/extensions/image-generator/i
 # the compose network. Users can still override via mounted volume.
 COPY --chown=node:node docker/sillytavern/config.yaml /home/node/app/default/config.yaml
 
-# --- Pre-seed canonical Remnant content (characters, worlds, etc.) ---
+# --- Teach the content populator a `chat` type ---
+# Upstream's default-content installer handles characters, worlds,
+# settings, themes, presets — but not chat history. Without a seeded
+# chat, a fresh boot with active_character set still trips the
+# welcome-screen gate (scripts/welcome-screen.js:175) because
+# currentChatId is undefined and chat[] is empty. The patch adds a
+# CHAT content type that copies files from default/content/chats/
+# into each user's chats/ subtree with subdir structure preserved.
+# See docker/sillytavern/patches/add-chat-seed.js for the full story.
+COPY --chown=node:node docker/sillytavern/patches/ /tmp/st-patches/
+RUN node /tmp/st-patches/add-chat-seed.js && rm -rf /tmp/st-patches
+
+# --- Pre-seed canonical Remnant content (characters, worlds, chats, settings) ---
 #
 # Everything tracked under docker/sillytavern/content/ in the repo
 # overlays onto SillyTavern's default/content/ tree and gets installed
 # into any empty data volume on first boot by upstream's content
 # populator. The tree layout mirrors ST's default-user layout exactly
-# (characters/, worlds/, ...), so adding a new seed file is just:
+# (characters/, worlds/, chats/, top-level settings.json), so adding
+# a new seed file is just:
 #
 #   1. drop the file into the matching subdir
 #   2. commit
@@ -45,9 +58,15 @@ COPY --chown=node:node docker/sillytavern/config.yaml /home/node/app/default/con
 COPY --chown=node:node docker/sillytavern/content/ /home/node/app/default/content/
 
 # Splice the newly copied files into default/content/index.json so
-# upstream's first-boot installer picks them up. Scans characters/
-# and worlds/ on disk and appends any entry that isn't already
-# present. Driven entirely by filesystem contents — no hand-list.
+# upstream's first-boot installer picks them up. Scans characters/,
+# worlds/, chats/<character>/ on disk, plus a top-level settings.json
+# check, and appends any entry that isn't already present. Driven
+# entirely by filesystem contents — no hand-list.
+#
+# Note: upstream ships its own settings.json entry already (Horde
+# default), so we OVERWRITE its file on disk via the COPY above and
+# leave the index.json entry untouched — the populator will seed our
+# replacement bytes under the same filename.
 RUN node -e "\
 const fs=require('fs'),path=require('path');\
 const root='/home/node/app/default/content';\
@@ -57,6 +76,8 @@ const have=new Set(idx.map(e=>e.filename));\
 const scan=(dir,type)=>{const p=path.join(root,dir);if(!fs.existsSync(p))return;for(const f of fs.readdirSync(p)){const rel=dir+'/'+f;if(fs.statSync(path.join(p,f)).isFile()&&!have.has(rel)){idx.push({filename:rel,type});console.log('[seed] +',type,rel);}}};\
 scan('characters','character');\
 scan('worlds','world');\
+const chatsRoot=path.join(root,'chats');\
+if(fs.existsSync(chatsRoot)){for(const chr of fs.readdirSync(chatsRoot)){const chrDir=path.join(chatsRoot,chr);if(!fs.statSync(chrDir).isDirectory())continue;for(const f of fs.readdirSync(chrDir)){const rel='chats/'+chr+'/'+f;if(fs.statSync(path.join(chrDir,f)).isFile()&&!have.has(rel)){idx.push({filename:rel,type:'chat'});console.log('[seed] + chat',rel);}}}}\
 fs.writeFileSync(idxPath,JSON.stringify(idx,null,4));\
 console.log('[seed] index.json now has',idx.length,'entries');\
 "

@@ -8,6 +8,7 @@ run against whichever stack they have up without failing the others.
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
 import os
 import time
@@ -66,6 +67,113 @@ def fetch_json(url: str, timeout: float = 5.0) -> Optional[dict]:
             data = r.read()
         return json.loads(data.decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionError, json.JSONDecodeError):
+        return None
+
+
+# ---------------------------------------------------------------------
+# SillyTavern HTTP surface helpers
+# ---------------------------------------------------------------------
+#
+# The diag sidecar exposes its JSON at /diagnostics/* behind nginx on
+# docker and directly on :1580 on native. SillyTavern itself is served
+# at the root path on both stacks — these helpers target *ST*, not
+# diag, so tests can assert that the character roster, world list, API
+# backend, and extension static assets match across environments.
+
+ST_BASE_URLS = {
+    "native": "http://localhost:1580",
+    "docker": "http://localhost:1582",
+}
+
+
+def st_base_url(stack: str) -> str:
+    return ST_BASE_URLS[stack]
+
+
+def _st_session(stack: str) -> tuple[urllib.request.OpenerDirector, Optional[str]]:
+    """Open a fresh session against ST: fetches /csrf-token (which sets
+    the session cookie) and returns an opener wired to the cookie jar
+    plus the CSRF token the same session expects on its POST bodies.
+
+    ST's CSRF middleware binds the token to the session cookie — the
+    token returned by /csrf-token is only valid for requests carrying
+    the cookie jar that received it. Each call here is a fresh jar, so
+    tests get independent sessions.
+    """
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    try:
+        with opener.open(f"{st_base_url(stack)}/csrf-token", timeout=5.0) as r:
+            if r.status != 200:
+                return opener, None
+            data = json.loads(r.read().decode("utf-8"))
+        return opener, data.get("token")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            ConnectionError, json.JSONDecodeError):
+        return opener, None
+
+
+def st_post_json(stack: str, path: str, body: dict, timeout: float = 10.0) -> Optional[dict]:
+    """POST a JSON body to an ST API path with session cookie + CSRF.
+
+    Returns parsed JSON on success, or None on any error — same
+    contract as fetch_json so callers can distinguish "stack not up"
+    from "stack up but broken" by checking for None.
+    """
+    opener, token = _st_session(stack)
+    if not token:
+        return None
+    url = f"{st_base_url(stack)}{path}"
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-CSRF-Token": token,
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with opener.open(req, timeout=timeout) as r:
+            if r.status != 200:
+                return None
+            return json.loads(r.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            ConnectionError, json.JSONDecodeError):
+        return None
+
+
+def st_get_settings(stack: str) -> Optional[dict]:
+    """Fetch and parse the user's ST settings.json via /api/settings/get.
+
+    ST returns the file as a JSON-encoded string under the top-level
+    "settings" key; callers want the parsed object. Also exposes the
+    sibling fields (world_names, themes, etc.) on the return dict
+    under a "_meta" key, so tests asserting on worlds don't need a
+    second round-trip.
+    """
+    envelope = st_post_json(stack, "/api/settings/get", {})
+    if not envelope or not isinstance(envelope, dict):
+        return None
+    raw = envelope.get("settings")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    parsed["_meta"] = {k: v for k, v in envelope.items() if k != "settings"}
+    return parsed
+
+
+def st_fetch_bytes(stack: str, path: str, timeout: float = 5.0) -> Optional[bytes]:
+    """GET raw bytes from an ST URL. Used for static-asset parity."""
+    try:
+        url = f"{st_base_url(stack)}{path}"
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read() if r.status == 200 else None
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ConnectionError):
         return None
 
 

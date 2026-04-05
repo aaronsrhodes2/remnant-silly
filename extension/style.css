@@ -928,9 +928,10 @@ body.img-gen-topbar-hidden #top-settings-holder {
     border-radius: 4px;
 }
 
-.img-gen-panel::-webkit-scrollbar-thumb:hover {
-    background: rgba(0, 212, 255, 0.5);
-}
+/* NB: no :hover variant here — ST's dynamic-styles.js auto-generates a
+   :focus-visible counterpart for every :hover rule, and
+   ::-webkit-scrollbar-thumb:focus-visible is a CSSSyntaxError (pseudo-
+   elements cannot take focus). Leaving the base thumb color handles it. */
 
 /* Responsive design */
 @media (max-width: 1200px) {

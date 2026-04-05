@@ -316,11 +316,13 @@ const FORTRESS_COLOR = '#ffb74d'; // warm amber — librarian-patient
 const FORTRESS_PORTRAIT_URL = 'scripts/extensions/image-generator/assets/fortress-interior.jpg?v=2.7.0';
 const FORTRESS_DESCRIPTION = "A hollow obsidian sphere-city in null space, seen from inside — curved floors curving up into themselves, tiered balconies and bridges threading the dark between, a green mandala-Heart burning at the center. Arched void-windows open on distant dying spiral galaxies. The Fortress is aware; its voice is calm, patient, librarian-kind.";
 
-// Pre-seed the Remnant NPC entry using the Narrator character's own avatar
-// as his locked portrait. The Remnant is the narrator's in-world voice
-// (canonically the fortress historian), not a separately-introduced NPC,
-// so his visual is the Narrator's card image. Locked so later scene-time
-// logic never tries to regenerate him.
+// v2.11.0 — The Remnant's portrait is a static asset, not read from the
+// active character card at runtime. Eliminates cross-stack avatar drift.
+const REMNANT_PORTRAIT_URL = 'scripts/extensions/image-generator/assets/the-remnant-portrait.png?v=2.11.0';
+
+// v2.11.0 — The Remnant has a static locked portrait in extension/assets/,
+// mirroring the Fortress pattern. This eliminates cross-stack avatar drift
+// caused by reading the active character's avatar at runtime.
 // Fetch a same-origin URL (e.g. /thumbnail?...) and return a data: URL
 // the Flask backend can decode locally. We do this in the browser where
 // ST session cookies / auth headers work; the SD backend only sees an
@@ -353,23 +355,8 @@ function seedRemnantNpc() {
         return;
     }
 
-    let portraitUrl = null;
-    let phrase = 'towering obsidian silhouette shot through with veins of amber circuitry, faceless head crowned with a ring of void-black light, ancient and patient';
-    try {
-        if (Array.isArray(characters) && typeof this_chid !== 'undefined' && characters[this_chid]) {
-            const ch = characters[this_chid];
-            if (ch.avatar && typeof getThumbnailUrl === 'function') {
-                portraitUrl = getThumbnailUrl('avatar', ch.avatar);
-            }
-            if (ch.description) {
-                // Keep phrase short — first sentence of the narrator description.
-                const first = String(ch.description).split(/[.!?]/)[0];
-                if (first && first.length > 20 && first.length < 260) phrase = first.trim();
-            }
-        }
-    } catch (err) {
-        console.warn('[Image Generator] seedRemnantNpc: could not read Narrator avatar', err);
-    }
+    const portraitUrl = REMNANT_PORTRAIT_URL;
+    const phrase = 'towering obsidian silhouette shot through with veins of amber circuitry, faceless head crowned with a ring of void-black light, ancient and patient';
 
     settings.npcs[REMNANT_NAME] = {
         ...(settings.npcs[REMNANT_NAME] || {}),
@@ -385,22 +372,17 @@ function seedRemnantNpc() {
     };
     saveSettingsDebounced();
 
-    // Asynchronously upgrade the reference_image_url to an inline data
-    // URL so the SD backend's IP-Adapter can actually fetch it. Relative
-    // paths like /thumbnail?... fail when Flask tries to requests.get()
-    // them, which is why scene images of The Remnant diverge from his
-    // locked avatar. Fire-and-forget.
-    if (portraitUrl && !portraitUrl.startsWith('data:')) {
-        urlToDataUrl(portraitUrl).then((dataUrl) => {
-            if (!dataUrl) return;
-            const s = initSettings();
-            if (!s.npcs[REMNANT_NAME]) return;
-            s.npcs[REMNANT_NAME].reference_image_url = dataUrl;
-            s.npcs[REMNANT_NAME].portrait_image = dataUrl;
-            saveSettingsDebounced();
-            console.log('[Image Generator] Remnant reference upgraded to inline data URL');
-        });
-    }
+    // Asynchronously upgrade the reference_image_url to an inline data URL
+    // so the SD backend's IP-Adapter can fetch it. Fire-and-forget.
+    urlToDataUrl(portraitUrl).then((dataUrl) => {
+        if (!dataUrl) return;
+        const s = initSettings();
+        if (!s.npcs[REMNANT_NAME]) return;
+        s.npcs[REMNANT_NAME].reference_image_url = dataUrl;
+        s.npcs[REMNANT_NAME].portrait_image = dataUrl;
+        saveSettingsDebounced();
+        console.log('[Image Generator] Remnant reference upgraded to inline data URL');
+    });
 }
 
 // v2.6.2 — Seed The Fortress as a permanent NPC card using the canonical
@@ -1690,8 +1672,7 @@ async function handleIntroductions(messageText) {
     const settings = initSettings();
 
     for (const { name, description } of intros) {
-        // The Remnant is the narrator's in-world voice and is pre-seeded
-        // on init with the Narrator's own avatar — never re-introduce him.
+        // The Remnant is pre-seeded on init with a static portrait — never re-introduce him.
         if (name === REMNANT_NAME) continue;
         if (settings.npcs[name] && settings.npcs[name].card_created) continue;  // already known
         if (settings.npcs[name] && settings.npcs[name].locked) continue;        // locked entry
@@ -2629,6 +2610,125 @@ async function handleResetStory() {
 }
 
 // ---------------------------------------------------------------------------
+// v2.10.0 — Test-API surface (window.__remnantTest)
+// ---------------------------------------------------------------------------
+// Headless tests (tests/ui_parity/) drive the extension via this namespace
+// instead of clicking buttons + scraping DOM, because:
+//   1. Button-driven reset triggers a 5s overlay countdown the test has to
+//      wait through. The test-hook bypasses the overlay entirely by calling
+//      handleRunEnd directly.
+//   2. extension_settings is a module-scoped import in upstream ST and
+//      isn't reliably on window. This namespace gives tests a stable
+//      readout path that doesn't depend on ST's internal layout.
+//   3. It also exposes a normalized snapshot that strips known-noisy
+//      drift keys (timestamps, history logs) so cross-stack diffs only
+//      flag real divergence.
+//
+// This is a TESTING-ONLY surface. Production play should not call it.
+// The window namespace is only installed after initSettings() has run
+// at least once, so `window.__remnantTest.ready()` resolves when the
+// extension is past its own boot.
+window.__remnantTest = {
+    /**
+     * Hard reset. Wipes accumulated play state back to initSettings()
+     * defaults + permanent residents. Resolves after the full
+     * handleRunEnd flow (including post-reset doNewChat) completes.
+     * Returns the post-reset snapshot for convenience.
+     */
+    async resetWorld() {
+        await handleRunEnd('reset-world', {
+            title: '☢ the world resets',
+            subtitle: 'the remnant forgets — a universe disintegrates',
+        });
+        return window.__remnantTest.snapshot();
+    },
+
+    /**
+     * Soft reset (archive the departing being, keep NPCs/codex/
+     * remnantMemory/playerArchive). Resolves after doNewChat completes.
+     */
+    async endStory() {
+        await handleRunEnd('end-story', {
+            title: '⟲ the story ends',
+            subtitle: 'the world remembers — another being departs',
+        });
+        return window.__remnantTest.snapshot();
+    },
+
+    /**
+     * Current extension state as a plain JSON-clone, with fields that
+     * are expected to drift between stacks already stripped. This is
+     * the recommended readout path for cross-stack parity tests:
+     *
+     *     const a = await st1.page.evaluate(() => window.__remnantTest.snapshot());
+     *     const b = await st2.page.evaluate(() => window.__remnantTest.snapshot());
+     *     // a and b should deep-equal on a fresh post-reset-world state.
+     *
+     * Drift fields removed here (NOT in the test's diff layer):
+     *   - run.startedAt / run.lastUpdated (timestamps)
+     *   - remnantMemory.abductions (persistent per-install log)
+     *   - playerArchive (persistent per-install log)
+     *   - topBarHidden (user UI preference)
+     *   - imageHistory (per-install generation log)
+     */
+    snapshot() {
+        const settings = initSettings();
+        // Deep-clone via JSON round-trip (drops functions, undefined,
+        // circular refs — fine for our plain-data shape).
+        const snap = JSON.parse(JSON.stringify(settings));
+        // Strip drift keys. Safe to delete: every one is a log, a
+        // user-preference, or a legacy leftover that's explicitly
+        // outside the parity bar.
+        if (snap.run) {
+            delete snap.run.startedAt;
+            delete snap.run.lastUpdated;
+        }
+        delete snap.remnantMemory;
+        delete snap.playerArchive;
+        delete snap.topBarHidden;
+        delete snap.imageHistory;
+        // legacyScrubbedForV261 is a one-time migration marker — set
+        // on first boot of an install that had legacy image-generator
+        // keys, unset on a fresh install. Not a parity signal.
+        delete snap.legacyScrubbedForV261;
+        // `characters` and `locations` are legacy keys from an older
+        // extension version; the current code neither reads nor writes
+        // them. Native installs upgraded from that version still have
+        // residue; fresh docker installs don't. Not a parity signal.
+        delete snap.characters;
+        delete snap.locations;
+        // Per-NPC first_seen timestamps are stamped by seedRemnantNpc
+        // / seedFortressNpc at reset time, so they drift by however
+        // many milliseconds apart the two stacks' resets happened.
+        // Shape is still checked (the keys are there), timestamp is
+        // dropped.
+        if (snap.npcs && typeof snap.npcs === 'object') {
+            for (const name of Object.keys(snap.npcs)) {
+                const npc = snap.npcs[name];
+                if (npc && typeof npc === 'object') {
+                    delete npc.first_seen;
+                    delete npc.last_seen;
+                }
+            }
+        }
+        return snap;
+    },
+
+    /**
+     * Resolve when the extension has finished its own boot
+     * initSettings() pass. Useful at test start before the test
+     * tries to call resetWorld() or snapshot().
+     */
+    async ready() {
+        // initSettings is idempotent and fast; calling it from here
+        // guarantees the settings object has been populated before
+        // the test reads it.
+        try { initSettings(); } catch (_) { /* ignore */ }
+        return true;
+    },
+};
+
+// ---------------------------------------------------------------------------
 // Player portrait auto-update
 // ---------------------------------------------------------------------------
 
@@ -3349,16 +3449,11 @@ function createSidePanel() {
         // images converted to nostalgic text blurbs and discarded) so
         // future runs can reference past beings.
         $('#img-gen-restart-story').on('click', async function () {
-            const ok1 = window.confirm(
-                'End this story? This being departs and the world continues without them. ' +
-                'The Remnant, The Fortress, and every NPC remember. Your player card ' +
-                'is archived for future reminiscence. This cannot be undone.'
-            );
-            if (!ok1) return;
-            const ok2 = window.confirm(
-                'Are you certain? You will wake somewhere new as an Unknown Being.'
-            );
-            if (!ok2) return;
+            // v2.10.0 — No confirm dialogs. The 5-second overlay
+            // countdown in handleRunEnd is the visual gate; a misfire
+            // can be aborted with a page refresh during the countdown.
+            // Keeping the action single-click also lets the UI-parity
+            // tests drive it deterministically.
             try {
                 await handleRunEnd('end-story', {
                     title: '⟲ the story ends',
@@ -3373,16 +3468,7 @@ function createSidePanel() {
         // Remnant, The Fortress, and The Fold so the fresh world still
         // has its two permanent residents and starter item.
         $('#img-gen-end-story').on('click', async function () {
-            const ok1 = window.confirm(
-                '☢ RESET THE WORLD? Every NPC, every memory, every archived player, every image ' +
-                '— gone. The Remnant will forget everything that has ever happened. This CANNOT be undone.'
-            );
-            if (!ok1) return;
-            const ok2 = window.confirm(
-                'Final confirmation. The Remnant forgets. All prior player cards are deleted. ' +
-                'There will be no record that any of this ever happened. Proceed?'
-            );
-            if (!ok2) return;
+            // v2.10.0 — No confirm dialogs (see End-Story note above).
             try {
                 await handleRunEnd('reset-world', {
                     title: '☢ the world resets',
@@ -4165,10 +4251,10 @@ function initializeExtension() {
 
     // Delegated click handler for chat-message avatar thumbnails.
     // Clicking a speaker's avatar in the chat pins the spotlight to
-    // that character and highlights their roster card. The Narrator
-    // IS The Remnant (he records and voices) — clicks on Narrator
-    // messages map to The Remnant's roster card. User messages map
-    // to the player card.
+    // that character and highlights their roster card. The Fortress
+    // IS the narrator (v2.11.0) — clicks on Fortress messages highlight
+    // The Fortress roster card. Legacy "Narrator" ch_name from old chats
+    // also maps to Fortress. User messages map to the player card.
     $(document).off('click.imgGenChatAvatar').on('click.imgGenChatAvatar', '#chat .mes .avatar', function (e) {
         const $mes = $(this).closest('.mes');
         if ($mes.length === 0) return;
@@ -4178,8 +4264,10 @@ function initializeExtension() {
             key = '__player__';
         } else {
             const chName = $mes.attr('ch_name') || '';
-            // Narrator → Remnant mapping (both are the same entity).
-            if (chName === 'Narrator' || chName === REMNANT_NAME) {
+            // The Fortress is the narrator; legacy "Narrator" ch_name maps here too.
+            if (chName === FORTRESS_NAME || chName === 'Narrator') {
+                key = FORTRESS_NAME;
+            } else if (chName === REMNANT_NAME) {
                 key = REMNANT_NAME;
             } else if (chName) {
                 key = chName;

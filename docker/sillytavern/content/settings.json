@@ -1,0 +1,39 @@
+{
+    "firstRun": false,
+    "username": "Traveler",
+    "user_avatar": "user-default.png",
+    "active_character": "The Fortress.png",
+    "main_api": "textgenerationwebui",
+    "api_server_textgenerationwebui": "http://ollama:11434",
+    "amount_gen": 350,
+    "max_context": 8192,
+    "textgenerationwebui_settings": {
+        "temp": 0.7,
+        "top_p": 0.9,
+        "top_k": 40,
+        "rep_pen": 1.1,
+        "do_sample": true,
+        "seed": -1,
+        "type": "ollama",
+        "streaming": false,
+        "ollama_model": "mistral:latest",
+        "server_urls": {
+            "ollama": "http://ollama:11434"
+        }
+    },
+    "power_user": {
+        "theme": "Dark Lite",
+        "fast_ui_mode": true,
+        "auto_scroll_chat_to_bottom": true,
+        "send_on_enter": 0,
+        "auto_connect": true
+    },
+    "extension_settings": {
+        "disabledExtensions": ["tts"],
+        "expressionOverrides": []
+    },
+    "accountStorage": {
+        "__migrated": "1",
+        "assistant": "The Fortress.png"
+    }
+}
