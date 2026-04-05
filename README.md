@@ -1,8 +1,15 @@
 # The Remnant Fortress
 
-A local AI-powered storytelling game system. You play **MGSgt Aaron Rhodes**, a
-combat engineer abducted by an ancient AI called **The Remnant** into a
-spherical alien fortress in null space.
+A local AI-powered interactive-fiction engine. You play **whoever you say you
+are** — a hoop and a glob of living goo snatch you from an ordinary moment and
+deliver you into a spherical alien fortress in null space, where an ancient AI
+called **The Remnant** asks only: *"Who are you, being?"* You build your
+character by answering.
+
+Roguelike structure: a run ends when you restart it in fiction, walk home
+through the portal, meet an untimely end, or click **End story** in the panel.
+The player carries nothing between runs. The Remnant remembers every being it
+has ever borrowed — nostalgia is the payoff, not metaprogression.
 
 Narration is generated locally by Mistral via Ollama. Scene images are
 generated locally by Stable Diffusion. Everything runs on your own machine —
@@ -39,7 +46,7 @@ Three voices play together:
 ## Repository layout
 
 ```
-toh-silly/
+remnant/
 ├── README.md                 this file
 ├── backend/
 │   ├── image_generator_api.py    Flask API wrapping Stable Diffusion
@@ -160,7 +167,7 @@ The API listens on `http://localhost:5000`. First request triggers a
 ### 2. SillyTavern extension
 
 ```bash
-cp -r extension ~/SillyTavern/public/scripts/extensions/image-generator
+cp -r extension ~/SillyTavern/public/scripts/extensions/remnant
 ```
 
 In `~/SillyTavern/config.yaml`, ensure:
@@ -281,7 +288,7 @@ hallucinations on the next turn and compound.
 
 - `extension/index.js` — the entire extension (markers, senses, codex,
   roster, player portrait, location memory, scrub, reset flow). **Also
-  mirrored** to `C:\Users\aaron\SillyTavern\public\scripts\extensions\image-generator\`
+  mirrored** to `C:\Users\aaron\SillyTavern\public\scripts\extensions\remnant\`
   — any edit here must be mirrored there and vice versa.
 - `extension/style.css` — sense colors, NPC dialogue block layout,
   `.npc-tone`, roster cards.

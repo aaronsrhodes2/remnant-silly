@@ -285,9 +285,9 @@ def index():
     """Root endpoint"""
     return '''
     <html>
-    <head><title>Image Generator API</title></head>
+    <head><title>The Remnant — Image API</title></head>
     <body>
-    <h1>Image Generator API Running</h1>
+    <h1>The Remnant — Image API Running</h1>
     <p>Device: {}</p>
     <p>API Endpoint: POST /api/generate</p>
     <pre>
@@ -305,7 +305,7 @@ def index():
 if __name__ == '__main__':
     host = os.environ.get('FLASK_HOST', '127.0.0.1')
     port = int(os.environ.get('FLASK_PORT', '5000'))
-    print(f"Starting Image Generator API")
+    print(f"Starting The Remnant — Image API")
     print(f"Device: {device}")
     print(f"Running on http://{host}:{port}")
     app.run(host=host, port=port, debug=False)

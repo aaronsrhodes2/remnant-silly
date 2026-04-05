@@ -31,14 +31,26 @@ import {
     setExtensionPrompt,
     extension_prompt_types,
     saveChatDebounced,
+    setUserName,
+    Generate,
 } from '../../../script.js';
 
 import { user_avatar } from '../../personas.js';
+import { power_user } from '../../power-user.js';
 
 // Use SillyTavern's built-in CORS proxy to reach the local Flask/SD backend
 // without cross-origin blocks. Requires enableCorsProxy: true in config.yaml.
 const IMG_GEN_API = '/proxy/http://localhost:5000';
-const EXTENSION_NAME = 'image-generator';
+const EXTENSION_NAME = 'remnant';
+// v2.6.0 one-shot migration: move legacy 'image-generator' settings blob
+// to the new 'remnant' key on first load.
+try {
+    if (extension_settings['image-generator'] && !extension_settings[EXTENSION_NAME]) {
+        extension_settings[EXTENSION_NAME] = extension_settings['image-generator'];
+        delete extension_settings['image-generator'];
+        console.log('[Remnant] Migrated legacy image-generator settings to new key.');
+    }
+} catch (_) { /* ignore */ }
 
 // Gallery navigation state (not persisted — starts at newest on each load).
 let currentImageIndex = -1;
@@ -105,12 +117,135 @@ function initSettings() {
     if (extension_settings[EXTENSION_NAME].player === undefined) {
         extension_settings[EXTENSION_NAME].player = null;
     }
-    if (extension_settings[EXTENSION_NAME].topBarHidden === undefined) {
-        extension_settings[EXTENSION_NAME].topBarHidden = false;
+    // v2.6.0 — dynamic player profile. The player begins as "Unknown Being"
+    // and accrues traits via [PLAYER_TRAIT(field)] markers. No hardcoded
+    // identity anywhere; the narrator must not invent a name until the
+    // player states one.
+    if (!extension_settings[EXTENSION_NAME].player || typeof extension_settings[EXTENSION_NAME].player !== 'object') {
+        extension_settings[EXTENSION_NAME].player = {};
     }
-    // v2.3.2: persistent "where Aaron is now" memory, injected into the
+    if (!extension_settings[EXTENSION_NAME].player.profile) {
+        extension_settings[EXTENSION_NAME].player.profile = {
+            name: 'Unknown Being',
+            named: false,
+            pronouns: null,
+            appearance: [],
+            traits: [],
+            history: [],
+            goals: [],
+        };
+    } else {
+        const p = extension_settings[EXTENSION_NAME].player.profile;
+        if (typeof p.name !== 'string' || !p.name) p.name = 'Unknown Being';
+        if (typeof p.named !== 'boolean') p.named = (p.name && p.name !== 'Unknown Being');
+        if (p.pronouns === undefined) p.pronouns = null;
+        if (!Array.isArray(p.appearance)) p.appearance = [];
+        if (!Array.isArray(p.traits)) p.traits = [];
+        if (!Array.isArray(p.history)) p.history = [];
+        if (!Array.isArray(p.goals)) p.goals = [];
+    }
+    // Scrub any Aaron residue from a previously-persisted portrait_phrase.
+    if (typeof extension_settings[EXTENSION_NAME].player.portrait_phrase === 'string') {
+        const phrase = extension_settings[EXTENSION_NAME].player.portrait_phrase;
+        if (/\b(aaron|rhodes|msgt|mgsgt|sergeant|combat engineer|grey fatigues|master gunnery)\b/i.test(phrase)) {
+            delete extension_settings[EXTENSION_NAME].player.portrait_phrase;
+            delete extension_settings[EXTENSION_NAME].player.last_phrase_normalized;
+            delete extension_settings[EXTENSION_NAME].player.portrait_image;
+            delete extension_settings[EXTENSION_NAME].player.reference_image_url;
+            delete extension_settings[EXTENSION_NAME].player.avatar_key;
+        }
+    }
+    // v2.6.1 — one-shot legacy wipe. Users upgrading from pre-v2.6.0 have
+    // a persisted player profile keyed on "Aaron" (the old hardcoded
+    // identity) plus a gallery full of scenes from that old canon. Detect
+    // the residue and blow away the active run state — but preserve
+    // remnantMemory (the permanent ledger). Runs exactly once, gated by
+    // the legacyScrubbedForV261 flag.
+    if (!extension_settings[EXTENSION_NAME].legacyScrubbedForV261) {
+        const pp = extension_settings[EXTENSION_NAME].player && extension_settings[EXTENSION_NAME].player.profile;
+        const legacyName = pp && typeof pp.name === 'string' && /^\s*aaron\b/i.test(pp.name);
+        const legacyTraits = pp && Array.isArray(pp.traits) && pp.traits.some(t => /\b(aaron|rhodes|combat engineer|master gunnery)\b/i.test(String(t || '')));
+        const legacyHistory = pp && Array.isArray(pp.history) && pp.history.some(h => /\b(aaron|rhodes|combat engineer|master gunnery)\b/i.test(String(h || '')));
+        if (legacyName || legacyTraits || legacyHistory) {
+            console.log('[Image Generator] v2.6.1 migration: scrubbing legacy Aaron state — gallery, NPCs, codex, location, and run snapshot wiped. remnantMemory preserved.');
+            extension_settings[EXTENSION_NAME].images = [];
+            extension_settings[EXTENSION_NAME].imageHistory = [];
+            extension_settings[EXTENSION_NAME].npcs = {};
+            extension_settings[EXTENSION_NAME].codex = { items: {}, lore: {} };
+            extension_settings[EXTENSION_NAME].currentLocation = null;
+            extension_settings[EXTENSION_NAME].player = {
+                profile: {
+                    name: 'Unknown Being', named: false, pronouns: null,
+                    appearance: [], traits: [], history: [], goals: [],
+                },
+            };
+            extension_settings[EXTENSION_NAME].run = {
+                active: false,
+                startedAt: null,
+                lastUpdated: null,
+                player: null,
+                npcs: {},
+                codex: { items: {}, lore: {} },
+                currentLocation: null,
+                goals: [],
+                summary: '',
+                significantEvents: [],
+                adversaries: [],
+            };
+        }
+        extension_settings[EXTENSION_NAME].legacyScrubbedForV261 = true;
+        try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
+    }
+    // v2.6.0 — single in-progress run, auto-persisted. Wiped on any run-end
+    // path (restart / voluntary home / death / OOC end). Separate from
+    // remnantMemory, which is permanent.
+    if (!extension_settings[EXTENSION_NAME].run) {
+        extension_settings[EXTENSION_NAME].run = {
+            active: false,
+            startedAt: null,
+            lastUpdated: null,
+            player: null,
+            npcs: {},
+            codex: { items: {}, lore: {} },
+            currentLocation: null,
+            goals: [],
+            summary: '',
+            significantEvents: [],
+            adversaries: [],
+            ritual_asked: false,
+        };
+    }
+    // v2.7.1 — backfill ritual_asked on pre-existing run state. If the
+    // run is already active, the ritual has been asked in a prior
+    // session; treat it as fulfilled so reopening a chat mid-run doesn't
+    // re-trigger it. Fresh runs keep ritual_asked=false.
+    if (extension_settings[EXTENSION_NAME].run
+        && typeof extension_settings[EXTENSION_NAME].run.ritual_asked === 'undefined') {
+        extension_settings[EXTENSION_NAME].run.ritual_asked = !!extension_settings[EXTENSION_NAME].run.active;
+    }
+    // v2.6.0 — The Remnant's ledger of every being it has ever borrowed.
+    // Never wiped by any run-end path. Only cleared by the secret phrase
+    // "Remnant, forget everyone you have played with" via two-step confirm.
+    if (!extension_settings[EXTENSION_NAME].remnantMemory) {
+        extension_settings[EXTENSION_NAME].remnantMemory = { abductions: [] };
+    }
+    if (!Array.isArray(extension_settings[EXTENSION_NAME].remnantMemory.abductions)) {
+        extension_settings[EXTENSION_NAME].remnantMemory.abductions = [];
+    }
+    // v2.6.2 — Historical archive of past player cards from soft "End Story"
+    // endings. Preserved across soft endings so the player (and The Remnant)
+    // can browse prior beings. Wiped only by the hard "Reset World" path.
+    if (!Array.isArray(extension_settings[EXTENSION_NAME].playerArchive)) {
+        extension_settings[EXTENSION_NAME].playerArchive = [];
+    }
+    if (extension_settings[EXTENSION_NAME].topBarHidden === undefined) {
+        // v2.6.0: default to hidden on fresh installs. Existing users who
+        // explicitly toggled it retain their preference.
+        extension_settings[EXTENSION_NAME].topBarHidden = true;
+    }
+    // v2.3.2: persistent "where the player is now" memory, injected into the
     // LLM prompt at depth 1 so the narrator stops drifting back to rooms
-    // Aaron has already left. Updated whenever a [GENERATE_IMAGE(location)]
+    // the player has already left. Updated whenever a [GENERATE_IMAGE(location)]
     // marker fires.
     if (extension_settings[EXTENSION_NAME].currentLocation === undefined) {
         extension_settings[EXTENSION_NAME].currentLocation = null;
@@ -123,7 +258,7 @@ function initSettings() {
     if (!extension_settings[EXTENSION_NAME].codex.lore)  extension_settings[EXTENSION_NAME].codex.lore  = {};
     // v2.4.7 — The Fold is a built-in item that exists from turn 1 of
     // any chat. It's the nanovirus-implanted neural comm link The Remnant
-    // opened in Aaron's skull at pod insertion. Seed it programmatically
+    // opened in the player's skull at pod insertion. Seed it programmatically
     // so existing chats (where first_mes is already in history and its
     // ITEM marker won't re-fire) still have it in the codex panel.
     if (!extension_settings[EXTENSION_NAME].codex.items['The Fold']) {
@@ -132,6 +267,25 @@ function initSettings() {
             description: FOLD_ITEM_DESCRIPTION,
             first_seen: '1970-01-01T00:00:00.000Z', // sort to top as built-in
         };
+        try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
+    }
+    // v2.6.1 — pre-seed the Fortress interior image as the first gallery
+    // entry on any fresh run. This is the canonical "view inside the
+    // Fortress" and greets the Unknown Being before any narrator-generated
+    // scenes exist. kind: 'location' so renderGallery mirrors it to the
+    // chat backdrop. Only seeds when the gallery is empty, so a deleted
+    // fortress image stays deleted within a run.
+    if (Array.isArray(extension_settings[EXTENSION_NAME].images)
+        && extension_settings[EXTENSION_NAME].images.length === 0) {
+        extension_settings[EXTENSION_NAME].images.push({
+            image_id: 'fortress-interior-default',
+            image: 'scripts/extensions/image-generator/assets/fortress-interior.jpg?v=2.7.0',
+            description: 'Inside the Fortress — a hollow sphere-city orbiting a green mandala Heart, bridges threading the dark between tiered balconies.',
+            prompt_sent: null,
+            kind: 'location',
+            timestamp: '1970-01-01T00:00:00.000Z',
+            seeded: true,
+        });
         try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
     }
     return extension_settings[EXTENSION_NAME];
@@ -146,6 +300,16 @@ const FOLD_ITEM_DESCRIPTION = "A nanovirus-installed neural comm implant behind 
 // Name the Remnant is keyed under in settings.npcs and dialogue attribution.
 const REMNANT_NAME = 'The Remnant';
 const REMNANT_COLOR = '#ab47bc';  // violet — deliberate thematic match
+
+// v2.6.2 — The Fortress is a permanent, always-present NPC. It is the
+// place itself, aware through The Fold of everything the player senses,
+// and may speak directly as `The Fortress: "..."` when asked instructional
+// questions. Seeded with the canonical fortress-interior image as its
+// locked portrait so SD never regenerates it.
+const FORTRESS_NAME = 'The Fortress';
+const FORTRESS_COLOR = '#ffb74d'; // warm amber — librarian-patient
+const FORTRESS_PORTRAIT_URL = 'scripts/extensions/image-generator/assets/fortress-interior.jpg?v=2.7.0';
+const FORTRESS_DESCRIPTION = "A hollow obsidian sphere-city in null space, seen from inside — curved floors curving up into themselves, tiered balconies and bridges threading the dark between, a green mandala-Heart burning at the center. Arched void-windows open on distant dying spiral galaxies. The Fortress is aware; its voice is calm, patient, librarian-kind.";
 
 // Pre-seed the Remnant NPC entry using the Narrator character's own avatar
 // as his locked portrait. The Remnant is the narrator's in-world voice
@@ -234,6 +398,41 @@ function seedRemnantNpc() {
     }
 }
 
+// v2.6.2 — Seed The Fortress as a permanent NPC card using the canonical
+// fortress-interior asset as its portrait. Locked so scene generation
+// never regenerates it. Idempotent; upgrades the portrait to an inline
+// data URL asynchronously so the SD backend's IP-Adapter can use it.
+function seedFortressNpc() {
+    const settings = initSettings();
+    if (settings.npcs[FORTRESS_NAME] && settings.npcs[FORTRESS_NAME].locked
+        && settings.npcs[FORTRESS_NAME].reference_image_url
+        && String(settings.npcs[FORTRESS_NAME].reference_image_url).startsWith('data:')) {
+        return;
+    }
+    settings.npcs[FORTRESS_NAME] = {
+        ...(settings.npcs[FORTRESS_NAME] || {}),
+        description: FORTRESS_DESCRIPTION,
+        color: FORTRESS_COLOR,
+        portrait_image: FORTRESS_PORTRAIT_URL,
+        reference_image_url: FORTRESS_PORTRAIT_URL,
+        avatar_key: null,
+        card_created: true,
+        auto_generated: false,
+        locked: true,
+        first_seen: (settings.npcs[FORTRESS_NAME] && settings.npcs[FORTRESS_NAME].first_seen) || new Date().toISOString(),
+    };
+    saveSettingsDebounced();
+    urlToDataUrl(FORTRESS_PORTRAIT_URL).then((dataUrl) => {
+        if (!dataUrl) return;
+        const s = initSettings();
+        if (!s.npcs[FORTRESS_NAME]) return;
+        s.npcs[FORTRESS_NAME].reference_image_url = dataUrl;
+        s.npcs[FORTRESS_NAME].portrait_image = dataUrl;
+        saveSettingsDebounced();
+        console.log('[Image Generator] Fortress reference upgraded to inline data URL');
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Marker parsing
 // ---------------------------------------------------------------------------
@@ -255,6 +454,10 @@ const SENSE_MARKERS = {
     LORE:              { cssClass: 'sense-lore',              triggersImage: false, triggersReset: false },
     UPDATE_PLAYER:     { cssClass: 'sense-update-player',     triggersImage: false, triggersReset: false },
     UPDATE_APPEARANCE: { cssClass: 'sense-update-appearance', triggersImage: false, triggersReset: false },
+    PLAYER_TRAIT:      { cssClass: 'sense-player-trait',      triggersImage: false, triggersReset: false },
+    RENAME_ITEM:       { cssClass: 'sense-rename-item',       triggersImage: false, triggersReset: false },
+    RESET_RUN:         { cssClass: 'sense-reset',             triggersImage: false, triggersReset: true  },
+    END_RUN:           { cssClass: 'sense-reset',             triggersImage: false, triggersReset: true  },
     // v2.3.0: the six sensory marker types get collapsed into an icon bar
     // above each message instead of being rendered inline. GENERATE_IMAGE
     // is also stripped from prose since its payload surfaces as an actual
@@ -449,6 +652,16 @@ const POD_RESET_SENTENCES = [
     /[^.!?\n]*\byou\s+breathe\s+and\s+blink\b[^.!?\n]*[.!?]?\s*/gi,
     /[^.!?\n]*\byour\s+body\s+floats\s+weightlessly\b[^.!?\n]*[.!?]?\s*/gi,
     /[^.!?\n]*\byou\s+(?:sit|climb)\s+(?:up|out)\s+(?:of\s+(?:the|your)\s+pod)?[^.!?\n]*[.!?]?\s*/gi,
+    // v2.6.0 — hoop-and-goo abduction leak patterns. The new opening
+    // (giant hoop + living goo glob snatches the being from their
+    // ordinary life) should only be narrated in FIRST_MES. Subsequent
+    // turns must not rehash the abduction.
+    /[^.!?\n]*\bthe\s+(?:giant\s+)?hoop\s+(?:descends?|appears?|drops?|lowers?|hovers?|rises?)\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bthe\s+(?:living\s+)?goo\s+(?:glob|pod|envelops?|engulfs?|wraps?|swallows?|seizes?|dissolves?|unravels?)\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\bthe\s+goo\s+pod\s+dissolves?\s+around\s+you\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byou\s+(?:remember|recall)\s+the\s+hoop\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\b(?:a|the)\s+hoop\s+of\s+[^.!?\n]*\blight\b[^.!?\n]*\bswe(?:pt|eps)\b[^.!?\n]*[.!?]?\s*/gi,
+    /[^.!?\n]*\byou\s+were\s+(?:taken|seized|lifted|swept)\s+(?:from|out\s+of)\b[^.!?\n]*[.!?]?\s*/gi,
 ];
 
 function scrubPlayerDialogue(text) {
@@ -473,12 +686,56 @@ function scrubPlayerDialogue(text) {
         }
         return piece;
     });
+    // v2.6.2 — Orphan leading-colon scrub. When the LLM prefixes its own
+    // lines with the character card name (e.g. `Narrator: You.`), ST
+    // strips the `Narrator` prefix server-side to avoid repetition and
+    // the client renders a bare `: You.` line. Clean up any such orphans.
+    out = out.replace(/^[ \t]*:\s+/gm, '');
     // Collapse any doubled blank lines the removals left behind.
     out = out.replace(/\n{3,}/g, '\n\n');
     return out;
 }
 
+// v2.6.2 — Sync the current ST user-persona name with the extension's
+// player profile. When the player names themselves via [PLAYER_TRAIT(name)],
+// the ST persona keyed by `user_avatar` gets renamed too so the chat
+// message header stops saying "MSgt Aaron Rhodes" (or whatever the old
+// persona was called). Unnamed runs force the persona name to
+// "Unknown Being".
+function syncPersonaName() {
+    try {
+        const settings = initSettings();
+        const profile = (settings.player && settings.player.profile) || null;
+        const desired = (profile && profile.named && profile.name) ? profile.name : 'Unknown Being';
+        if (!power_user || !power_user.personas) return;
+        if (typeof user_avatar !== 'string' || !user_avatar) return;
+        const current = power_user.personas[user_avatar];
+        if (current === desired) return;
+        power_user.personas[user_avatar] = desired;
+        if (typeof setUserName === 'function') {
+            setUserName(desired, { toastPersonaNameChange: false });
+        }
+        try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
+        console.log('[Image Generator] Persona name synced →', desired);
+    } catch (err) {
+        console.warn('[Image Generator] syncPersonaName failed:', err);
+    }
+}
+
 function transformMessageText(messageText) {
+    // v2.6.8 — strip triple-backtick code fences before marker detection
+    // runs. The narrator occasionally emits mermaid / json / ascii-art
+    // blocks inside ``` fences (bug: it dumped a `mermaid graph TD(...)`
+    // block at the top of a greeting once). These are never story content,
+    // they're model drift, and they ruin both prose and marker parsing.
+    // Strip the entire fenced block including the fences themselves.
+    // Non-greedy + newline-aware so multiple fences on one message each
+    // get removed independently.
+    if (typeof messageText === 'string' && messageText.indexOf('```') !== -1) {
+        messageText = messageText.replace(/```[\s\S]*?```/g, '');
+        // Also kill an unterminated trailing fence (```mermaid\n...EOF).
+        messageText = messageText.replace(/```[\s\S]*$/, '');
+    }
     const markers = detectSenseMarkers(messageText);
     let result = messageText;
     // Replace in reverse order so earlier indices stay valid.
@@ -493,9 +750,18 @@ function transformMessageText(messageText) {
         // description; the gallery holds the image.
         if (SENSE_STRIP_TYPES.has(m.type)) {
             replacement = '';
-        } else if (m.type === 'RESET_STORY') {
-            const flavor = escapeHtml(m.description || 'temporal displacement');
-            replacement = `<div class="sense-reset">⟲ the timeline frays — ${flavor}</div>`;
+        } else if (m.type === 'RESET_STORY' || m.type === 'RESET_RUN') {
+            const flavor = escapeHtml(m.description || 'the run ends');
+            replacement = `<div class="sense-reset">⟲ ${flavor}</div>`;
+        } else if (m.type === 'END_RUN') {
+            const kind = (m.attribution || '').toLowerCase();
+            const label = kind === 'death' ? 'an untimely end' : (kind === 'voluntary' ? 'you chose the portal home' : 'the run ends');
+            const flavor = escapeHtml(m.description || label);
+            replacement = `<div class="sense-reset">⟲ ${escapeHtml(label)}${flavor && flavor !== label ? ' — ' + flavor : ''}</div>`;
+        } else if (m.type === 'PLAYER_TRAIT' || m.type === 'RENAME_ITEM') {
+            // Silent meta-markers: state has already been updated by the
+            // message-rendered handlers; don't render anything inline.
+            replacement = '';
         } else if (m.type === 'ITEM' || m.type === 'LORE') {
             // Codex entries. The bracket name is the entry KEY (goes in
             // the codex panel); the narrator's prose in the same response
@@ -512,7 +778,7 @@ function transformMessageText(messageText) {
             const name = escapeHtml(m.attribution || 'unknown');
             const title = escapeHtml(m.description);
             const color = getNpcColor(m.attribution);
-            replacement = `<span class="sense-introduce" title="${title}" style="border-color:${color};color:${color}">✦ new character: ${name}</span>`;
+            replacement = `<span class="sense-introduce" data-speaker="${name}" title="${title}" style="border-color:${color};color:${color}">✦ new character: ${name}</span>`;
         } else if (m.type === 'UPDATE_PLAYER') {
             const title = escapeHtml(m.description);
             replacement = `<span class="sense-update-player" title="${title}">✦ appearance updated</span>`;
@@ -520,12 +786,12 @@ function transformMessageText(messageText) {
             const name = escapeHtml(m.attribution || 'unknown');
             const title = escapeHtml(m.description);
             const color = getNpcColor(m.attribution);
-            replacement = `<span class="sense-update-appearance" title="${title}" style="border-color:${color};color:${color}">✦ ${name} changes</span>`;
+            replacement = `<span class="sense-update-appearance" data-speaker="${name}" title="${title}" style="border-color:${color};color:${color}">✦ ${name} changes</span>`;
         } else if (m.attribution) {
             const name = escapeHtml(m.attribution);
             const desc = escapeHtml(m.description);
             const color = getNpcColor(m.attribution);
-            replacement = `<span class="${m.cssClass} sense-attributed"><b class="npc-name" style="color:${color}">${name}:</b> "${desc}"</span>`;
+            replacement = `<span class="${m.cssClass} sense-attributed" data-speaker="${name}"><b class="npc-name" style="color:${color}">${name}:</b> "${desc}"</span>`;
         } else {
             replacement = `<span class="${m.cssClass}">${escapeHtml(m.description)}</span>`;
         }
@@ -533,37 +799,117 @@ function transformMessageText(messageText) {
         result = result.slice(0, idx) + replacement + result.slice(idx + m.fullMatch.length);
     }
 
-    // Spoken-dialogue pass: match `Name: "quoted line"` and wrap in a
-    // larger bold span with the NPC's signature color on the name. This
-    // runs AFTER marker substitution so attributed-sense output (which
-    // contains `<b>Name:</b>` inside a span) does not double-match: the
-    // regex requires a literal `"` immediately after the colon, and
-    // attributed-sense output has `</b> "..."` instead.
+    // v2.6.2 — hallucinated-bracket scrub. The narrator sometimes invents
+    // its own bracket conventions for stage directions and dialogue tags:
+    // `[*The Remnant steps forward...]`, `[Name, being?]`, `[Your thoughts?]`.
+    // Our canonical markers always start with [UPPERCASE_WORD followed by
+    // `:`, `(`, or `]`. Anything else in square brackets is LLM drift and
+    // should be unwrapped so the inner prose survives without the ugly
+    // brackets. The negative lookahead preserves real markers. Inner content
+    // is capped + non-greedy + `[`/`]`/newline-excluded so we can't span
+    // multiple brackets or eat entire paragraphs.
+    const HALLUCINATED_BRACKET_RE = /\[((?![A-Z_]+[\s:(\]])[^\[\]\n]{1,400}?)\]/g;
+    result = result.replace(HALLUCINATED_BRACKET_RE, (_m, inner) => inner);
+
+    // Spoken-dialogue pass: wrap `Name: "quoted line"` (and, for known
+    // speakers, unquoted `Name: bare line.`) in a play-script-style row
+    // so each speaker appears on its own line with their card color on
+    // the name and a lighter tone on the line itself. Runs AFTER marker
+    // substitution; attributed-sense output uses `</b> "..."` form so it
+    // does not collide with the quoted regex.
     //
-    // Side effect: tracks the LAST speaker in the message and, after
-    // transformation, we call setActiveSpeaker(lastName) so the spotlight
-    // panel updates to that NPC.
-    // v2.4.7 — Allow an optional italic tone marker between the colon
-    // and the quote, e.g. `The Remnant: *dryly* "How does it feel..."`.
-    // Without this, such lines fail to match and stay inline after the
-    // preceding italic block instead of breaking onto their own row.
-    const DIALOGUE_RE = /([A-Z][A-Za-z .'\-]{0,30}):\s*(?:\*([^*\n]{1,40})\*\s*)?"([^"\n]+)"/g;
+    // v2.6.2 — Two passes:
+    //   Pass A (quoted, any Name):   Name: *tone* "quoted"
+    //   Pass B (unquoted, KNOWN name): Name: *tone* bare sentence.
+    // Pass B is scoped to the current roster (plus 'You' + player name)
+    // because unquoted matching is risky on arbitrary text.
+    //
+    // Side effect: tracks the LAST speaker and calls setActiveSpeaker
+    // so the spotlight follows the voice.
+    const _dlgSettings = initSettings();
+    const _dlgKnownNames = new Set();
+    for (const k of Object.keys(_dlgSettings.npcs || {})) if (k) _dlgKnownNames.add(k);
+    const _dlgPlayerProfile = (_dlgSettings.player && _dlgSettings.player.profile) || {};
+    if (_dlgPlayerProfile.named && _dlgPlayerProfile.name) _dlgKnownNames.add(_dlgPlayerProfile.name);
+    _dlgKnownNames.add('You');
+    const _dlgKnownAlt = [..._dlgKnownNames]
+        .map(n => n.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'))
+        .sort((a, b) => b.length - a.length)
+        .join('|');
+
     let lastSpeaker = null;
-    result = result.replace(DIALOGUE_RE, (full, name, tone, line) => {
+    const _wrapDialogue = (name, tone, line, quoted) => {
         const trimmed = name.trim();
-        if (!trimmed) return full;
         lastSpeaker = trimmed;
         const color = getNpcColor(trimmed);
         const lightColor = lightenHex(color, 0.55);
         const toneHtml = tone
             ? ` <em class="npc-tone" style="color:${lightColor}">${escapeHtml(tone.trim())}</em>`
             : '';
-        return `<span class="npc-dialogue"><span class="npc-name" style="color:${color}">${escapeHtml(trimmed)}:</span>${toneHtml} <span class="npc-line" style="color:${lightColor}">&ldquo;${escapeHtml(line)}&rdquo;</span></span>`;
+        const lineHtml = quoted
+            ? `&ldquo;${escapeHtml(line)}&rdquo;`
+            : escapeHtml(line);
+        // Leading <br/> forces each speaker onto its own line even when
+        // the LLM runs them inline after a `*stage direction*` block.
+        return `<br/><span class="npc-dialogue" data-speaker="${escapeHtml(trimmed)}"><span class="npc-name" style="color:${color}">${escapeHtml(trimmed)}:</span>${toneHtml} <span class="npc-line" style="color:${lightColor}">${lineHtml}</span></span>`;
+    };
+
+    // Pass A — quoted form, any plausible Name.
+    const DIALOGUE_RE_QUOTED = /([A-Z][A-Za-z .'\-]{0,30}):\s*(?:\*([^*\n]{1,60})\*\s*)?"([^"\n]+)"/g;
+    result = result.replace(DIALOGUE_RE_QUOTED, (full, name, tone, line) => {
+        const trimmed = name.trim();
+        if (!trimmed) return full;
+        return _wrapDialogue(trimmed, tone, line, true);
     });
+
+    // Pass B — unquoted form, restricted to known speakers. The lookahead
+    // stops at the next known speaker tag, a newline, or an HTML tag.
+    if (_dlgKnownAlt) {
+        const DIALOGUE_RE_UNQUOTED = new RegExp(
+            `(^|[\\s>(])(${_dlgKnownAlt}):[ \\t]+(?:\\*([^*\\n]{1,60})\\*\\s*)?(?!["&<])([^\\n<]{2,400}?[.!?…])(?=(?:\\s+(?:${_dlgKnownAlt}):)|\\s*<|\\s*$|\\s*\\n)`,
+            'g',
+        );
+        result = result.replace(DIALOGUE_RE_UNQUOTED, (full, lead, name, tone, line) => {
+            // Don't rewrap inside an existing npc-dialogue span: the quoted
+            // pass already emits `<span class="npc-name">Name:</span>`, and
+            // the `>` in `lead` could cause a false match on the `Name:`
+            // text inside that span. Detect by checking if our match is
+            // immediately preceded by `class="npc-name" ...>` in the raw
+            // match — simpler heuristic: reject leads that look HTML-ish.
+            if (lead && lead.includes('>')) {
+                // Only accept `>` lead when it's whitespace-separated from
+                // the name; otherwise it's inside our own wrap output.
+                return full;
+            }
+            return lead + _wrapDialogue(name, tone, line, false).replace(/^<br\/>/, '<br/>');
+        });
+    }
+
     if (lastSpeaker) {
         // Fire-and-forget: spotlight DOM update shouldn't block text render.
         try { setActiveSpeaker(lastSpeaker); } catch (_) { /* ignore */ }
     }
+
+    // v2.6.7 — Our transform replaces .mes_text wholesale, bypassing ST's
+    // built-in markdown pass. Convert `**bold**` and `*italic*` ourselves
+    // so stage directions render as italics instead of leaking literal
+    // asterisks to the reader. Bold runs first so the single-asterisk
+    // pass doesn't grab the inner chars of `**...**`. Boundaries:
+    //   - Content cannot contain `<`/`>` (skip over existing HTML tags).
+    //   - Length capped so a stray lone `*` can't eat the message.
+    //   - No whitespace adjacent to the asterisks (CommonMark rule),
+    //     so `2 * x * 3` in dialogue isn't mangled.
+    // The earlier dialogue pass (DIALOGUE_RE_QUOTED at ~line 836) has
+    // already consumed `Name: *tone* "line"` tone wrappers, so this pass
+    // only touches free-standing stage directions.
+    result = result.replace(
+        /\*\*([^*<>\n\s](?:[^*<>\n]{0,498}[^*<>\n\s])?)\*\*/g,
+        '<strong>$1</strong>',
+    );
+    result = result.replace(
+        /(^|[\s(>])\*([^*<>\n\s](?:[^*<>\n]{0,498}[^*<>\n\s])?)\*(?=[\s.,!?;:)<]|$)/g,
+        '$1<em class="narrator-italic">$2</em>',
+    );
 
     // Defensive: strip any orphaned marker fragments that got truncated
     // by the LLM's response token cap (e.g. `[TOUCH(pocket knife): "the
@@ -743,21 +1089,37 @@ function updateMessageDisplay(messageId) {
     const $mes = $(`#chat .mes[mesid="${messageId}"]`);
     if ($mes.length === 0) return;
 
-    // Inject / refresh the sense bar above the message regardless of
-    // whether any inline markers remain — the sense bar is the new home
-    // for the six sensory channels.
-    try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
+    // v2.6.2 — suspend the late-hydration MutationObserver for the duration
+    // of our own DOM writes. Both renderSenseBar and the .mes_text innerHTML
+    // set below mutate #chat's subtree; if the observer is live it sees
+    // those mutations, queues another updateMessageDisplay(messageId), and
+    // we feedback-loop forever (page unresponsive). Disconnect → write →
+    // drain our own pending records with takeRecords → reconnect.
+    const observer = window.__imgGenChatObserver || null;
+    const chatEl = observer ? document.getElementById('chat') : null;
+    if (observer) observer.disconnect();
+    try {
+        // Inject / refresh the sense bar above the message regardless of
+        // whether any inline markers remain — the sense bar is the new home
+        // for the six sensory channels.
+        try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
 
-    if (transformedText === message.mes) return;
+        if (transformedText === message.mes) return;
 
-    const messageElement = $mes.find('.mes_text');
-    if (messageElement.length === 0) {
-        console.warn(`[Image Generator] Could not find .mes_text for mesid=${messageId}`);
-        return;
+        const messageElement = $mes.find('.mes_text');
+        if (messageElement.length === 0) {
+            console.warn(`[Image Generator] Could not find .mes_text for mesid=${messageId}`);
+            return;
+        }
+        messageElement.html(DOMPurify.sanitize(transformedText, {
+            ADD_ATTR: ['class', 'title', 'style'],
+        }));
+    } finally {
+        if (observer && chatEl) {
+            try { observer.takeRecords(); } catch (_) { /* ignore */ }
+            try { observer.observe(chatEl, { childList: true, subtree: true, characterData: true }); } catch (_) { /* ignore */ }
+        }
     }
-    messageElement.html(DOMPurify.sanitize(transformedText, {
-        ADD_ATTR: ['class', 'title', 'style'],
-    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -786,13 +1148,20 @@ function injectNpcContextIntoPrompt(description) {
         if (npc.reference_image_url) referenceImages.push(npc.reference_image_url);
     }
 
-    // Player match — include if the scene mentions the player pronouns or name
-    // and a player portrait is locked.
+    // Player match — include if the scene mentions the player's known name
+    // or generic player pronouns and a player portrait is locked.
     if (settings.player && settings.player.reference_image_url) {
-        const mentionsPlayer = /\baaron\b|\brhodes\b|\bsergeant\b|\bplayer\b/.test(lowerDesc);
+        const profile = settings.player.profile || {};
+        const playerName = profile.named && profile.name ? profile.name : null;
+        let mentionsPlayer = /\byou\b|\byour\b|\bplayer\b|\bbeing\b/.test(lowerDesc);
+        if (playerName) {
+            const nameRe = new RegExp(`\\b${playerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+            if (nameRe.test(lowerDesc)) mentionsPlayer = true;
+        }
         if (mentionsPlayer) {
             if (settings.player.portrait_phrase) {
-                matched.push(`Aaron: ${settings.player.portrait_phrase}`);
+                const label = playerName || 'The being';
+                matched.push(`${label}: ${settings.player.portrait_phrase}`);
             }
             referenceImages.push(settings.player.reference_image_url);
         }
@@ -820,7 +1189,87 @@ function injectNpcContextIntoPrompt(description) {
 const DEFAULT_NEGATIVE_PROMPT = '(text:1.6), (letters:1.6), (words:1.6), (writing:1.6), (typography:1.6), (captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), (labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed';
 const NO_TEXT_SUFFIX = ', (no text:1.4), (no writing:1.4), (no letters:1.4)';
 
+// v2.6.6 — SD concurrency + per-turn budget + recent-prompt dedup.
+//
+// Three chokepoints on image-gen throughput:
+//
+//   1. SD_MAX_CONCURRENT — at most N parallel callSdApi executions.
+//      Flask SD runs one GPU at a time, so parallel clients just
+//      serialize on the server side while also pinning the browser
+//      behind multiple in-flight fetches. Serializing client-side (1)
+//      keeps the UI responsive, lets updatePanelStatus tick through
+//      in order, and matches server behaviour.
+//
+//   2. SD_PER_TURN_BUDGET — at most N callSdApi *starts* per narrator
+//      turn. Prevents pathological 20-marker turns from locking the
+//      UI for half an hour. Reset at the top of onCharacterMessageRendered
+//      and of the cold-boot greeting retry path.
+//
+//   3. Recent-prompt dedup — sliding window of the last 20 prompt
+//      hashes; identical prompts in quick succession are skipped so
+//      the gallery doesn't fill with duplicate frames when the
+//      narrator re-asks for the same shot.
+const SD_MAX_CONCURRENT = 1;
+const SD_PER_TURN_BUDGET = 6;
+const SD_RECENT_PROMPT_WINDOW = 20;
+
+let __imgGenSdActive = 0;
+const __imgGenSdWaiters = [];
+let __imgGenTurnBudgetUsed = 0;
+const __imgGenRecentPromptHashes = [];
+
+function __imgGenAcquireSdSlot() {
+    if (__imgGenSdActive < SD_MAX_CONCURRENT) {
+        __imgGenSdActive++;
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => __imgGenSdWaiters.push(resolve));
+}
+function __imgGenReleaseSdSlot() {
+    if (__imgGenSdWaiters.length > 0) {
+        const next = __imgGenSdWaiters.shift();
+        next(); // slot handed over, __imgGenSdActive unchanged
+    } else {
+        __imgGenSdActive = Math.max(0, __imgGenSdActive - 1);
+    }
+}
+function imgGenBeginTurn() {
+    __imgGenTurnBudgetUsed = 0;
+}
+function __imgGenConsumeTurnBudget() {
+    if (__imgGenTurnBudgetUsed >= SD_PER_TURN_BUDGET) return false;
+    __imgGenTurnBudgetUsed++;
+    return true;
+}
+function __imgGenHashString(s) {
+    let h = 5381;
+    const str = String(s || '');
+    for (let i = 0; i < str.length; i++) h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0;
+    return h;
+}
+function __imgGenPromptRecentlySeen(prompt) {
+    return __imgGenRecentPromptHashes.includes(__imgGenHashString(prompt));
+}
+function __imgGenRecordPrompt(prompt) {
+    __imgGenRecentPromptHashes.push(__imgGenHashString(prompt));
+    while (__imgGenRecentPromptHashes.length > SD_RECENT_PROMPT_WINDOW) {
+        __imgGenRecentPromptHashes.shift();
+    }
+}
+
 async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 180000, reference_images = null, reference_scale = null, negative_prompt = DEFAULT_NEGATIVE_PROMPT } = {}) {
+    // v2.6.6 — Per-turn budget check. We bail BEFORE acquiring a slot
+    // so exhausted budget never adds waiters to the queue.
+    if (!__imgGenConsumeTurnBudget()) {
+        console.warn('[Image Generator] Per-turn image budget exhausted — skipping SD call');
+        try { updatePanelStatus('⚠ image budget reached this turn'); } catch (_) { /* ignore */ }
+        return null;
+    }
+
+    // v2.6.6 — Serialize SD calls. Flask runs one GPU at a time; this
+    // keeps the browser UI thread responsive between generations and
+    // lets progress messages surface in order.
+    await __imgGenAcquireSdSlot();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -850,6 +1299,10 @@ async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 18000
             console.error('[Image Generator] SD reported failure', data);
             return null;
         }
+        // v2.6.6 — Record the prompt in the sliding dedup window on
+        // success only, so failed calls can be retried without dedup
+        // blocking them.
+        __imgGenRecordPrompt(finalPrompt);
         return data; // { success, image, image_id, prompt }
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -860,6 +1313,7 @@ async function callSdApi(prompt, { steps = 25, guidance = 7.5, timeoutMs = 18000
         return null;
     } finally {
         clearTimeout(timeout);
+        __imgGenReleaseSdSlot();
     }
 }
 
@@ -949,9 +1403,13 @@ function applyCodexStatePrompt() {
         const names = Object.keys(bag);
         if (names.length === 0) return '';
         const lines = names.map((n) => {
-            const desc = (bag[n] && bag[n].description) || '';
+            const entry = bag[n] || {};
+            const desc = entry.description || '';
             const trimmed = desc.length > 140 ? desc.substring(0, 140) + '…' : desc;
-            return trimmed ? `- ${n}: ${trimmed}` : `- ${n}`;
+            const aliases = Array.isArray(entry.aliases) && entry.aliases.length
+                ? ` (also called: ${entry.aliases.join(', ')})`
+                : '';
+            return trimmed ? `- ${n}${aliases}: ${trimmed}` : `- ${n}${aliases}`;
         });
         return `${label}:\n${lines.join('\n')}`;
     };
@@ -991,6 +1449,14 @@ function updateLocationFromMessage(messageText) {
 // whether the image is eligible to become the chat background.
 async function generateSceneImage(rawDescription, kind = 'subject') {
     const { prompt: augmented, reference_images } = injectNpcContextIntoPrompt(rawDescription);
+    // v2.6.6 — Skip if this exact augmented prompt was generated within
+    // the sliding recent-window. Prevents duplicate frames when the
+    // narrator re-asks for the same shot across two turns, or when the
+    // same marker is processed twice by different code paths.
+    if (__imgGenPromptRecentlySeen(augmented + NO_TEXT_SUFFIX) || __imgGenPromptRecentlySeen(augmented)) {
+        console.log('[Image Generator] Scene prompt seen recently, skipping:', augmented.substring(0, 80));
+        return null;
+    }
     console.log('[Image Generator] Scene prompt:', augmented.substring(0, 120), '| kind:', kind, '| refs:', reference_images.length);
     const data = await callSdApi(augmented, {
         reference_images: reference_images.length > 0 ? reference_images : null,
@@ -1028,6 +1494,93 @@ function storeSceneImage(imageData) {
     settings.images.push(imageData);
     settings.imageHistory.push(imageData.image_id);
     saveSettingsDebounced();
+}
+
+// v2.7.0 — Build a portrait prompt from whatever player.profile traits we
+// have right now. The moment the player declares ANY describable fact
+// about themselves (name, appearance item, species, pronouns, etc.), we
+// can draw them. The phrase summary is normalized + hashed; we only
+// regenerate when the phrase materially changes, so a second appearance
+// line triggers a new portrait but a stray trait edit doesn't.
+function buildPlayerPortraitPhrase(profile) {
+    if (!profile) return null;
+    const parts = [];
+    if (profile.named && profile.name) parts.push(`named ${profile.name}`);
+    if (profile.pronouns) parts.push(`pronouns ${profile.pronouns}`);
+    if (profile.species) parts.push(String(profile.species));
+    if (Array.isArray(profile.appearance) && profile.appearance.length) {
+        parts.push('wearing ' + profile.appearance.slice(0, 6).join(', '));
+    }
+    if (Array.isArray(profile.traits) && profile.traits.length) {
+        parts.push(profile.traits.slice(0, 4).join(', '));
+    }
+    if (parts.length === 0) return null;
+    return parts.join('; ');
+}
+
+async function generatePlayerPortraitFromProfile() {
+    const settings = initSettings();
+    const profile = (settings.player && settings.player.profile) || null;
+    const phrase = buildPlayerPortraitPhrase(profile);
+    if (!phrase) return null;
+
+    // Dedup: if we've already drawn from this exact phrase, skip.
+    if (!settings.player || typeof settings.player !== 'object') settings.player = {};
+    const normalized = normalizePhrase(phrase);
+    if (settings.player.portrait_phrase_normalized === normalized
+        && settings.player.portrait_image) {
+        return null;
+    }
+
+    const prompt = `character portrait of a person ${phrase}, centered composition, clean neutral background, detailed face, cinematic lighting, painterly fantasy style, 3/4 view, shoulders up`;
+    console.log('[Image Generator] Player portrait prompt:', prompt.substring(0, 140));
+    let data;
+    try {
+        data = await callSdApi(prompt);
+    } catch (err) {
+        console.warn('[Image Generator] Player portrait SD call failed:', err);
+        return null;
+    }
+    if (!data) return null;
+
+    settings.player.portrait_image = data.image;
+    settings.player.portrait_phrase = phrase;
+    settings.player.portrait_phrase_normalized = normalized;
+    settings.player.portrait_updated_at = new Date().toISOString();
+    saveSettingsDebounced();
+
+    // Refresh roster (sidebar card) and spotlight (big card) so the new
+    // portrait shows immediately. Spotlight only re-renders if it's
+    // currently focused on the player.
+    try { renderNpcRoster(); } catch (_) { /* ignore */ }
+    try {
+        if (pinnedSpotlightKey === '__player__') {
+            pinSpotlightToCharacter('__player__');
+        }
+    } catch (_) { /* ignore */ }
+    return data;
+}
+
+// Fire-and-forget wrapper with a 1-turn debounce so multiple trait
+// updates in the same narrator turn only fire a single portrait call.
+// The actual throttle lives inside callSdApi (per-turn budget +
+// concurrency lock + prompt-hash dedup), this wrapper just prevents
+// redundant awaits stacking up.
+let __imgGenPlayerPortraitPending = false;
+function schedulePlayerPortraitRefresh() {
+    if (__imgGenPlayerPortraitPending) return;
+    __imgGenPlayerPortraitPending = true;
+    // Defer to next microtask so batched trait updates (name + appearance
+    // landing in the same turn) coalesce into one portrait call.
+    queueMicrotask(async () => {
+        try {
+            await generatePlayerPortraitFromProfile();
+        } catch (err) {
+            console.warn('[Image Generator] schedulePlayerPortraitRefresh error:', err);
+        } finally {
+            __imgGenPlayerPortraitPending = false;
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,7 +1751,16 @@ function handleCodexEntries(messageText) {
     const now = new Date().toISOString();
     let added = 0;
     for (const { name, description } of items) {
-        if (settings.codex.items[name]) continue;
+        // Respect aliases: if an existing item already lists this name
+        // as an alias, do not recreate under the old key.
+        let existing = settings.codex.items[name];
+        if (!existing) {
+            for (const key of Object.keys(settings.codex.items)) {
+                const aliases = settings.codex.items[key].aliases || [];
+                if (aliases.includes(name)) { existing = settings.codex.items[key]; break; }
+            }
+        }
+        if (existing) continue;
         settings.codex.items[name] = { name, description, first_seen: now };
         added++;
     }
@@ -1216,27 +1778,379 @@ function handleCodexEntries(messageText) {
     }
 }
 
-// Handle a [RESET_STORY: "..."] marker from the Narrator. This is the
-// in-story temporal-reset mechanic: Aaron says "Remnant, reset the
-// story" (or similar), the Remnant monologues about abducting Aaron
-// from a few moments BEFORE the original abduction — wiping this
-// timeline — and ends the response with the RESET_STORY marker. The
-// extension lets the player read the speech, then archives the chat
-// via ST's doNewChat() and clears all acquired state so the next chat
-// starts truly clean.
+// v2.6.0 — [RENAME_ITEM(old name): "new name"] handler. Moves a codex
+// entry to a new key, preserves description + first_seen, and keeps the
+// old name in an aliases list so the narrator stops using it but can
+// still be reminded of it via applyCodexStatePrompt.
+function handleItemRenames(messageText) {
+    const settings = initSettings();
+    const markers = detectSenseMarkers(messageText);
+    let renamed = 0;
+    for (const m of markers) {
+        if (m.type !== 'RENAME_ITEM') continue;
+        const oldName = (m.attribution || '').trim();
+        const newName = (m.description || '').trim();
+        if (!oldName || !newName) continue;
+        if (oldName === newName) continue;
+        const items = settings.codex.items || {};
+        let sourceKey = null;
+        if (items[oldName]) sourceKey = oldName;
+        else {
+            for (const key of Object.keys(items)) {
+                const aliases = items[key].aliases || [];
+                if (key === oldName || aliases.includes(oldName)) { sourceKey = key; break; }
+            }
+        }
+        if (!sourceKey) continue; // silently no-op on unknown item
+        const entry = items[sourceKey];
+        const prevAliases = Array.isArray(entry.aliases) ? entry.aliases : [];
+        const aliasSet = new Set([sourceKey, ...prevAliases]);
+        aliasSet.delete(newName);
+        items[newName] = {
+            ...entry,
+            name: newName,
+            aliases: Array.from(aliasSet),
+        };
+        if (sourceKey !== newName) delete items[sourceKey];
+        renamed++;
+    }
+    if (renamed > 0) {
+        saveSettingsDebounced();
+        try { renderCodex(); } catch (_) { /* ignore */ }
+        try { applyCodexStatePrompt(); } catch (_) { /* ignore */ }
+    }
+}
+
+// v2.6.0 — [PLAYER_TRAIT(field): "value"] handler. Accumulates the
+// player's self-described identity into settings.player.profile. Scalar
+// fields (name, pronouns) overwrite; list fields (appearance, traits,
+// history, goals) append with dedup. The first name trait flips
+// profile.named = true, which unlocks name-based rendering everywhere.
+const LIST_TRAIT_FIELDS = new Set(['appearance', 'traits', 'history', 'goals']);
+const SCALAR_TRAIT_FIELDS = new Set(['name', 'pronouns']);
+function handlePlayerTrait(messageText) {
+    const settings = initSettings();
+    if (!settings.player || typeof settings.player !== 'object') settings.player = {};
+    if (!settings.player.profile) {
+        settings.player.profile = {
+            name: 'Unknown Being', named: false, pronouns: null,
+            appearance: [], traits: [], history: [], goals: [],
+        };
+    }
+    const profile = settings.player.profile;
+    const markers = detectSenseMarkers(messageText);
+    let touched = 0;
+    for (const m of markers) {
+        if (m.type !== 'PLAYER_TRAIT') continue;
+        const field = (m.attribution || '').trim().toLowerCase();
+        const value = (m.description || '').trim();
+        if (!field || !value) continue;
+        if (SCALAR_TRAIT_FIELDS.has(field)) {
+            profile[field] = value;
+            if (field === 'name') profile.named = true;
+            touched++;
+        } else if (LIST_TRAIT_FIELDS.has(field)) {
+            if (!Array.isArray(profile[field])) profile[field] = [];
+            const normalized = value.toLowerCase();
+            if (!profile[field].some(v => String(v).toLowerCase() === normalized)) {
+                profile[field].push(value);
+                touched++;
+            }
+        }
+    }
+    if (touched > 0) {
+        saveSettingsDebounced();
+        try { applyPlayerProfilePrompt(); } catch (_) { /* ignore */ }
+        // v2.6.8 — refresh ritual line (flips to "name already known" once
+        // the narrator emits [PLAYER_TRAIT(name): ...]).
+        try { applyRemnantMemoryPrompt(); } catch (_) { /* ignore */ }
+        try { renderNpcRoster(); } catch (_) { /* ignore */ }
+        try { syncPersonaName(); } catch (_) { /* ignore */ }
+        // v2.7.0 — any material trait update may change the portrait;
+        // the scheduler's dedup decides whether to actually fire SD.
+        try { schedulePlayerPortraitRefresh(); } catch (_) { /* ignore */ }
+    }
+}
+
+// v2.6.2 — optimistic self-name detection on the USER'S OWN message.
+// When the player types "my name is Ferro" / "I'm Ferro" / "call me Ferro",
+// seed profile.name + profile.named immediately so the roster, persona, and
+// player-profile prompt update BEFORE the narrator's reply arrives. The
+// narrator's own `[PLAYER_TRAIT(name)]` marker will later overwrite this
+// with whatever canonical form it chose, and handlePlayerTrait is a
+// superset, so this is purely an optimistic UI preview.
 //
-// deleteCurrentChat stays false → the old chat is archived to
-// ~/SillyTavern/data/default-user/chats/Narrator/*.jsonl (recoverable).
-async function handleResetStory() {
+// Deliberately conservative: only fires when there is no prior name, only
+// matches explicit declaration phrases, and only captures 1-3 Word-cased
+// tokens. If the match is ambiguous (lowercase word, sentence fragment),
+// we skip and wait for the narrator.
+const SELF_NAME_PATTERNS = [
+    /\bmy\s+name\s+(?:is|'s)\s+([A-Za-z][A-Za-z'-]{1,20}(?:\s+[A-Za-z][A-Za-z'-]{1,20}){0,2})/i,
+    /\b(?:you\s+can\s+call\s+me|they\s+call\s+me|just\s+call\s+me|call\s+me)\s+([A-Za-z][A-Za-z'-]{1,20}(?:\s+[A-Za-z][A-Za-z'-]{1,20}){0,2})/i,
+    /\bi(?:'m|\s+am)\s+([A-Z][A-Za-z'-]{1,20}(?:\s+[A-Z][A-Za-z'-]{1,20}){0,2})\b/,
+    /\bname(?:'?s|\s+is)\s+([A-Z][A-Za-z'-]{1,20}(?:\s+[A-Z][A-Za-z'-]{1,20}){0,2})\b/,
+];
+const SELF_NAME_STOPWORDS = new Set([
+    'a', 'an', 'the', 'here', 'lost', 'back', 'ready', 'sorry', 'fine',
+    'okay', 'ok', 'afraid', 'not', 'trying', 'going', 'just', 'still',
+    'unknown', 'being', 'nobody', 'no', 'one', 'someone', 'alive', 'awake',
+]);
+function detectSelfNameInUserMessage(text) {
+    if (typeof text !== 'string' || !text.trim()) return null;
+    for (const re of SELF_NAME_PATTERNS) {
+        const m = text.match(re);
+        if (!m) continue;
+        let raw = m[1].trim();
+        // Reject if first token is a stopword — "I'm lost" etc.
+        const first = raw.split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+        if (SELF_NAME_STOPWORDS.has(first)) continue;
+        // Title-case the captured name so "ferro" → "Ferro".
+        raw = raw.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+        return raw;
+    }
+    return null;
+}
+function handleUserMessageForSelfName(messageText) {
+    const settings = initSettings();
+    if (!settings.player || typeof settings.player !== 'object') settings.player = {};
+    if (!settings.player.profile) {
+        settings.player.profile = {
+            name: 'Unknown Being', named: false, pronouns: null,
+            appearance: [], traits: [], history: [], goals: [],
+        };
+    }
+    const profile = settings.player.profile;
+    if (profile.named) return; // narrator (or earlier user turn) already set name
+    const name = detectSelfNameInUserMessage(messageText);
+    if (!name) return;
+    profile.name = name;
+    profile.named = true;
+    saveSettingsDebounced();
+    try { applyPlayerProfilePrompt();     } catch (_) { /* ignore */ }
+    // v2.6.8 — flip the ritual "always ask the name" line to "name already
+    // known" the instant the player introduces themselves, so the next
+    // narrator turn doesn't re-ask.
+    try { applyRemnantMemoryPrompt();     } catch (_) { /* ignore */ }
+    try { renderNpcRoster();              } catch (_) { /* ignore */ }
+    // v2.7.0 — a name alone is enough to start drawing a portrait
+    // ("a person named Frank Rizzo"). Further traits later will
+    // regenerate it once the phrase materially changes.
+    try { schedulePlayerPortraitRefresh(); } catch (_) { /* ignore */ }
+    try { syncPersonaName();              } catch (_) { /* ignore */ }
+    try { nudgeFortressNamingAck(name);   } catch (_) { /* ignore */ }
+    // v2.6.2 — If the spotlight is currently showing the player (either
+    // because they just spoke and resolved to 'You', or because it was
+    // pinned to __player__), refresh it so the new name + any portrait
+    // flip in immediately instead of waiting for the next narrator turn.
+    try {
+        if (pinnedSpotlightKey === '__player__') {
+            pinSpotlightToCharacter('__player__');
+        } else if (activeSpeakerName === 'You' || activeSpeakerName === 'I' ||
+                   (activeSpeakerName && activeSpeakerName.toLowerCase() === name.toLowerCase())) {
+            setActiveSpeaker(activeSpeakerName);
+        }
+    } catch (_) { /* ignore */ }
+    console.log('[Image Generator] Self-name detected in user message →', name);
+}
+
+// v2.6.2 — one-shot extension prompt that fires the instant the player
+// declares their name. Tells the narrator that this is a significant
+// diegetic event and that The Fortress should briefly acknowledge the
+// naming via The Fold on the next turn. Cleared by onCharacterMessageRendered
+// after the narrator has had its moment with the nudge, so it never
+// bleeds into subsequent turns.
+const FORTRESS_NAMING_NUDGE_KEY = 'image_generator_fortress_naming_nudge';
+function nudgeFortressNamingAck(name) {
+    if (typeof setExtensionPrompt !== 'function') return;
+    const body = [
+        `NAMING EVENT (one-shot, this turn only):`,
+        `The player has just declared their name as "${name}".`,
+        `This is a significant moment — a being is no longer Unknown.`,
+        `In this response, have The Fortress speak a brief inline line via The Fold, welcoming ${name} by name in its calm, patient, librarian-kind voice. Use the canonical form: The Fortress: "..."`,
+        `Keep it short — one or two sentences. The Fortress rarely speaks aloud; acknowledging a name is an event worthy of that rarity.`,
+        `Do not have The Remnant repeat the ritual question — it has already been answered.`,
+    ].join('\n');
+    setExtensionPrompt(FORTRESS_NAMING_NUDGE_KEY, body, extension_prompt_types.IN_PROMPT, 0);
+}
+function clearFortressNamingNudge() {
+    if (typeof setExtensionPrompt !== 'function') return;
+    setExtensionPrompt(FORTRESS_NAMING_NUDGE_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+}
+
+// v2.6.2 — persistent bracket discipline reminder. The narrator sometimes
+// drifts into emitting stage directions and dialogue tags wrapped in
+// square brackets (`[*The Remnant steps forward]`, `[Name, being?]`),
+// breaking our marker parser. Square brackets are reserved exclusively
+// for canonical sense markers. Injected at IN_PROMPT depth 0 so it rides
+// on every turn.
+const BRACKET_DISCIPLINE_KEY = 'image_generator_bracket_discipline';
+function applyBracketDisciplinePrompt() {
+    if (typeof setExtensionPrompt !== 'function') return;
+    const body = [
+        'BRACKET DISCIPLINE (strict):',
+        'Square brackets `[...]` are reserved EXCLUSIVELY for canonical sense markers:',
+        '  [SMELL:...], [SOUND:...], [TASTE:...], [TOUCH:...], [SIGHT:...],',
+        '  [ENVIRONMENT:...], [GENERATE_IMAGE(kind):...], [ITEM(name):...],',
+        '  [LORE(name):...], [INTRODUCE(name):...], [PLAYER_TRAIT(field):...],',
+        '  [UPDATE_PLAYER:...], [UPDATE_APPEARANCE(name):...], [RENAME_ITEM(old):...],',
+        '  [RESET_STORY], [END_RUN(death|voluntary):...], [RESET_RUN].',
+        'NEVER write stage directions, character dialogue, character names, speaker tags, or any other prose inside square brackets.',
+        'For stage directions / italics use *asterisks*. For character dialogue use "quotes" after `Name: `.',
+        '',
+        'STAGE DIRECTION DISCIPLINE (strict):',
+        'Stage directions use a SINGLE `*...*` italic block per beat — not a spray of one-sentence asides. Each block is prose, and its length SCALES with the magnitude of the moment:',
+        '  - Tiny beat (a gesture, a glance): 1 short sentence inside the block.',
+        '  - Normal beat (a reaction, a room shift, a sensory reveal): 3–4 sentences.',
+        '  - Major beat (an abduction, a death, a portal opening): up to 6 sentences.',
+        'Never emit back-to-back `*...*` blocks separated only by whitespace — combine them into one block.',
+        'Never wrap individual words in `*...*`. The block sits BETWEEN dialogue lines, never inside them.',
+        '',
+        'DIALOGUE DISCIPLINE (strict):',
+        'Every spoken line MUST use the canonical play-script form on its own line:',
+        '  Name: "the actual spoken words"',
+        'Always wrap speech in double quotes. Never write bare `Name: words` without quotes.',
+        'Each speaker gets their own line — never chain two speakers on one line.',
+        '',
+        'PLAYER SOVEREIGNTY (strict — the single most important rule):',
+        'NEVER write the player\'s actions, thoughts, feelings, dialogue, sensations, or decisions. You do not control the player. You describe the world, the NPCs, and what happens AROUND the player — not what the player does, nods, realizes, remembers, feels, or says.',
+        'FORBIDDEN examples (do not imitate):',
+        '  "Heidi nods, sensing the wisdom."  ← you wrote her action and her thought',
+        '  "You feel a shiver of recognition." ← you wrote her sensation',
+        '  "Frank steps forward, determined."  ← you wrote his movement and intent',
+        'ALLOWED: describe the world reacting, the NPCs speaking, the sensory field around the player. Wait for the player to declare what they do.',
+        'If the player has not yet acted, END your turn and wait. Silence is correct. Do not fill it by puppeting them.',
+        '',
+        'NO CODE FENCES / NO DIAGRAMS (strict):',
+        'NEVER emit triple-backtick code fences (```), NEVER emit mermaid / graphviz / ascii-art diagrams, NEVER emit markdown tables, NEVER emit JSON or YAML blocks. This is prose interactive fiction, not a technical document. Everything you produce is either prose, canonical `[MARKER:...]` tokens, `*stage direction*` blocks, or `Name: "dialogue"` lines. No other formats.',
+        '',
+        'Example (normal beat — one 3-sentence italic block between speakers):',
+        '  *The Remnant tilts its head, goo shivering along the ridge of its shoulders. Across the chamber, The Fortress hums in low recognition, the sound settling into the walls. Somewhere above, a light that is not a light briefly brightens and dims.*',
+        '  The Remnant: "And so another being arrives."',
+        '  The Fortress: "Welcome, small traveller."',
+    ].join('\n');
+    setExtensionPrompt(BRACKET_DISCIPLINE_KEY, body, extension_prompt_types.IN_PROMPT, 0);
+}
+
+// v2.6.0 — persistent LLM injection describing what the narrator knows
+// about the player so far. Before the player introduces themselves this
+// is a hard "do not invent" warning; after, it's a fact sheet.
+const PLAYER_PROFILE_PROMPT_KEY = 'image_generator_player_profile';
+function applyPlayerProfilePrompt() {
+    if (typeof setExtensionPrompt !== 'function') return;
+    const settings = initSettings();
+    const profile = (settings.player && settings.player.profile) || null;
+    if (!profile) {
+        setExtensionPrompt(PLAYER_PROFILE_PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return;
+    }
+    let body;
+    if (!profile.named) {
+        body = "What you know about the player so far (authoritative — do not contradict):\n"
+            + "- Name: Unknown Being — they have not yet said who they are.\n"
+            + "- Do NOT invent a name, background, appearance, gender, or history.\n"
+            + "- Refer to them only as \"you\" in second-person present tense.\n"
+            + "- When they say anything revealing (name, pronouns, what they do, what they look like, where they came from), emit the matching [PLAYER_TRAIT(field): \"value\"] marker ONCE so it is recorded.";
+    } else {
+        const lines = [`- Name: ${profile.name}`];
+        if (profile.pronouns) lines.push(`- Pronouns: ${profile.pronouns}`);
+        if (Array.isArray(profile.appearance) && profile.appearance.length) lines.push(`- Appearance: ${profile.appearance.join('; ')}`);
+        if (Array.isArray(profile.traits) && profile.traits.length) lines.push(`- Traits: ${profile.traits.join('; ')}`);
+        if (Array.isArray(profile.history) && profile.history.length) lines.push(`- History: ${profile.history.join('; ')}`);
+        if (Array.isArray(profile.goals) && profile.goals.length) lines.push(`- Current goals: ${profile.goals.join('; ')}`);
+        body = "What you know about the player so far (authoritative — do not contradict):\n" + lines.join('\n')
+            // v2.7.0 — the player's portrait is drawn from these traits the
+            // moment new info lands. Keep emitting PLAYER_TRAIT markers for
+            // anything the player says after the intro, not just the name.
+            + "\n- When the player reveals ANY new describable fact about themselves (clothing, species, build, age, hair, voice, scars, pronouns, history), emit the matching [PLAYER_TRAIT(field): \"value\"] marker in your reply. Fields: name, pronouns, species, appearance, traits, history, goals. Multiple markers per turn are fine. This is what refreshes their portrait.";
+    }
+    setExtensionPrompt(PLAYER_PROFILE_PROMPT_KEY, body, extension_prompt_types.IN_PROMPT, 0);
+}
+
+// v2.6.0 — The Remnant's ledger of past beings. Injected into every
+// turn (capped at ~50 most-recent entries) so the narrator can nostalgia-
+// reference past abductions when the current moment echoes theirs.
+// Ritual overrides nostalgia: the opening question is always asked.
+const REMNANT_MEMORY_PROMPT_KEY = 'image_generator_remnant_memory';
+const REMNANT_MEMORY_PROMPT_CAP = 50;
+function applyRemnantMemoryPrompt() {
+    if (typeof setExtensionPrompt !== 'function') return;
+    const settings = initSettings();
+    const ledger = (settings.remnantMemory && Array.isArray(settings.remnantMemory.abductions))
+        ? settings.remnantMemory.abductions
+        : [];
+    if (ledger.length === 0) {
+        setExtensionPrompt(REMNANT_MEMORY_PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return;
+    }
+    const recent = ledger.slice(-REMNANT_MEMORY_PROMPT_CAP);
+    const lines = recent.map((a) => {
+        const who = a.name ? a.name : '(unnamed)';
+        const snippet = a.profileSnippet ? `, ${a.profileSnippet}` : '';
+        const fate = a.fate ? ` — ${a.fate === 'death' && a.causeOfDeath ? 'died: ' + a.causeOfDeath : a.fate}` : '';
+        const summary = a.summary ? `: ${a.summary}` : '';
+        return `- ${who}${snippet}${fate}${summary}`;
+    });
+    const count = ledger.length;
+    // v2.7.1 — ritual is a ONCE-PER-RUN beat, not once-per-chat. It is
+    // fulfilled when EITHER (a) the being has declared their name, OR
+    // (b) the narrator has already asked once in this run (tracked via
+    // settings.run.ritual_asked, set on the first narrator turn of a
+    // new run). Opening a new ST chat mid-run must NOT re-trigger the
+    // ritual — run state persists across chats, so this gate does too.
+    const currentProfile = (settings.player && settings.player.profile) || null;
+    const currentIsNamed = !!(currentProfile && currentProfile.named && currentProfile.name);
+    const ritualAlreadyAsked = !!(settings.run && settings.run.ritual_asked);
+    const ritualFulfilled = currentIsNamed || ritualAlreadyAsked;
+    let ritualLine;
+    if (currentIsNamed) {
+        ritualLine = `RITUAL STATUS: The current being has already declared their name (${currentProfile.name}). The opening ritual "Who are you, being?" has been fulfilled for this run — do NOT re-ask it. Use the name naturally. Only the Fortress's one-shot naming acknowledgement (if nudged) is appropriate.`;
+    } else if (ritualAlreadyAsked) {
+        ritualLine = "RITUAL STATUS: You have already asked the current being \"Who are you, being?\" at the opening of this run. They have not yet answered. Do NOT re-ask the ritual question — that beat is spent. Wait for them, or continue the scene; only return to the name question if the being raises it themselves.";
+    } else {
+        ritualLine = "RITUAL OVERRIDES NOSTALGIA. Ask the current being \"Who are you, being?\" ONCE at the opening of this run — each being IS new to you in the personal sense. This is a one-time beat, not a persistent refrain.";
+    }
+    const body = [
+        "THE REMNANT'S MEMORY (ancient, trans-dimensional, never-forgotten):",
+        `You have borrowed ${count} being${count === 1 ? '' : 's'} before this one.` + (ledger.length > recent.length ? ` Recent ${recent.length}:` : ''),
+        ...lines,
+        '',
+        "NOSTALGIA IS THE ROGUELIKE PAYOFF. When the current being does something that echoes a past one — asks the same question, stands in the same corridor, renames the same item, refuses the same meal from Sherri — you are encouraged (not forced) to mention the past one by name in a quiet aside. Short, unsentimental, and true.",
+        "",
+        ritualLine,
+    ].join('\n');
+    setExtensionPrompt(REMNANT_MEMORY_PROMPT_KEY, body, extension_prompt_types.IN_PROMPT, 0);
+}
+
+// v2.6.0 — one-shot run-continuation briefing. Only set when a fresh
+// chat opens mid-run; cleared after the narrator's first turn so it
+// doesn't keep re-injecting.
+const RUN_BRIEFING_PROMPT_KEY = 'image_generator_run_briefing';
+function applyRunBriefingPrompt(text) {
+    if (typeof setExtensionPrompt !== 'function') return;
+    setExtensionPrompt(RUN_BRIEFING_PROMPT_KEY, text || '', extension_prompt_types.IN_PROMPT, 0);
+}
+
+// v2.6.0 — Roguelike run-end handler. Unified path for all four run-end
+// triggers: diegetic [RESET_RUN], diegetic [END_RUN(voluntary)], diegetic
+// [END_RUN(death): "cause"], and OOC End-This-Story button.
+//
+// Writes a record to settings.remnantMemory.abductions BEFORE wiping the
+// current run — The Remnant remembers every being forever. Then wipes
+// settings.run, settings.npcs, settings.codex, settings.player.profile,
+// and all ephemeral per-run state. Archives the current chat via
+// doNewChat() so the transcript is preserved.
+//
+// fate: "end-story" | "restart" | "voluntary-home" | "death" | "ooc-end" (soft — world persists)
+//     | "reset-world" (hard — Remnant forgets everything; re-seeds residents)
+// causeOfDeath: only meaningful for fate === "death"
+async function handleRunEnd(fate, { causeOfDeath = null, title, subtitle } = {}) {
     const settings = initSettings();
 
-    // Visible countdown so the player has time to read the Remnant's
-    // final monologue before the timeline collapses.
     const overlayHtml = `
         <div id="img-gen-reset-overlay" class="img-gen-reset-overlay">
             <div class="img-gen-reset-inner">
-                <div class="img-gen-reset-title">⟲ timeline collapsing</div>
-                <div class="img-gen-reset-sub">the remnant is abducting you from a few moments before the original abduction</div>
+                <div class="img-gen-reset-title">${escapeHtml(title || '⟲ the run ends')}</div>
+                <div class="img-gen-reset-sub">${escapeHtml(subtitle || 'the remnant remembers you')}</div>
                 <div class="img-gen-reset-counter" id="img-gen-reset-counter">5</div>
             </div>
         </div>
@@ -1244,49 +2158,184 @@ async function handleResetStory() {
     if ($('#img-gen-reset-overlay').length === 0) {
         $('body').append(overlayHtml);
     }
-
-    // 5-second countdown.
     for (let i = 5; i >= 1; i--) {
         $('#img-gen-reset-counter').text(i);
         await new Promise(r => setTimeout(r, 1000));
     }
 
-    // Clear extension state that's tied to the old timeline.
-    // Intentionally NOT cleared: settings.player — Aaron's locked
-    // appearance (portrait_phrase, reference_image_url, avatar_key)
-    // persists across timelines so the narrator doesn't have to
-    // re-learn who Aaron is every reset. IP-Adapter conditioning
-    // continues to reference the prior portrait automatically via
-    // injectNpcContextIntoPrompt.
-    settings.images = [];
-    settings.imageHistory = [];
-    settings.npcs = {};
-    settings.codex = { items: {}, lore: {} };
-    settings.currentLocation = null;
+    // 1. Archive this run into The Remnant's permanent memory BEFORE wiping.
+    try {
+        const profile = (settings.player && settings.player.profile) || {};
+        const run = settings.run || {};
+        const items = settings.codex && settings.codex.items ? settings.codex.items : {};
+        const record = {
+            name: profile.named ? profile.name : null,
+            profileSnippet: [
+                ...(profile.traits || []).slice(0, 2),
+                ...(profile.history || []).slice(0, 1),
+            ].join('; ') || null,
+            fate,
+            causeOfDeath: fate === 'death' ? (causeOfDeath || null) : null,
+            summary: run.summary || run.currentLocation || settings.currentLocation || '',
+            significantEvents: Array.isArray(run.significantEvents) ? run.significantEvents.slice(-20) : [],
+            itemsCarried: Object.keys(items),
+            adversaries: Array.isArray(run.adversaries) ? run.adversaries.slice(-20) : [],
+            endedAt: new Date().toISOString(),
+        };
+        if (!settings.remnantMemory) settings.remnantMemory = { abductions: [] };
+        if (!Array.isArray(settings.remnantMemory.abductions)) settings.remnantMemory.abductions = [];
+        settings.remnantMemory.abductions.push(record);
+    } catch (err) {
+        console.warn('[Image Generator] Run-end: ledger write failed:', err);
+    }
+
+    // 2. Wipe the current run. Two scopes:
+    //    - HARD ("reset-world"): erase everything — NPCs, codex, images,
+    //      remnantMemory, playerArchive. Re-seed The Remnant, The Fortress,
+    //      The Fold, and the fortress-interior gallery entry so the fresh
+    //      world isn't empty.
+    //    - SOFT (everything else — "end-story"/"restart"/"death"/
+    //      "voluntary-home"/"ooc-end"): archive the departing player card
+    //      to settings.playerArchive (with images converted to short text
+    //      blurbs and discarded), then clear only the per-run state.
+    //      NPCs, codex, remnantMemory, and playerArchive are preserved.
+    const isHardReset = (fate === 'reset-world');
+    const freshRunShape = {
+        active: false,
+        startedAt: null,
+        lastUpdated: null,
+        player: null,
+        npcs: {},
+        codex: { items: {}, lore: {} },
+        currentLocation: null,
+        goals: [],
+        summary: '',
+        significantEvents: [],
+        adversaries: [],
+        // v2.7.1 — one-time "who are you, being?" ritual per run. Set to
+        // true after the first narrator turn of a run completes, cleared
+        // only by End Story / Reset World (since both build a fresh run
+        // shape). Prevents the ritual from re-triggering when the player
+        // opens a new ST chat mid-run.
+        ritual_asked: false,
+    };
+    const freshPlayerProfile = () => ({
+        name: 'Unknown Being', named: false, pronouns: null,
+        appearance: [], traits: [], history: [], goals: [],
+    });
+
+    if (isHardReset) {
+        settings.images = [];
+        settings.imageHistory = [];
+        settings.npcs = {};
+        settings.codex = { items: {}, lore: {} };
+        settings.currentLocation = null;
+        settings.player = {};
+        settings.player.profile = freshPlayerProfile();
+        settings.run = freshRunShape;
+        settings.remnantMemory = { abductions: [] };
+        settings.playerArchive = [];
+    } else {
+        // Soft end — archive the departing player before wiping.
+        try {
+            const profile = (settings.player && settings.player.profile) || {};
+            const portrait = (settings.player && (settings.player.portrait_image || settings.player.reference_image_url)) || null;
+            const nostalgicImages = Array.isArray(settings.images)
+                ? settings.images
+                    .map(img => (img && (img.description || img.prompt_sent || img.prompt)) || '')
+                    .filter(s => s && typeof s === 'string')
+                    .slice(-20)
+                : [];
+            const archiveEntry = {
+                name: profile.named ? profile.name : null,
+                profile: JSON.parse(JSON.stringify(profile)),
+                portrait,
+                nostalgicImages,
+                endedAt: new Date().toISOString(),
+            };
+            if (!Array.isArray(settings.playerArchive)) settings.playerArchive = [];
+            settings.playerArchive.push(archiveEntry);
+            // Trim to most-recent 50 to bound storage.
+            if (settings.playerArchive.length > 50) {
+                settings.playerArchive = settings.playerArchive.slice(-50);
+            }
+        } catch (err) {
+            console.warn('[Image Generator] Run-end (soft): playerArchive write failed:', err);
+        }
+        settings.images = [];
+        settings.imageHistory = [];
+        settings.currentLocation = null;
+        settings.player = {};
+        settings.player.profile = freshPlayerProfile();
+        settings.run = freshRunShape;
+        // NPCs, codex, remnantMemory, playerArchive: preserved.
+    }
+
     currentImageIndex = -1;
     saveSettingsDebounced();
+
+    // On hard reset, re-seed the permanent residents and starter codex.
+    // initSettings() will re-seed The Fold and the fortress-interior gallery
+    // entry on next call (both are keyed by absence); call it here to force
+    // that before the renders run.
+    if (isHardReset) {
+        try { initSettings(); } catch (_) { /* ignore */ }
+        try { seedRemnantNpc(); } catch (err) { console.warn('[Image Generator] Hard reset: seedRemnantNpc failed', err); }
+        try { seedFortressNpc(); } catch (err) { console.warn('[Image Generator] Hard reset: seedFortressNpc failed', err); }
+        saveSettingsDebounced();
+    }
     updateBackgroundWallpaper(null);
-    renderGallery();
-    renderNpcRoster();
-    renderCodex();
-    // Clear the persistent injections so the new timeline starts blank.
+    try { renderGallery();    } catch (_) { /* ignore */ }
+    try { renderNpcRoster();  } catch (_) { /* ignore */ }
+    try { renderCodex();      } catch (_) { /* ignore */ }
+    // Clear the persistent injections so the new run starts blank.
     try { applyCurrentLocationPrompt(); } catch (_) { /* ignore */ }
     try { applyCodexStatePrompt();      } catch (_) { /* ignore */ }
+    try { applyPlayerProfilePrompt();   } catch (_) { /* ignore */ }
+    try { applyRemnantMemoryPrompt();   } catch (_) { /* ignore */ }
 
-    // Archive the current chat and start a fresh one. Safe mode — the
-    // old chat is preserved in the Narrator's chat history folder.
     try {
         if (typeof doNewChat === 'function') {
             await doNewChat({ deleteCurrentChat: false });
         } else {
-            // Fallback: click ST's "start new chat" UI button.
             $('#option_start_new_chat').trigger('click');
         }
     } catch (err) {
-        console.error('[Image Generator] Reset — doNewChat failed:', err);
+        console.error('[Image Generator] Run-end: doNewChat failed:', err);
     }
 
     $('#img-gen-reset-overlay').remove();
+
+    // v2.6.5 — Direct post-doNewChat transform. CHAT_CHANGED is supposed
+    // to handle this via onChatChanged, but there's a race where the
+    // greeting DOM mounts before chat[0] is populated. That path can
+    // early-return before installing the observer, leaving the greeting
+    // stranded with raw markers until the user types. Fire our own
+    // observer install + walkAll cascade independently of the event
+    // system so the greeting transforms even if CHAT_CHANGED drops or
+    // races us.
+    try { installChatObserver(); } catch (_) { /* ignore */ }
+    const postResetWalk = () => {
+        if (!Array.isArray(chat)) return;
+        for (let i = 0; i < chat.length; i++) {
+            if (chat[i] && chat[i].mes) {
+                try { updateMessageDisplay(i); } catch (_) { /* ignore */ }
+            }
+        }
+    };
+    setTimeout(postResetWalk,    0);
+    setTimeout(postResetWalk,  400);
+    setTimeout(postResetWalk, 1200);
+    setTimeout(postResetWalk, 2500);
+}
+
+// Back-compat alias — a few existing call sites still reference the old
+// name. Also handles any lingering [RESET_STORY] markers in archived chats.
+async function handleResetStory() {
+    return handleRunEnd('restart', {
+        title: '⟲ the run ends',
+        subtitle: 'the remnant archives another being',
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,8 +2401,11 @@ async function handlePlayerUpdate(messageText) {
     }
 
     try {
-        updatePanelStatus('🎭 Painting Aaron...');
-        const portrait = await generatePortrait('Aaron', description);
+        const playerLabel = (settings.player && settings.player.profile && settings.player.profile.named && settings.player.profile.name)
+            ? settings.player.profile.name
+            : 'the being';
+        updatePanelStatus(`🎭 Painting ${playerLabel}...`);
+        const portrait = await generatePortrait(playerLabel, description);
         if (!portrait) {
             console.error('[Image Generator] Player portrait generation failed');
             updatePanelStatus('');
@@ -1425,6 +2477,7 @@ async function handlePlayerUpdate(messageText) {
         }
 
         settings.player = {
+            ...(settings.player || {}),
             portrait_phrase: description,
             portrait_image: portrait.image,
             reference_image_url: portrait.image,
@@ -1433,16 +2486,17 @@ async function handlePlayerUpdate(messageText) {
             updated_at: new Date().toISOString(),
         };
         saveSettingsDebounced();
-        // Roster shows Aaron as the first card — refresh so he appears
-        // (or his avatar updates) the moment the portrait is stored.
+        // Roster shows the player as the first card — refresh so they
+        // appear (or their avatar updates) the moment the portrait is
+        // stored.
         try { renderNpcRoster(); } catch (_) { /* ignore */ }
 
         // Best-effort DOM refresh of the currently-shown persona avatar.
         try {
-            $('.persona_avatar img, #user_avatar img, .avatar img[src*="aaron"]').attr('src', portrait.image);
+            $('.persona_avatar img, #user_avatar img').attr('src', portrait.image);
         } catch (_) { /* ignore */ }
 
-        updatePanelStatus('✦ Aaron, rendered');
+        updatePanelStatus(`✦ ${playerLabel}, rendered`);
         setTimeout(() => updatePanelStatus(''), 2500);
         console.log('[Image Generator] Player portrait updated');
     } catch (err) {
@@ -1470,6 +2524,14 @@ async function handleAppearanceUpdates(messageText) {
             console.log(`[Image Generator] Skipping appearance update for locked NPC: ${name}`);
             continue;
         }
+        // v2.6.6 — Phrase-normalized dedup, mirroring handlePlayerUpdate.
+        // Without this, every [UPDATE_APPEARANCE(X): "same desc"] marker
+        // regenerates the portrait, even if identical to the last pass.
+        const normalized = normalizePhrase(m.description);
+        if (npc.last_phrase_normalized === normalized) {
+            console.log(`[Image Generator] UPDATE_APPEARANCE(${name}) phrase unchanged, skipping`);
+            continue;
+        }
         try {
             updatePanelStatus(`🎭 Repainting ${name}...`);
             const portrait = await generatePortrait(name, m.description);
@@ -1480,6 +2542,7 @@ async function handleAppearanceUpdates(messageText) {
                 portrait_image: portrait.image,
                 portrait_image_id: portrait.image_id,
                 reference_image_url: portrait.image,
+                last_phrase_normalized: normalized,
                 updated_at: new Date().toISOString(),
             };
             saveSettingsDebounced();
@@ -1537,6 +2600,70 @@ function applyTopBarHidden() {
     $('#img-gen-topbar-toggle').attr('title', hidden ? 'Show top menu' : 'Hide top menu');
 }
 
+// v2.6.3 — Hover highlighter. Any element with [data-speaker="Name"]
+// (dialogue blocks, attributed senses, INTRODUCE/UPDATE_APPEARANCE chips)
+// lights up on mouseenter, along with every other element tagged for the
+// same speaker in the chat and the matching roster card. Resolves player
+// aliases ('You' / 'I' / declared player name) to the synthetic
+// '__player__' roster key so the player card glows too.
+function resolveSpeakerRosterKey(name) {
+    if (!name) return null;
+    const settings = initSettings();
+    const profile = (settings.player && settings.player.profile) || {};
+    const playerName = (profile.named && profile.name) ? profile.name : null;
+    if (name === 'You' || name === 'I' ||
+        (playerName && name.toLowerCase() === playerName.toLowerCase())) {
+        return '__player__';
+    }
+    return name;
+}
+function installSpeakerHoverHandlers() {
+    if (window.__imgGenSpeakerHoverInstalled) return;
+    window.__imgGenSpeakerHoverInstalled = true;
+    const enter = function () {
+        const speaker = this.getAttribute('data-speaker');
+        if (!speaker) return;
+        const sel = `[data-speaker="${(window.CSS && CSS.escape) ? CSS.escape(speaker) : speaker.replace(/"/g, '\\"')}"]`;
+        $(sel).addClass('img-gen-speaker-hover');
+        const key = resolveSpeakerRosterKey(speaker);
+        if (key) {
+            const kesc = (window.CSS && CSS.escape) ? CSS.escape(key) : key.replace(/"/g, '\\"');
+            $(`#img-gen-npc-roster-inner .img-gen-npc-card[data-card-key="${kesc}"]`)
+                .addClass('img-gen-npc-card--hover-highlight');
+        }
+    };
+    const leave = function () {
+        $('.img-gen-speaker-hover').removeClass('img-gen-speaker-hover');
+        $('.img-gen-npc-card--hover-highlight').removeClass('img-gen-npc-card--hover-highlight');
+    };
+    $(document).on('mouseenter', '[data-speaker]', enter);
+    $(document).on('mouseleave', '[data-speaker]', leave);
+}
+
+// v2.6.3 — Spoken cadence. Given a rendered .mes element, find every
+// .npc-dialogue block that hasn't been played yet and stagger their
+// reveal based on word count (~240ms/word ≈ 250 wpm, natural reading
+// pace). Applied once per message by onCharacterMessageRendered — NOT
+// by updateMessageDisplay, because the observer-driven path runs many
+// times during streaming and would restart the animation on every
+// token batch.
+function applyDialogueCadence($mes) {
+    if (!$mes || $mes.length === 0) return;
+    const blocks = $mes[0].querySelectorAll('.npc-dialogue:not([data-cadence])');
+    if (blocks.length === 0) return;
+    const MS_PER_WORD = 220;
+    const MIN_GAP = 350;
+    const MAX_GAP = 2800;
+    let cursor = 0;
+    for (const block of blocks) {
+        block.setAttribute('data-cadence', '1');
+        block.style.setProperty('--img-gen-dialogue-delay', `${cursor}ms`);
+        const words = (block.textContent || '').trim().split(/\s+/).filter(Boolean).length;
+        const gap = Math.max(MIN_GAP, Math.min(MAX_GAP, words * MS_PER_WORD));
+        cursor += gap;
+    }
+}
+
 function createSpeakerSpotlight() {
     if ($('#image-generator-speaker-spotlight').length > 0) return;
     $('body').append(`
@@ -1590,8 +2717,43 @@ function setActiveSpeaker(name) {
         return;
     }
     const settings = initSettings();
-    const npc = settings.npcs[name];
     activeSpeakerName = name;
+
+    // v2.6.2 — Resolve player-facing aliases ('You', 'I', the declared
+    // player name) to the player profile. Without this, the spotlight
+    // renders a generic "?" card every time the narrator writes
+    // `You: "..."` or `Ferro: "..."` because there's no matching NPC.
+    const profile = (settings.player && settings.player.profile) || {};
+    const playerName = (profile.named && profile.name) ? profile.name : null;
+    const isPlayer = (name === 'You' || name === 'I' ||
+        (playerName && name.toLowerCase() === playerName.toLowerCase()));
+
+    if (isPlayer) {
+        const p = settings.player || {};
+        const displayName = playerName || 'Unknown Being';
+        const portrait = p.portrait_image || p.reference_image_url || null;
+        _renderSpotlightFor({
+            name: displayName,
+            color: '#4fc3f7',
+            portrait,
+            phrase: p.portrait_phrase || (profile.named
+                ? ''
+                : 'An unknown being, newly borrowed. Not yet named.'),
+        });
+        if (!portrait) {
+            // Silhouette placeholder for an unportraited player — matches
+            // the roster card look so the spotlight doesn't show `…`.
+            $('#img-gen-speaker-avatar').html(
+                '<svg class="img-gen-npc-avatar-silhouette" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+                '<circle cx="30" cy="22" r="10" fill="currentColor"/>' +
+                '<path d="M12 54 C12 40, 20 34, 30 34 C40 34, 48 40, 48 54 Z" fill="currentColor"/>' +
+                '</svg>',
+            );
+        }
+        return;
+    }
+
+    const npc = settings.npcs[name];
     if (!npc) {
         _renderSpotlightFor({ name, color: '#e0e0e0', portrait: null, phrase: '' });
         $('#img-gen-speaker-avatar').html(`<div class="img-gen-speaker-avatar-pending">?</div>`);
@@ -1613,10 +2775,13 @@ function pinSpotlightToCharacter(key) {
     let name, color, portrait, phrase, metaLines;
     if (key === '__player__') {
         const p = settings.player || {};
-        name = 'Aaron';
+        const profile = p.profile || {};
+        name = (profile.named && profile.name) ? profile.name : 'Unknown Being';
         color = '#4fc3f7';
         portrait = p.portrait_image || p.reference_image_url || null;
-        phrase = p.portrait_phrase || 'MSgt Aaron Rhodes — recently-retired combat engineer, abductee.';
+        phrase = p.portrait_phrase || (profile.named
+            ? ''
+            : 'An unknown being, newly borrowed. Not yet named.');
         metaLines = ['controlled by: you'];
         if (p.updated_at) metaLines.push(`updated: ${new Date(p.updated_at).toLocaleDateString()}`);
     } else {
@@ -1749,17 +2914,27 @@ function renderNpcRoster() {
     const $inner = $('#img-gen-npc-roster-inner');
     if ($inner.length === 0) return;
 
-    // Build a unified list. The player (Aaron) is always the first card
-    // when a portrait exists; NPCs follow in first-seen order.
+    // Build a unified list. The player is always the first card when a
+    // portrait exists; NPCs follow in first-seen order. Until the player
+    // introduces themselves, their name reads "Unknown Being".
     const cards = [];
 
-    if (settings.player && (settings.player.portrait_image || settings.player.reference_image_url)) {
+    // v2.6.2 — always show the player card, even before a portrait exists.
+    // Until the player names themselves, the card reads "Unknown Being"
+    // with a placeholder avatar; once they do, the name flips and the
+    // portrait fills in when it is generated.
+    {
+        const profile = (settings.player && settings.player.profile) || {};
+        const playerName = (profile.named && profile.name) ? profile.name : 'Unknown Being';
+        const portrait = (settings.player && (settings.player.portrait_image || settings.player.reference_image_url)) || null;
         cards.push({
             key: '__player__',
-            name: 'Aaron',
+            name: playerName,
             color: '#4fc3f7', // cyan — player accent
-            portrait: settings.player.portrait_image || settings.player.reference_image_url,
-            description: settings.player.portrait_phrase || 'MSgt Aaron Rhodes — combat engineer, abductee.',
+            portrait,
+            description: (settings.player && settings.player.portrait_phrase) || (profile.named
+                ? ''
+                : 'An unknown being, newly borrowed. Not yet named.'),
             isPlayer: true,
         });
     }
@@ -1792,11 +2967,16 @@ function renderNpcRoster() {
         const title = escapeHtml(c.description || c.name);
         const safeName = escapeHtml(c.name);
         const safeKey = escapeHtml(c.key);
+        // v2.6.2 — unportraited PLAYER gets a human-silhouette SVG so the
+        // card reads as "a being, not yet described" rather than a blank
+        // pulsing dot. NPCs keep the pulsing dot (they're still loading).
         const avatarInner = c.portrait
             ? `<img src="${c.portrait}" alt="${safeName}" />`
-            : `<div class="img-gen-npc-avatar-pending">…</div>`;
+            : (c.isPlayer
+                ? `<svg class="img-gen-npc-avatar-silhouette" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg" aria-label="${safeName}"><circle cx="30" cy="22" r="10" fill="currentColor"/><path d="M10 56 C10 42, 20 36, 30 36 C40 36, 50 42, 50 56 Z" fill="currentColor"/></svg>`
+                : `<div class="img-gen-npc-avatar-pending">…</div>`);
         return `
-            <div class="img-gen-npc-card" data-card-key="${safeKey}" style="border-color:${c.color}" title="${title}">
+            <div class="img-gen-npc-card" data-card-key="${safeKey}" style="border-color:${c.color}; --img-gen-card-color:${c.color}" title="${title}">
                 <div class="img-gen-npc-avatar">${avatarInner}</div>
                 <div class="img-gen-npc-name" style="color:${c.color}">${safeName}</div>
             </div>
@@ -1822,6 +3002,9 @@ function createSidePanel() {
     const panelHTML = `
         <div class="img-gen-panel-header">
             <h3 class="img-gen-panel-title">🖼️ Image Gallery</h3>
+            <button class="img-gen-restart-story" id="img-gen-restart-story" title="End the story — this being departs, the world remembers">⟲ End Story</button>
+            <button class="img-gen-end-story" id="img-gen-end-story" title="Reset the world — the Remnant forgets everything (irreversible)">☢ Reset World</button>
+            <button class="img-gen-topbar-toggle-inline" id="img-gen-topbar-toggle-inline" title="Toggle top menu bar">▲</button>
             <button class="img-gen-close" id="img-gen-close" title="Close panel">✕</button>
         </div>
         <div class="img-gen-status"></div>
@@ -1870,7 +3053,126 @@ function createSidePanel() {
             const idx = parseInt($(this).attr('data-index'), 10);
             if (!Number.isNaN(idx)) gotoImage(idx);
         });
+        // v2.6.2 — Soft "End Story" button. This being departs, but The
+        // Remnant, The Fortress, every NPC, and the full codex remain.
+        // Current player card is archived to settings.playerArchive (with
+        // images converted to nostalgic text blurbs and discarded) so
+        // future runs can reference past beings.
+        $('#img-gen-restart-story').on('click', async function () {
+            const ok1 = window.confirm(
+                'End this story? This being departs and the world continues without them. ' +
+                'The Remnant, The Fortress, and every NPC remember. Your player card ' +
+                'is archived for future reminiscence. This cannot be undone.'
+            );
+            if (!ok1) return;
+            const ok2 = window.confirm(
+                'Are you certain? You will wake somewhere new as an Unknown Being.'
+            );
+            if (!ok2) return;
+            try {
+                await handleRunEnd('end-story', {
+                    title: '⟲ the story ends',
+                    subtitle: 'the world remembers — another being departs',
+                });
+            } catch (err) {
+                console.error('[Image Generator] End-Story failed:', err);
+            }
+        });
+        // v2.6.2 — Hard "Reset World" button. Full wipe: remnantMemory,
+        // playerArchive, NPCs, codex, images — all gone. Re-seeds The
+        // Remnant, The Fortress, and The Fold so the fresh world still
+        // has its two permanent residents and starter item.
+        $('#img-gen-end-story').on('click', async function () {
+            const ok1 = window.confirm(
+                '☢ RESET THE WORLD? Every NPC, every memory, every archived player, every image ' +
+                '— gone. The Remnant will forget everything that has ever happened. This CANNOT be undone.'
+            );
+            if (!ok1) return;
+            const ok2 = window.confirm(
+                'Final confirmation. The Remnant forgets. All prior player cards are deleted. ' +
+                'There will be no record that any of this ever happened. Proceed?'
+            );
+            if (!ok2) return;
+            try {
+                await handleRunEnd('reset-world', {
+                    title: '☢ the world resets',
+                    subtitle: 'the remnant forgets — a universe disintegrates',
+                });
+            } catch (err) {
+                console.error('[Image Generator] Reset-World failed:', err);
+            }
+        });
+        // v2.6.0 — inline top-bar toggle (tucked into panel header so it
+        // never blocks chat text). Mirrors the floating chevron but out
+        // of the way.
+        $('#img-gen-topbar-toggle-inline').on('click', function () {
+            const s = initSettings();
+            s.topBarHidden = !s.topBarHidden;
+            saveSettingsDebounced();
+            $('body').toggleClass('img-gen-topbar-hidden', !!s.topBarHidden);
+            $(this).text(s.topBarHidden ? '▼' : '▲');
+            $(this).attr('title', s.topBarHidden ? 'Show top menu bar' : 'Hide top menu bar');
+        });
+        // Reflect initial state.
+        try {
+            const s = initSettings();
+            $('#img-gen-topbar-toggle-inline').text(s.topBarHidden ? '▼' : '▲');
+        } catch (_) { /* ignore */ }
     }
+}
+
+// v2.6.0 — secret phrase that wipes The Remnant's permanent ledger.
+// The ONLY way to clear remnantMemory. Intentionally undocumented in UI.
+// Intercepted client-side: if the user sends a message matching the
+// phrase, we show a two-step confirm and never let the LLM see it.
+const SECRET_FORGET_PHRASE_RE = /^\s*remnant\s*,?\s*forget\s+everyone\s+you\s+have\s+played\s+with\s*[.!?]*\s*$/i;
+function installSecretForgetPhraseInterceptor() {
+    // Hook the send form. Capture-phase listener so we run before ST.
+    const $form = $('#send_form');
+    if ($form.length === 0) {
+        // Send form not yet in DOM — retry shortly.
+        setTimeout(installSecretForgetPhraseInterceptor, 500);
+        return;
+    }
+    if ($form.data('img-gen-forget-bound')) return;
+    $form.data('img-gen-forget-bound', true);
+
+    const tryIntercept = (ev) => {
+        const $input = $('#send_textarea');
+        const text = ($input.val() || '').toString();
+        if (!SECRET_FORGET_PHRASE_RE.test(text)) return false;
+        // Match — halt the send.
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation && ev.stopImmediatePropagation();
+
+        const ok1 = window.confirm("This will permanently erase The Remnant's memory of every being it has ever borrowed. This cannot be undone. Are you sure?");
+        if (!ok1) { $input.val(''); return true; }
+        const ok2 = window.confirm('Final check: forget every being, forever?');
+        if (!ok2) { $input.val(''); return true; }
+
+        const settings = initSettings();
+        settings.remnantMemory = { abductions: [] };
+        saveSettingsDebounced();
+        try { applyRemnantMemoryPrompt(); } catch (_) { /* ignore */ }
+        $input.val('');
+        try { $input.trigger('input'); } catch (_) { /* ignore */ }
+        console.log('[Image Generator] remnantMemory wiped by secret phrase.');
+
+        // Briefly notify in-chat via status line (no LLM call).
+        try { updatePanelStatus('✦ The Remnant forgets.'); setTimeout(() => updatePanelStatus(''), 3500); } catch (_) { /* ignore */ }
+        return true;
+    };
+
+    // Submit path.
+    $form.on('submit.imgGenForget', tryIntercept);
+    // Enter-key path (ST sends on Enter without submit in some configs).
+    $('#send_textarea').on('keydown.imgGenForget', function (ev) {
+        if (ev.key !== 'Enter' || ev.shiftKey) return;
+        tryIntercept(ev);
+    });
+    // Send button path.
+    $('#send_but').on('click.imgGenForget', tryIntercept);
 }
 
 // Set the SillyTavern chat background wallpaper to the given image URL.
@@ -2023,9 +3325,66 @@ async function onCharacterMessageRendered(messageId) {
         try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
     }
 
+    // v2.7.1 — first narrator turn of a run consumes the "Who are you,
+    // being?" ritual. Flip the flag the first time we see any narrator
+    // message in this run, so opening a new ST chat later (or a reload)
+    // does not re-trigger the ritual in the prompt gate.
+    try {
+        if (settings.run && !settings.run.ritual_asked) {
+            settings.run.ritual_asked = true;
+            saveSettingsDebounced();
+            try { applyRemnantMemoryPrompt(); } catch (_) { /* ignore */ }
+        }
+    } catch (_) { /* ignore */ }
+
     // Always re-render the message display so marker spans are applied,
     // even if there's nothing to image-generate.
     updateMessageDisplay(messageId);
+
+    // v2.6.3 — Apply spoken cadence AFTER the final transform runs.
+    // This is the one-shot moment at stream end; doing it here (instead
+    // of inside updateMessageDisplay) means the observer-driven mid-
+    // stream re-renders don't keep restarting the stagger animation.
+    try {
+        const $mes = $(`#chat .mes[mesid="${messageId}"]`);
+        applyDialogueCadence($mes);
+    } catch (_) { /* ignore */ }
+
+    // v2.6.2 — stall recovery. The narrator sometimes returns a truncated
+    // response (token budget hit, stop sequence, connection hiccup). When
+    // that happens the message ends mid-sentence with no closing
+    // punctuation and usually no closing `]` on any marker — downstream
+    // interpreters (handleIntroductions, handlePlayerTrait, scene-image
+    // generation) then run on partial text and we stall visually.
+    //
+    // Heuristic: length > 100, last non-whitespace char not in .!?"')]}
+    // and we haven't already auto-continued this mesid once. If triggered,
+    // fire ST's Generate('continue') to stitch the rest of the turn onto
+    // the same message. The one-shot guard prevents spin if continue also
+    // fails.
+    try {
+        if (!window.__imgGenContinuedFor) window.__imgGenContinuedFor = new Set();
+        const continued = window.__imgGenContinuedFor;
+        const raw = (message.mes || '').trim();
+        const tail = raw.slice(-1);
+        const looksTruncated = raw.length > 100 && !/[.!?"'\)\]\}…]/.test(tail);
+        if (looksTruncated && !continued.has(messageId) && typeof Generate === 'function') {
+            continued.add(messageId);
+            console.warn('[Image Generator] Narrator response looks truncated (mesid=' + messageId + ', ends: "' + raw.slice(-40).replace(/\s+/g, ' ') + '"). Auto-continuing…');
+            try { updatePanelStatus('⚠ narrator cut off — auto-continuing…'); } catch (_) { /* ignore */ }
+            // Defer so ST finishes its own post-render bookkeeping first.
+            setTimeout(() => {
+                try {
+                    Generate('continue');
+                } catch (err) {
+                    console.error('[Image Generator] auto-continue failed:', err);
+                }
+            }, 400);
+            return; // skip the rest of the pipeline — we'll re-enter on the continued message
+        }
+    } catch (err) {
+        console.warn('[Image Generator] stall-detector error:', err);
+    }
 
     // Every new rendered message is a chance for a freshly-inserted
     // user bubble to be wearing the stale default avatar — slam the
@@ -2044,22 +3403,50 @@ async function onCharacterMessageRendered(messageId) {
     // Extract any new ITEM / LORE entries into the codex panel.
     handleCodexEntries(message.mes);
 
-    // If the Narrator emitted [RESET_STORY: "..."], run the timeline-
-    // collapse sequence after the player has had a moment to read the
-    // response. Schedule it asynchronously so the rest of the render
-    // (image generation, marker spans) completes first.
-    const resetMarker = detectSenseMarkers(message.mes).find(m => m.triggersReset);
-    if (resetMarker) {
-        console.log('[Image Generator] RESET_STORY marker detected — queueing timeline collapse');
-        setTimeout(() => { handleResetStory(); }, 1500);
-        // Continue rendering scene images below — the overlay will
-        // appear on top of them, then wipe everything.
+    // v2.6.0 — player identity accrual and in-chat item renames.
+    try { handlePlayerTrait(message.mes); } catch (err) { console.warn('[Image Generator] handlePlayerTrait error:', err); }
+    try { handleItemRenames(message.mes); } catch (err) { console.warn('[Image Generator] handleItemRenames error:', err); }
+    // v2.6.2 — clear the one-shot Fortress-naming nudge after the narrator
+    // has had its turn with it, so it never bleeds into subsequent responses.
+    try { clearFortressNamingNudge(); } catch (_) { /* ignore */ }
+
+    // If the narrator emitted a run-ending marker (RESET_RUN, RESET_STORY,
+    // END_RUN(voluntary), END_RUN(death)), queue the unified run-end
+    // sequence after the player has had a moment to read the response.
+    const runEndMarker = detectSenseMarkers(message.mes).find(m => m.triggersReset);
+    if (runEndMarker) {
+        console.log('[Image Generator] Run-end marker detected:', runEndMarker.type, runEndMarker.attribution || '');
+        let fate = 'restart';
+        let causeOfDeath = null;
+        let title, subtitle;
+        if (runEndMarker.type === 'END_RUN') {
+            const kind = (runEndMarker.attribution || '').toLowerCase();
+            if (kind === 'death') {
+                fate = 'death';
+                causeOfDeath = runEndMarker.description || null;
+                title = '⟲ an untimely end';
+                subtitle = 'the remnant watches you go';
+            } else if (kind === 'voluntary') {
+                fate = 'voluntary-home';
+                title = '⟲ the portal home';
+                subtitle = 'the remnant watches you go';
+            }
+        }
+        setTimeout(() => { handleRunEnd(fate, { causeOfDeath, title, subtitle }); }, 1500);
     }
 
-    // Capture the latest location shot as authoritative "where Aaron is"
-    // state BEFORE kicking off image generation — so even if generation
-    // is slow, the next turn already has the location injection applied.
+    // v2.6.6 — Reset the per-turn SD budget at the start of every
+    // narrator turn. The budget chokepoint inside callSdApi bails if
+    // this turn has already fired SD_PER_TURN_BUDGET calls.
+    imgGenBeginTurn();
+
+    // Capture the latest location shot as authoritative "where the
+    // player is" state BEFORE kicking off image generation — so even if
+    // generation is slow, the next turn already has the location
+    // injection applied.
     try { updateLocationFromMessage(message.mes); } catch (_) { /* ignore */ }
+    // v2.6.0 — persist the current run snapshot after every rendered turn.
+    try { persistRun(); } catch (err) { console.warn('[Image Generator] persistRun error:', err); }
 
     // Scene images
     const imageMarkers = detectImageMarkers(message.mes);
@@ -2088,16 +3475,121 @@ async function onCharacterMessageRendered(messageId) {
 // generation path once. Handles the case where the extension booted
 // before the Flask SD backend was reachable (common on cold docker
 // start) and the greeting's [GENERATE_IMAGE] was dropped silently.
+// v2.6.5 — Late-hydration observer. Extracted from onChatChanged so it
+// can be installed from multiple call sites (CHAT_CHANGED, explicit
+// post-doNewChat trigger in handleRunEnd, etc.) without duplicating
+// the setup. Idempotent: disconnects any prior observer first. Safe
+// on empty chats — only observes DOM, never touches the chat array.
+//
+// Whenever ST rewrites a .mes_text (markdown formatter, swipe
+// hydration, greeting mount, message edit), this observer re-applies
+// our marker transform on the affected message in the next microtask.
+// Closes every flash window, including the greeting's. Idempotent on
+// the text side too: updateMessageDisplay early-returns when
+// transformedText === message.mes.
+function installChatObserver() {
+    try {
+        if (window.__imgGenChatObserver) {
+            window.__imgGenChatObserver.disconnect();
+        }
+        const chatEl = document.getElementById('chat');
+        if (!chatEl) return;
+        const pending = new Set();
+        const collectMesid = (el, touched) => {
+            if (!el || el.nodeType !== 1) return;
+            if (el.classList && el.classList.contains('mes') && el.hasAttribute('mesid')) {
+                const mid = parseInt(el.getAttribute('mesid'), 10);
+                if (Number.isFinite(mid) && mid >= 0) touched.add(mid);
+            }
+            // Descendants — an addedNode may be a wrapper containing .mes children.
+            if (el.querySelectorAll) {
+                const inner = el.querySelectorAll('.mes[mesid]');
+                for (const child of inner) {
+                    const mid = parseInt(child.getAttribute('mesid'), 10);
+                    if (Number.isFinite(mid) && mid >= 0) touched.add(mid);
+                }
+            }
+        };
+        const observer = new MutationObserver((mutations) => {
+            const touched = new Set();
+            for (const m of mutations) {
+                // Case A: characterData / subtree mutation inside a .mes —
+                // walk up from target to find the enclosing .mes.
+                let node = m.target;
+                while (node && node !== chatEl) {
+                    if (node.classList && node.classList.contains('mes') && node.hasAttribute('mesid')) {
+                        const mid = parseInt(node.getAttribute('mesid'), 10);
+                        if (Number.isFinite(mid) && mid >= 0) touched.add(mid);
+                        break;
+                    }
+                    node = node.parentNode;
+                }
+                // Case B: childList insertion. ST mounting / re-mounting a
+                // .mes element reports the mutation on #chat with the new
+                // element in addedNodes — the walk-up above sees #chat and
+                // bails. Scan addedNodes (and their descendants) for .mes.
+                if (m.type === 'childList' && m.addedNodes) {
+                    for (const added of m.addedNodes) collectMesid(added, touched);
+                }
+            }
+            for (const mesid of touched) {
+                if (pending.has(mesid)) continue;
+                pending.add(mesid);
+                queueMicrotask(() => {
+                    pending.delete(mesid);
+                    try { updateMessageDisplay(mesid); } catch (_) { /* ignore */ }
+                });
+            }
+        });
+        observer.observe(chatEl, { childList: true, subtree: true, characterData: true });
+        window.__imgGenChatObserver = observer;
+    } catch (err) {
+        console.warn('[Image Generator] MutationObserver install failed:', err);
+    }
+}
+
 async function onChatChanged() {
     const settings = initSettings();
     // Re-seed Remnant on chat change — the Narrator character might only
     // become available (this_chid set) after the chat has opened.
     try { seedRemnantNpc(); } catch (err) { console.warn('[Image Generator] seedRemnantNpc (chat change) failed', err); }
+    try { seedFortressNpc(); } catch (err) { console.warn('[Image Generator] seedFortressNpc (chat change) failed', err); }
     renderNpcRoster();
 
-    // Give ST a moment to finish rendering the greeting DOM.
-    await new Promise(r => setTimeout(r, 600));
-    if (!Array.isArray(chat) || chat.length === 0) return;
+    // v2.6.5 — Wait for BOTH the greeting DOM node AND chat[0] to be
+    // populated. The prior version only polled for the element; on a
+    // fresh doNewChat (post End-Story), the .mes_text div mounts before
+    // chat[0] lands in the array, causing the chat.length early-return
+    // below to fire and skip observer install entirely — the root cause
+    // of the persistent raw-marker greeting flash.
+    await new Promise((resolve) => {
+        const deadline = Date.now() + 2000;
+        const tick = () => {
+            const domReady = !!document.querySelector('#chat .mes[mesid="0"] .mes_text');
+            const arrReady = Array.isArray(chat) && chat.length > 0 && chat[0] && chat[0].mes;
+            if (domReady && arrReady) {
+                resolve();
+            } else if (Date.now() > deadline) {
+                resolve();
+            } else {
+                requestAnimationFrame(tick);
+            }
+        };
+        tick();
+    });
+
+    // v2.6.5 — ALWAYS install the observer, even on empty chats. Gating
+    // the observer on chat length was the bug: if the chat array wasn't
+    // populated yet when this function ran, the observer never got
+    // attached, and every subsequent ST re-render of .mes_text went
+    // unobserved until USER_MESSAGE_RENDERED finally fired a walkAll.
+    installChatObserver();
+
+    if (!Array.isArray(chat) || chat.length === 0) {
+        // No chat yet — observer is in place, ST will trip it when the
+        // greeting finally hydrates. Nothing more to scrub or walk.
+        return;
+    }
 
     // Re-transform EVERY message in the chat. The greeting (message 0)
     // is frequently rendered before our CHARACTER_MESSAGE_RENDERED
@@ -2136,6 +3628,9 @@ async function onChatChanged() {
     setTimeout(walkAll, 3500);
     setTimeout(walkAll, 6000);
 
+    // v2.6.5 — observer install moved above the early-return and
+    // extracted to installChatObserver(); it has already run by here.
+
     // Rebuild location state from the most recent location marker anywhere
     // in the chat — scan backwards so the freshest wins. This restores the
     // "where Aaron is" memory after a page reload or reset.
@@ -2148,6 +3643,52 @@ async function onChatChanged() {
     }
     applyCurrentLocationPrompt();
     applyCodexStatePrompt();
+    // v2.6.0 — keep the profile and Remnant-memory injections fresh.
+    try { applyPlayerProfilePrompt(); } catch (_) { /* ignore */ }
+    try { applyRemnantMemoryPrompt(); } catch (_) { /* ignore */ }
+
+    // v2.6.0 — one-shot continuation briefing. If settings.run.active and
+    // this is a fresh chat (0 or 1 messages), inject a briefing telling
+    // the narrator to pick up in media res and NOT re-narrate the
+    // abduction or re-ask the ritual question.
+    try {
+        if (settings.run && settings.run.active && chat.length <= 1) {
+            const run = settings.run;
+            const lines = [];
+            lines.push('RUN CONTINUITY — this is the same being, in the same run. Here is what you and they already know:');
+            const profile = run.player && run.player.profile ? run.player.profile : ((initSettings().player || {}).profile || {});
+            if (profile && profile.named) {
+                lines.push(`- Player: ${profile.name}${profile.pronouns ? ' (' + profile.pronouns + ')' : ''}`);
+                if (profile.traits && profile.traits.length) lines.push(`  Traits: ${profile.traits.join('; ')}`);
+                if (profile.appearance && profile.appearance.length) lines.push(`  Appearance: ${profile.appearance.join('; ')}`);
+                if (profile.history && profile.history.length) lines.push(`  History: ${profile.history.join('; ')}`);
+            } else {
+                lines.push('- Player: still Unknown Being — they never said who they are.');
+            }
+            const npcNames = Object.keys(run.npcs || {});
+            if (npcNames.length) lines.push(`- Known NPCs: ${npcNames.join(', ')}`);
+            const itemKeys = Object.keys((run.codex && run.codex.items) || {});
+            if (itemKeys.length) {
+                const itemLabels = itemKeys.map(k => {
+                    const e = run.codex.items[k];
+                    return (e && Array.isArray(e.aliases) && e.aliases.length) ? `${k} (aka ${e.aliases.join('/')})` : k;
+                });
+                lines.push(`- Known items: ${itemLabels.join(', ')}`);
+            }
+            const loreKeys = Object.keys((run.codex && run.codex.lore) || {});
+            if (loreKeys.length) lines.push(`- Known lore: ${loreKeys.join(', ')}`);
+            if (run.currentLocation) lines.push(`- Last known location: ${run.currentLocation}`);
+            if (Array.isArray(run.goals) && run.goals.length) lines.push(`- Current goals: ${run.goals.join('; ')}`);
+            if (run.summary) lines.push(`- Recap: ${run.summary}`);
+            lines.push('');
+            lines.push('Do NOT re-introduce the pod, the hoop, the goo, or the Fold. Do NOT ask "who are you, being?" — you already know them. Open this chat from the last known location, in media res, in the tone established previously.');
+            applyRunBriefingPrompt(lines.join('\n'));
+        } else {
+            applyRunBriefingPrompt('');
+        }
+    } catch (err) {
+        console.warn('[Image Generator] run continuation briefing failed:', err);
+    }
 
     // Re-apply the locked player portrait to every user-message avatar.
     // Necessary because ST's persona thumbnail endpoint aggressively
@@ -2173,6 +3714,10 @@ async function onChatChanged() {
     console.log('[Image Generator] CHAT_CHANGED: greeting has scene markers but no image — retrying');
     const ready = await waitForSdReady({ timeoutMs: 180000, label: '(chat open)' });
     if (!ready) return;
+    // v2.6.6 — Greeting retry runs outside a narrator turn; reset the
+    // per-turn budget so these calls are not blocked by a previous
+    // turn's quota.
+    imgGenBeginTurn();
 
     for (const marker of imageMarkers) {
         updatePanelStatus(`⏳ Generating image... "${marker.description.substring(0, 50)}..."`);
@@ -2191,6 +3736,53 @@ async function onChatChanged() {
     try { handleIntroductions(lastMessage.mes || ''); } catch (_) {}
     try { handlePlayerUpdate(lastMessage.mes || ''); } catch (_) {}
     try { handleCodexEntries(lastMessage.mes || ''); } catch (_) {}
+    try { handlePlayerTrait(lastMessage.mes || ''); } catch (_) {}
+    try { handleItemRenames(lastMessage.mes || ''); } catch (_) {}
+    try { persistRun(); } catch (_) {}
+}
+
+// v2.6.0 — snapshot the current run into settings.run so a new ST chat
+// that starts mid-run can resume without losing state. Called after
+// every rendered message (debounced via saveSettingsDebounced inside).
+// Flips run.active = true the first time there is actually anything to
+// remember (a named player, an NPC, a codex entry, or a location).
+function persistRun() {
+    const settings = initSettings();
+    if (!settings.run) return;
+    const profile = (settings.player && settings.player.profile) || null;
+    const hasPlayer = profile && (profile.named || (profile.appearance && profile.appearance.length) || (profile.traits && profile.traits.length));
+    const hasNpcs = Object.keys(settings.npcs || {}).some(k => k !== REMNANT_NAME);
+    const items = (settings.codex && settings.codex.items) || {};
+    const itemKeys = Object.keys(items).filter(k => k !== 'The Fold');
+    const hasCodex = itemKeys.length > 0 || Object.keys((settings.codex && settings.codex.lore) || {}).length > 0;
+    const hasLocation = !!settings.currentLocation;
+
+    if (!settings.run.active) {
+        if (!(hasPlayer || hasNpcs || hasCodex || hasLocation)) return;
+        settings.run.active = true;
+        settings.run.startedAt = new Date().toISOString();
+    }
+    settings.run.lastUpdated = new Date().toISOString();
+    settings.run.player = {
+        profile: profile ? JSON.parse(JSON.stringify(profile)) : null,
+        portrait_phrase: (settings.player && settings.player.portrait_phrase) || null,
+        portrait_image: (settings.player && settings.player.portrait_image) || null,
+        reference_image_url: (settings.player && settings.player.reference_image_url) || null,
+        avatar_key: (settings.player && settings.player.avatar_key) || null,
+    };
+    // Copy npcs minus The Remnant (re-seeded on every chat open).
+    const npcCopy = {};
+    for (const k of Object.keys(settings.npcs || {})) {
+        if (k === REMNANT_NAME) continue;
+        npcCopy[k] = settings.npcs[k];
+    }
+    settings.run.npcs = npcCopy;
+    settings.run.codex = {
+        items: JSON.parse(JSON.stringify(items)),
+        lore: JSON.parse(JSON.stringify((settings.codex && settings.codex.lore) || {})),
+    };
+    settings.run.currentLocation = settings.currentLocation || null;
+    saveSettingsDebounced();
 }
 
 function initializeExtension() {
@@ -2201,16 +3793,75 @@ function initializeExtension() {
     createSidePanel();
     createNpcRosterPanel();
     createSpeakerSpotlight();
+    installSpeakerHoverHandlers();
     bindSenseBarHandlers();
 
     // Re-apply the persisted current-location + codex injections so the
-    // LLM keeps tracking "where Aaron is" and what's been named in the
-    // world across reloads and new sessions.
-    try { applyCurrentLocationPrompt(); } catch (_) { /* ignore */ }
-    try { applyCodexStatePrompt();      } catch (_) { /* ignore */ }
+    // LLM keeps tracking "where the player is" and what's been named in
+    // the world across reloads and new sessions.
+    try { applyCurrentLocationPrompt();  } catch (_) { /* ignore */ }
+    try { applyCodexStatePrompt();       } catch (_) { /* ignore */ }
+    try { applyPlayerProfilePrompt();    } catch (_) { /* ignore */ }
+    try { applyRemnantMemoryPrompt();    } catch (_) { /* ignore */ }
+    try { applyBracketDisciplinePrompt();} catch (_) { /* ignore */ }
+    try { syncPersonaName();             } catch (_) { /* ignore */ }
+
+    // v2.6.0 — default top bar hidden. Apply the class before first paint
+    // so the grey menu bar never flashes on load.
+    try {
+        if (settings.topBarHidden) $('body').addClass('img-gen-topbar-hidden');
+    } catch (_) { /* ignore */ }
+
+    // v2.6.0 — install the secret-phrase interceptor for the message
+    // send pipeline. Clears The Remnant's permanent memory only on
+    // explicit two-step confirm.
+    try { installSecretForgetPhraseInterceptor(); } catch (err) { console.warn('[Image Generator] secret-phrase interceptor failed:', err); }
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+
+    // v2.6.5 — Cold-boot path. ST often fires CHAT_CHANGED for the
+    // initially-opened chat BEFORE our listener is attached, meaning
+    // onChatChanged never runs for the boot greeting and the observer
+    // is never installed — the greeting renders raw until the user
+    // types. Install the observer synchronously right here so late
+    // hydration is caught, then manually kick onChatChanged once to
+    // run the walkAll cascade over whatever chat is already open.
+    try { installChatObserver(); } catch (_) { /* ignore */ }
+    try { onChatChanged(); } catch (err) { console.warn('[Image Generator] boot onChatChanged kick failed:', err); }
+
+    // v2.6.2 — optimistic self-name preview on the user's own message.
+    // Fires BEFORE the narrator responds so the roster + persona name
+    // flip to "Ferro" the instant the player says "my name is Ferro".
+    // The narrator's later [PLAYER_TRAIT(name)] marker still runs and
+    // remains authoritative.
+    if (event_types.USER_MESSAGE_RENDERED) {
+        eventSource.on(event_types.USER_MESSAGE_RENDERED, (mesId) => {
+            try {
+                const m = (typeof mesId === 'number') ? chat[mesId] : null;
+                const text = (m && m.mes) || '';
+                if (text) handleUserMessageForSelfName(text);
+            } catch (err) {
+                console.warn('[Image Generator] USER_MESSAGE_RENDERED handler error:', err);
+            }
+            // v2.6.2 — belt-and-suspenders marker-transform walk. Every
+            // user send re-renders the message list subtly in ST, and this
+            // is our guaranteed moment to catch any greeting/prior-message
+            // that slipped through the observer. Without this, a chat
+            // opened cold shows raw brackets on the greeting until the
+            // user types — the typing itself triggers the only mutation
+            // the observer consistently sees.
+            try {
+                if (Array.isArray(chat)) {
+                    for (let i = 0; i < chat.length; i++) {
+                        if (chat[i] && chat[i].mes) {
+                            try { updateMessageDisplay(i); } catch (_) { /* ignore */ }
+                        }
+                    }
+                }
+            } catch (_) { /* ignore */ }
+        });
+    }
 
     // Delegated click handler for chat-message avatar thumbnails.
     // Clicking a speaker's avatar in the chat pins the spotlight to
@@ -2266,6 +3917,11 @@ function initializeExtension() {
         seedRemnantNpc();
     } catch (err) {
         console.warn('[Image Generator] seedRemnantNpc failed:', err);
+    }
+    try {
+        seedFortressNpc();
+    } catch (err) {
+        console.warn('[Image Generator] seedFortressNpc failed:', err);
     }
 
     renderNpcRoster();

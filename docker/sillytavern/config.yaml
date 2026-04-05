@@ -19,8 +19,8 @@ whitelist:
   - ::/0
 securityOverride: true
 
-# CRITICAL: enables the built-in /proxy/:url middleware that the
-# image-generator extension uses to reach flask-sd without browser CORS.
+# CRITICAL: enables the built-in /proxy/:url middleware that The Remnant
+# extension uses to reach flask-sd without browser CORS.
 enableCorsProxy: true
 
 # No login — this is a local single-user stack.
