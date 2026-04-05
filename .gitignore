@@ -21,6 +21,32 @@ venv/
 # ...but extension/assets is our curated, pre-generated world art — keep it all
 !extension/assets/**
 
+# ...and docker/sillytavern/content/ is the canonical ST seed tree baked
+# into the sillytavern image. Whatever is tracked here ships; whatever
+# is gitignored below this line doesn't. This is the single source of
+# truth for what a clean `git clone && docker compose up` boots into,
+# so keep it tight and curate via ignore rules rather than hand-picked
+# Dockerfile COPY lists.
+!docker/sillytavern/content/**
+
+# Junk + sensitive patterns that must NEVER land in the shipped image,
+# even if they appear in the native ST data dir we mirror from:
+#   - backup variants left by ST's character editor
+#   - files explicitly disabled by the author
+#   - settings.json / secrets.json carry API keys + personas
+#   - chats/ is per-user chat history, not seed content
+#   - backups/, thumbnails/, vectors/, User Avatars/ are runtime state
+docker/sillytavern/content/**/*.bak*
+docker/sillytavern/content/**/_disabled_*
+docker/sillytavern/content/**/settings.json
+docker/sillytavern/content/**/secrets.json
+docker/sillytavern/content/**/stats.json
+docker/sillytavern/content/chats/
+docker/sillytavern/content/backups/
+docker/sillytavern/content/thumbnails/
+docker/sillytavern/content/vectors/
+docker/sillytavern/content/User\ Avatars/
+
 # OS
 .DS_Store
 Thumbs.db
