@@ -3826,6 +3826,37 @@ function installModeBar() {
 
     // Harvest QR action buttons with retries (they mount asynchronously)
     _harvestQrButtons($bar, 0);
+
+    // Nuclear QR bar hide — catches any ST QR bar variant that CSS misses.
+    // Runs after a delay so the QR extension has time to mount its bar.
+    setTimeout(() => {
+        const _QR_NAV_LABELS = ['API Connections', 'Character Management', 'Extensions'];
+        _QR_NAV_LABELS.forEach(label => {
+            $('button, a').filter(function () {
+                return $(this).text().trim() === label;
+            }).each(function () {
+                $(this).closest('div').not('#send_form, #chat, body, #image-generator-panel').first().hide();
+            });
+        });
+    }, 1500);
+
+    // Boot-time sense sync — populate the bottom bar from the last narrator
+    // message without waiting for the next CHARACTER_MESSAGE_RENDERED event.
+    setTimeout(() => {
+        try {
+            if (!Array.isArray(chat)) return;
+            for (let i = chat.length - 1; i >= 0; i--) {
+                const m = chat[i];
+                if (m && !m.is_user && m.mes) {
+                    const markers = detectSenseMarkers(m.mes);
+                    if (markers.length) {
+                        syncBottomSenses(i, markers);
+                    }
+                    break;
+                }
+            }
+        } catch (_) { /* ignore */ }
+    }, 2000);
 }
 
 // ---------------------------------------------------------------------------
@@ -4349,6 +4380,19 @@ async function onChatChanged() {
     try { handleItemRenames(lastMessage.mes || ''); } catch (_) {}
     try { persistRun(); } catch (_) {}
     try { fixNarratorNames(); } catch (_) {}
+    // Sync bottom senses from the most recent narrator message on every chat load.
+    try {
+        if (Array.isArray(chat)) {
+            for (let i = chat.length - 1; i >= 0; i--) {
+                const m = chat[i];
+                if (m && !m.is_user && m.mes) {
+                    const markers = detectSenseMarkers(m.mes);
+                    if (markers.length) syncBottomSenses(i, markers);
+                    break;
+                }
+            }
+        }
+    } catch (_) {}
 }
 
 // v2.6.0 — snapshot the current run into settings.run so a new ST chat

@@ -241,7 +241,19 @@ body.img-gen-topbar-hidden #top-settings-holder {
 #qr--bar,
 #quickReplyBar,
 .qr--bar-container,
-.quickReplyBar {
+.quickReplyBar,
+[id^="qr--"],
+[class^="qr--"] {
+    display: none !important;
+}
+/* Collapse the panel header — title/close/toggle are all hidden,
+   End Story/Reset World live in the mode bar now */
+.img-gen-panel-header {
+    height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
+#img-gen-topbar-toggle-inline {
     display: none !important;
 }
 /* In-message sense bar — replaced by the persistent bottom bar */
@@ -1156,8 +1168,10 @@ body.img-gen-topbar-hidden #top-settings-holder {
 #img-gen-mode-bar {
     display: flex;
     gap: 6px;
-    padding: 6px 8px 2px 8px;
+    padding: 6px 8px 4px 8px;
     align-items: center;
+    background: rgba(12, 12, 22, 0.88);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 .img-gen-mode-btn {
     padding: 4px 20px;
