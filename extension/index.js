@@ -1101,6 +1101,7 @@ function updateMessageDisplay(messageId) {
         // whether any inline markers remain — the sense bar is the new home
         // for the six sensory channels.
         try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
+        try { syncBottomSenses(messageId, markers); } catch (_) { /* ignore */ }
 
         if (transformedText === message.mes) return;
 
@@ -3781,45 +3782,92 @@ function installModeBar() {
     if ($('#img-gen-mode-bar').length) return;
 
     const $bar = $('<div id="img-gen-mode-bar"></div>');
-    const $say = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
-    const $do  = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
-    $bar.append($say, $do);
+    const $say  = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
+    const $do   = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
+    const $look = $('<button class="img-gen-mode-btn" data-mode="look">Look</button>');
+    // Bottom sense icons live between the verb buttons and the action buttons
+    const $senses = $('<div id="img-gen-bottom-senses"><div class="img-gen-bottom-sense-icons"></div></div>');
+    $bar.append($say, $do, $look, $senses);
     $('#send_form').before($bar);
 
-    $('#send_textarea').attr('placeholder', 'Speak or *do*...');
+    $('#send_textarea').attr('placeholder', 'Speak, act, or look...');
 
-    // Say / Do toggle
+    // Say / Do / Look toggle
     $bar.on('click', '.img-gen-mode-btn:not(.img-gen-qr-btn)', function () {
         const mode = $(this).data('mode');
         $bar.find('.img-gen-mode-btn:not(.img-gen-qr-btn)').removeClass('active');
         $(this).addClass('active');
-        if (mode === 'do') {
-            $('body').addClass('img-gen-do-mode').removeClass('img-gen-say-mode');
-        } else {
-            $('body').addClass('img-gen-say-mode').removeClass('img-gen-do-mode');
-        }
+        $('body').removeClass('img-gen-say-mode img-gen-do-mode img-gen-look-mode');
+        $('body').addClass(`img-gen-${mode}-mode`);
     });
 
-    // Send intercept — wrap text in *…* when in Do mode
-    $(document).off('submit.imgGenMode').on('submit.imgGenMode', '#send_form', function () {
-        if (!$('body').hasClass('img-gen-do-mode')) return;
+    // Send intercept — transform text based on active mode
+    function _applyModeTransform() {
         const $ta = $('#send_textarea');
         let val = $ta.val().trim();
         if (!val) return;
-        val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
-        $ta.val(`*${val}*`);
-    });
+        if ($('body').hasClass('img-gen-do-mode')) {
+            // Do: wrap in *action*
+            val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
+            $ta.val(`*${val}*`);
+        } else if ($('body').hasClass('img-gen-look-mode')) {
+            // Look: prefix so the narrator describes the scene in detail
+            if (!val.toLowerCase().startsWith('look')) {
+                $ta.val(`*looks around carefully* ${val}`);
+            }
+        }
+        // Say mode: no transform
+    }
+    $(document).off('submit.imgGenMode').on('submit.imgGenMode', '#send_form', _applyModeTransform);
     $(document).off('keydown.imgGenMode').on('keydown.imgGenMode', '#send_textarea', function (e) {
         if (e.key !== 'Enter' || e.shiftKey) return;
-        if (!$('body').hasClass('img-gen-do-mode')) return;
-        let val = $(this).val().trim();
-        if (!val) return;
-        val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
-        $(this).val(`*${val}*`);
+        _applyModeTransform();
     });
 
     // Harvest QR action buttons with retries (they mount asynchronously)
     _harvestQrButtons($bar, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Bottom sense bar — persistent sense icons beside the mode bar.
+// Only mirrors from the most-recent narrator message so re-renders of
+// old history don't reset the bar or re-trigger flash animations.
+// ---------------------------------------------------------------------------
+let _bottomSenseLast = {};
+
+function syncBottomSenses(messageId, markers) {
+    const $bottom = $('#img-gen-bottom-senses .img-gen-bottom-sense-icons');
+    if (!$bottom.length) return;
+
+    // Only update when this IS the latest narrator message
+    let lastNarratorId = -1;
+    if (Array.isArray(chat)) {
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i] && !chat[i].is_user) { lastNarratorId = i; break; }
+        }
+    }
+    if (messageId !== lastNarratorId) return;
+
+    const byType = {};
+    for (const m of markers) {
+        if (!SENSE_BAR_TYPES.has(m.type)) continue;
+        if (!m.description) continue;
+        (byType[m.type] ||= []).push(m);
+    }
+
+    $bottom.empty();
+    const nextLast = {};
+    for (const type of ['SIGHT', 'SMELL', 'SOUND', 'TASTE', 'TOUCH', 'ENVIRONMENT']) {
+        const entries = byType[type];
+        if (!entries || !entries.length) continue;
+        const icon  = SENSE_ICONS[type] || '•';
+        const label = entries.map(e => e.description).join(' / ');
+        const isNew = _bottomSenseLast[type] !== label;
+        const $chip = $(`<button type="button" class="img-gen-bottom-sense-icon sense-${type.toLowerCase()}${isNew ? ' sense-flash' : ''}" data-type="${type}" data-label="${escapeHtml(label)}">${icon}</button>`);
+        $bottom.append($chip);
+        nextLast[type] = label;
+    }
+    _bottomSenseLast = nextLast;
 }
 
 const _QR_HARVEST_LABELS = ['End Story', 'Reset World'];
@@ -3833,7 +3881,8 @@ function _harvestQrButtons($bar, attempt) {
             return; // already harvested
         }
         const $src = $('button:not(.img-gen-mode-btn)').filter(function () {
-            return $(this).text().trim() === label;
+            // Use includes() to tolerate icon prefixes like "⊕ End Story"
+            return $(this).text().trim().includes(label);
         }).first();
         if (!$src.length) return;
 

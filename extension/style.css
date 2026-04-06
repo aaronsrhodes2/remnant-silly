@@ -236,7 +236,16 @@ body.img-gen-topbar-hidden #top-settings-holder {
 #extensionsMenuButton,
 #options_button,
 .qr--bar,
-.qr--buttons {
+.qr--buttons,
+.qr--bar-buttons,
+#qr--bar,
+#quickReplyBar,
+.qr--bar-container,
+.quickReplyBar {
+    display: none !important;
+}
+/* In-message sense bar — replaced by the persistent bottom bar */
+.img-gen-sense-bar {
     display: none !important;
 }
 
@@ -1087,14 +1096,6 @@ body.img-gen-topbar-hidden #top-settings-holder {
     display: none !important;
 }
 
-/* RED — ST quick-reply bar (various class/id variants across ST versions).
-   Already hidden: .qr--bar, .qr--buttons. Covering newer names too. */
-#qr--bar,
-#quickReplyBar,
-.qr--bar-container,
-.quickReplyBar {
-    display: none !important;
-}
 
 /* GREEN — Bigger, bolder sense icons. The senses are a first-class UI
    feature — they should feel tactile and substantial. */
@@ -1186,10 +1187,21 @@ body.img-gen-topbar-hidden #top-settings-holder {
     background: rgba(186, 104, 200, 0.1);
     box-shadow: 0 0 8px rgba(186, 104, 200, 0.25);
 }
-/* Input tint when in "Do" (action) mode */
+/* Input tint per mode */
 body.img-gen-do-mode #send_textarea {
     border-color: rgba(186, 104, 200, 0.4) !important;
     caret-color: #ba68c8;
+}
+body.img-gen-look-mode #send_textarea {
+    border-color: rgba(38, 198, 218, 0.4) !important;
+    caret-color: #26c6da;
+}
+/* Look active button */
+.img-gen-mode-btn.active[data-mode="look"] {
+    border-color: rgba(38, 198, 218, 0.75);
+    color: #26c6da;
+    background: rgba(38, 198, 218, 0.1);
+    box-shadow: 0 0 8px rgba(38, 198, 218, 0.25);
 }
 /* Spacer that pushes QR action buttons to the right of the mode bar */
 .img-gen-mode-sep {
@@ -1205,4 +1217,88 @@ body.img-gen-do-mode #send_textarea {
 .img-gen-qr-btn:hover {
     border-color: rgba(239, 83, 80, 0.45);
     color: #ef9a9a;
+}
+
+/* Do mode: italic textarea text */
+body.img-gen-do-mode #send_textarea {
+    font-style: italic !important;
+}
+
+/* ============================================
+   BOTTOM SENSE BAR (v2.2.0)
+   Persistent sense icons beside the mode bar.
+   Replaces the per-message sense bar.
+   ============================================ */
+#img-gen-bottom-senses {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex: 1;
+    padding: 0 6px;
+}
+.img-gen-bottom-sense-icon {
+    position: relative;
+    font-size: 26px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    overflow: visible;
+}
+.img-gen-bottom-sense-icon:hover {
+    transform: scale(1.18);
+    border-color: rgba(255, 255, 255, 0.5);
+}
+/* Sense-specific glow on hover */
+.img-gen-bottom-sense-icon.sense-sight:hover     { box-shadow: 0 0 18px 4px rgba(255, 140, 0, 0.6); }
+.img-gen-bottom-sense-icon.sense-smell:hover     { box-shadow: 0 0 18px 4px rgba(0, 200, 83, 0.6); }
+.img-gen-bottom-sense-icon.sense-sound:hover     { box-shadow: 0 0 18px 4px rgba(41, 182, 246, 0.6); }
+.img-gen-bottom-sense-icon.sense-taste:hover     { box-shadow: 0 0 18px 4px rgba(255, 202, 40, 0.6); }
+.img-gen-bottom-sense-icon.sense-touch:hover     { box-shadow: 0 0 18px 4px rgba(244, 67, 54, 0.6); }
+.img-gen-bottom-sense-icon.sense-environment:hover { box-shadow: 0 0 18px 4px rgba(171, 71, 188, 0.6); }
+/* Resting glow so active senses feel alive even before hover */
+.img-gen-bottom-sense-icon.sense-sight     { box-shadow: 0 0 6px 1px rgba(255, 140, 0, 0.25); }
+.img-gen-bottom-sense-icon.sense-smell     { box-shadow: 0 0 6px 1px rgba(0, 200, 83, 0.25); }
+.img-gen-bottom-sense-icon.sense-sound     { box-shadow: 0 0 6px 1px rgba(41, 182, 246, 0.25); }
+.img-gen-bottom-sense-icon.sense-taste     { box-shadow: 0 0 6px 1px rgba(255, 202, 40, 0.25); }
+.img-gen-bottom-sense-icon.sense-touch     { box-shadow: 0 0 6px 1px rgba(244, 67, 54, 0.25); }
+.img-gen-bottom-sense-icon.sense-environment { box-shadow: 0 0 6px 1px rgba(171, 71, 188, 0.25); }
+/* Flash: bigger and brighter than the in-message version */
+@keyframes bottomSenseFlash {
+    0%   { transform: scale(1);    box-shadow: 0 0 0 0     rgba(255, 255, 255, 0.0); }
+    18%  { transform: scale(1.65); box-shadow: 0 0 32px 10px rgba(255, 255, 255, 0.95); }
+    55%  { transform: scale(1.2);  box-shadow: 0 0 16px 5px rgba(255, 255, 255, 0.4); }
+    100% { transform: scale(1);    box-shadow: 0 0 6px 1px  var(--sense-resting-glow, rgba(255,255,255,0.1)); }
+}
+.img-gen-bottom-sense-icon.sense-flash {
+    animation: bottomSenseFlash 1.8s ease-out 1;
+}
+/* Tooltip above the icon */
+.img-gen-bottom-sense-icon::after {
+    content: attr(data-label);
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10, 10, 20, 0.92);
+    color: #d0d0d0;
+    padding: 4px 9px;
+    border-radius: 5px;
+    font-size: 11px;
+    white-space: nowrap;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    opacity: 0;
+    transition: opacity 0.1s ease;
+    font-style: normal;
+    font-family: sans-serif;
+}
+.img-gen-bottom-sense-icon:hover::after {
+    opacity: 1;
 }
