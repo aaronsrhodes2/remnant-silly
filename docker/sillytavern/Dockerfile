@@ -39,6 +39,8 @@ COPY --chown=node:node docker/sillytavern/config.yaml /home/node/app/default/con
 COPY --chown=node:node docker/sillytavern/patches/ /tmp/st-patches/
 RUN node /tmp/st-patches/add-chat-seed.js \
  && node /tmp/st-patches/fix-scrollbar-focus-visible.js \
+ && node /tmp/st-patches/fix-i18n-locale-fallback.js \
+ && node /tmp/st-patches/fix-secrets-missing-input.js \
  && rm -rf /tmp/st-patches
 
 # --- Pre-seed canonical Remnant content (characters, worlds, chats, settings) ---
