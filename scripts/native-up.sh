@@ -291,7 +291,43 @@ log "  flask-sd  : OK on :$FLASK_SD_PORT"
 log "  ollama    : OK on :$OLLAMA_PORT"
 
 # ---------------------------------------------------------------
-# 2. Start SillyTavern (if not already running).
+# 2. Ensure the extension junction is in place.
+#
+# The Remnant extension lives in $REPO_ROOT/extension/. Rather than
+# copying files, we junction ST's image-generator slot directly at
+# the repo directory — edits are visible on hard-refresh with zero
+# extra steps, forever. PowerShell New-Item is used because Git Bash
+# ln -s requires Developer Mode, while junctions need no elevation.
+# ---------------------------------------------------------------
+EXT_SLOT="$ST_DIR/public/scripts/extensions/image-generator"
+EXT_SRC="$REPO_ROOT/extension"
+# Convert MSYS/Git-Bash path to Windows path for PowerShell
+EXT_SLOT_WIN="$(cygpath -w "$EXT_SLOT")"
+EXT_SRC_WIN="$(cygpath -w "$EXT_SRC")"
+
+if [ -L "$EXT_SLOT" ] || powershell -NoProfile -NonInteractive -c "[System.IO.Directory]::Exists('$EXT_SLOT_WIN') -and ((Get-Item '$EXT_SLOT_WIN').LinkType -eq 'Junction')" 2>/dev/null | grep -qi true; then
+    # Verify it still points at the right target
+    actual=$(powershell -NoProfile -NonInteractive -c "(Get-Item '$EXT_SLOT_WIN').Target" 2>/dev/null | tr -d '\r')
+    if [ "$actual" = "$EXT_SRC_WIN" ]; then
+        log "extension junction OK: $EXT_SLOT -> $EXT_SRC"
+    else
+        log "extension junction target mismatch ('$actual' != '$EXT_SRC_WIN') — re-creating"
+        powershell -NoProfile -NonInteractive -c "Remove-Item -Force -Recurse '$EXT_SLOT_WIN'" 2>/dev/null || rm -rf "$EXT_SLOT"
+        powershell -NoProfile -NonInteractive -c "New-Item -ItemType Junction -Path '$EXT_SLOT_WIN' -Target '$EXT_SRC_WIN'" >/dev/null
+        log "extension junction re-created"
+    fi
+else
+    # Not a junction — may be a real directory (fresh ST install) or absent.
+    if [ -d "$EXT_SLOT" ]; then
+        log "removing real directory at $EXT_SLOT (replacing with junction)"
+        rm -rf "$EXT_SLOT"
+    fi
+    powershell -NoProfile -NonInteractive -c "New-Item -ItemType Junction -Path '$EXT_SLOT_WIN' -Target '$EXT_SRC_WIN'" >/dev/null
+    log "extension junction created: $EXT_SLOT -> $EXT_SRC"
+fi
+
+# ---------------------------------------------------------------
+# 3. Start SillyTavern (if not already running).
 # ---------------------------------------------------------------
 if port_listening "$ST_PORT"; then
     log "SillyTavern already running on :$ST_PORT — leaving alone"
@@ -306,7 +342,7 @@ else
 fi
 
 # ---------------------------------------------------------------
-# 3. Start diag sidecar (stdlib-only python, no venv needed).
+# 4. Start diag sidecar (stdlib-only python, no venv needed).
 # ---------------------------------------------------------------
 if port_listening "$DIAG_PORT"; then
     log "diag already running on :$DIAG_PORT — leaving alone"
@@ -323,7 +359,7 @@ else
 fi
 
 # ---------------------------------------------------------------
-# 3b. Stamp splash status JSONs in "pending" state.
+# 4b. Stamp splash status JSONs in "pending" state.
 #
 # We write these BEFORE nginx starts so the very first browser fetch
 # of /status/flask-sd.json and /status/ollama.json gets a clean,
@@ -339,7 +375,7 @@ write_status_flask_sd "pending"
 write_status_ollama   "pending"
 
 # ---------------------------------------------------------------
-# 4. Start native nginx gateway container.
+# 5. Start native nginx gateway container.
 # ---------------------------------------------------------------
 # Stop any stale instance first (idempotent re-runs).
 if docker ps -a --format '{{.Names}}' | grep -qx "$NGINX_CONTAINER"; then
@@ -408,7 +444,7 @@ if echo "$csrf_hdrs" | grep -qi '^etag:'; then
 fi
 
 # ---------------------------------------------------------------
-# 5. Probe host services and stamp final status.
+# 6. Probe host services and stamp final status.
 #
 # The splash is now open and polling /status/*.json every second.
 # These probes are STRONGER than port_listening: they actually hit
@@ -449,7 +485,7 @@ else
 fi
 
 # ---------------------------------------------------------------
-# 6. Report.
+# 7. Report.
 # ---------------------------------------------------------------
 echo ""
 log "dev stack is up. endpoints:"
