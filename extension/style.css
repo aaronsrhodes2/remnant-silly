@@ -1243,7 +1243,8 @@ body.img-gen-do-mode #send_textarea {
    Persistent sense icons beside the mode bar.
    Replaces the per-message sense bar.
    ============================================ */
-#img-gen-bottom-senses {
+#img-gen-bottom-senses,
+#img-gen-bottom-senses .img-gen-bottom-sense-icons {
     display: flex;
     gap: 8px;
     align-items: center;

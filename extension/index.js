@@ -3886,6 +3886,9 @@ function syncBottomSenses(messageId, markers) {
         (byType[m.type] ||= []).push(m);
     }
 
+    // Don't wipe the bar if the new message has no senses — keep the last
+    // known senses visible until the world explicitly changes them.
+    if (Object.keys(byType).length === 0) return;
     $bottom.empty();
     const nextLast = {};
     for (const type of ['SIGHT', 'SMELL', 'SOUND', 'TASTE', 'TOUCH', 'ENVIRONMENT']) {
