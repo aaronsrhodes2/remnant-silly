@@ -15,17 +15,30 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 ST_BASE = "http://localhost:8000"
-HEADERS  = {"Content-Type": "application/json"}
 
 mcp = FastMCP("sillytavern")
 
+# Lazy-initialized session — acquires CSRF token + session cookie on first use.
+_client: httpx.Client | None = None
+_csrf_token: str = ""
+
+
+def _get_client() -> httpx.Client:
+    global _client, _csrf_token
+    if _client is None:
+        _client = httpx.Client(base_url=ST_BASE, timeout=15)
+        r = _client.get("/csrf-token")
+        r.raise_for_status()
+        _csrf_token = r.json()["token"]
+    return _client
+
 
 def _st_post(path: str, body: dict = None) -> dict:
-    r = httpx.post(
-        f"{ST_BASE}{path}",
+    client = _get_client()
+    r = client.post(
+        path,
         json=body or {},
-        headers=HEADERS,
-        timeout=15,
+        headers={"Content-Type": "application/json", "X-CSRF-Token": _csrf_token},
     )
     r.raise_for_status()
     return r.json()
@@ -45,9 +58,10 @@ def st_list_characters() -> str:
             return "No characters found."
         lines = []
         for c in chars:
-            name = c.get("name", c.get("avatar", "unknown"))
+            name = c.get("name", "unknown")
+            avatar = c.get("avatar", "unknown")
             desc = (c.get("description") or "")[:80].replace("\n", " ")
-            lines.append(f"  {name}: {desc}")
+            lines.append(f"  {name} [{avatar}]: {desc}")
         return f"Characters ({len(chars)}):\n" + "\n".join(lines)
     except Exception as e:
         return f"ST unreachable or error: {e}"
@@ -154,11 +168,13 @@ def st_get_settings() -> str:
     codex entries, and run state.
     """
     try:
-        # Extension settings live in the extension's settings endpoint
-        r = httpx.get(f"{ST_BASE}/api/extensions/settings", timeout=10)
+        client = _get_client()
+        headers = {"X-CSRF-Token": _csrf_token}
+        r = client.get("/api/extensions/settings", headers=headers)
         if r.status_code == 404:
-            # Fallback: try the main settings endpoint
-            r = httpx.post(f"{ST_BASE}/api/settings/get", json={}, timeout=10)
+            r = client.post("/api/settings/get", json={}, headers={
+                "Content-Type": "application/json", "X-CSRF-Token": _csrf_token,
+            })
         r.raise_for_status()
         d = r.json()
         # Pull out the image-generator (Remnant) extension settings

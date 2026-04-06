@@ -285,6 +285,17 @@ function initSettings() {
         };
         try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
     }
+    // v2.12.1 — Astral Foam is pre-seeded as built-in lore. It describes
+    // the chiral nesting model in accessible terms and establishes why
+    // the Fortress exists and what its "problems" are.
+    if (!extension_settings[EXTENSION_NAME].codex.lore['Astral Foam']) {
+        extension_settings[EXTENSION_NAME].codex.lore['Astral Foam'] = {
+            name: 'Astral Foam',
+            description: ASTRAL_FOAM_LORE_DESCRIPTION,
+            first_seen: '1970-01-01T00:00:00.000Z', // sort to top as built-in
+        };
+        try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
+    }
     // v2.6.1 — pre-seed the Fortress interior image as the first gallery
     // entry on any fresh run. This is the canonical "view inside the
     // Fortress" and greets the Unknown Being before any narrator-generated
@@ -304,6 +315,8 @@ function initSettings() {
         });
         try { saveSettingsDebounced(); } catch (_) { /* ignore */ }
     }
+    if (extension_settings[EXTENSION_NAME].uiZoom === undefined)
+        extension_settings[EXTENSION_NAME].uiZoom = 1;
     return extension_settings[EXTENSION_NAME];
 }
 
@@ -311,6 +324,10 @@ function initSettings() {
 // codex description used by both the init-seed (above) and any narrator
 // ITEM marker that emits the same name (handleCodexEntries dedupes on
 // name, first-write-wins, so this pre-seed takes precedence).
+// v2.12.1 — Astral Foam lore. The friendly in-world explanation of the
+// chiral nesting model — every universe is a bubble born inside a black
+// hole, and the bubbles nest inward forever. Pre-seeded as built-in lore.
+const ASTRAL_FOAM_LORE_DESCRIPTION = "The deep fabric of reality — cosmic bubble-wrap where each bubble is a whole universe. Here is how it works, step by step: A universe (like ours) makes stars. Some stars collapse into black holes. When a black hole gets big enough and old enough, a tiny new baby universe is born inside it. That baby grows up into a full universe with its own stars and galaxies. Then it makes its own black holes. Those black holes make more baby universes. And on and on, inward, forever. Every level of the foam looks identical from the inside — the same rules of physics, the same constants, the same speed of light — so you can never tell which bubble you are in just by looking around. The foam flows only one direction: inward, toward smaller. You cannot travel outward to the universe that made your black hole. The door only swings one way. This one-way direction is called scale chirality — the foam has a preferred direction, like a spiral staircase that only goes down. The Fortress exists at a junction between at least two foam levels, which is why it can reach beings from nested realities and why The Remnant can travel between worlds. The Astral Foam is not a metaphor — it is the actual structure of everything. It has problems: places where the nesting has kinked, where two levels have gotten tangled, where a junction is leaking or closed. These problems are what the Fortress was built to manage, and why it needs help from beings like you.";
 const FOLD_ITEM_DESCRIPTION = "A nanovirus-installed neural comm implant behind your left ear — the small fresh scar is its access point. Installed by The Remnant while you were in the pod. Always-on, multiverse-ranged: The Remnant's voice reaches you anywhere, any time, directly inside your skull, and you can subvocalize back. You are never alone. Cannot be removed; can be asked to fade or deepen.";
 
 // Name the Remnant is keyed under in settings.npcs and dialogue attribution.
@@ -1101,11 +1118,11 @@ function updateMessageDisplay(messageId) {
         // whether any inline markers remain — the sense bar is the new home
         // for the six sensory channels.
         try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
-        try { syncSenseButton(messageId, markers); } catch (_) { /* ignore */ }
-        // Feed narrator text into channel history (Say/Do/Sense drawers)
+        // Narrative text queues first (SAY/DO), then sense entries — preserves discovery cadence
         if (message && !message.is_user) {
             try { _parseNarratorIntoChannels(messageId, message.mes); } catch (_) { /* ignore */ }
         }
+        try { syncSenseButton(messageId, markers); } catch (_) { /* ignore */ }
 
         if (transformedText === message.mes) return;
 
@@ -1191,6 +1208,14 @@ function injectNpcContextIntoPrompt(description) {
 // append a "no text" reminder to every positive prompt.
 const DEFAULT_NEGATIVE_PROMPT = '(text:1.6), (letters:1.6), (words:1.6), (writing:1.6), (typography:1.6), (captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), (labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed';
 const NO_TEXT_SUFFIX = ', (no text:1.4), (no writing:1.4), (no letters:1.4)';
+// v2.12.1 — Visual style lock. Prepended to every GENERATE_IMAGE scene prompt
+// so all generated images stay in the game's dark-fantasy register regardless
+// of what the Fortress emits in the marker description.
+const SCENE_STYLE_PREFIX = 'dark fantasy digital painting, atmospheric lighting, muted palette, cinematic, concept art, ';
+// v2.12.1 — Soft content gate. Raw GENERATE_IMAGE descriptions matching any
+// of these terms are dropped before reaching the SD backend. Add terms freely;
+// the check is case-insensitive substring match.
+const SD_CONTENT_BLOCKLIST = ['gore', 'mutilat', 'dismember', 'genital', 'explicit sex', 'child nude', 'loli'];
 
 // v2.6.6 — SD concurrency + per-turn budget + recent-prompt dedup.
 //
@@ -1213,7 +1238,7 @@ const NO_TEXT_SUFFIX = ', (no text:1.4), (no writing:1.4), (no letters:1.4)';
 //      the gallery doesn't fill with duplicate frames when the
 //      narrator re-asks for the same shot.
 const SD_MAX_CONCURRENT = 1;
-const SD_PER_TURN_BUDGET = 6;
+const SD_PER_TURN_BUDGET = 3;
 const SD_RECENT_PROMPT_WINDOW = 20;
 
 let __imgGenSdActive = 0;
@@ -1354,6 +1379,8 @@ function setCurrentLocation(description) {
     saveSettingsDebounced();
     applyCurrentLocationPrompt();
     console.log('[Image Generator] Current location updated:', desc.substring(0, 80));
+    // v2.12.1 — record story beat for location change
+    try { _recordBeat(`Arrived at: ${desc.substring(0, 80)}`); } catch (_) { /* ignore */ }
 }
 
 function applyCurrentLocationPrompt() {
@@ -1427,6 +1454,27 @@ function applyCodexStatePrompt() {
     setExtensionPrompt(CODEX_PROMPT_KEY, injection, extension_prompt_types.IN_PROMPT, 0);
 }
 
+// v2.12.1 — Story beat injection. Auto-extracted beat strings (NPC met,
+// location changed, codex added, player trait set) are accumulated in
+// run.significantEvents[] and injected as a compact bullet list so the
+// Fortress can reference what already happened earlier in the same run.
+const STORY_BEAT_PROMPT_KEY = 'image_generator_story_beats';
+
+function applyStoryBeatPrompt() {
+    if (typeof setExtensionPrompt !== 'function') return;
+    const settings = initSettings();
+    const events = (settings.run && Array.isArray(settings.run.significantEvents))
+        ? settings.run.significantEvents
+        : [];
+    if (events.length === 0) {
+        setExtensionPrompt(STORY_BEAT_PROMPT_KEY, '', extension_prompt_types.IN_PROMPT, 0);
+        return;
+    }
+    const recent = events.slice(-8);
+    const injection = `Story beats so far this run (already happened — do not re-narrate):\n${recent.map(e => `- ${e}`).join('\n')}`;
+    setExtensionPrompt(STORY_BEAT_PROMPT_KEY, injection, extension_prompt_types.IN_PROMPT, 0);
+}
+
 // Scan a message for the most recent GENERATE_IMAGE(location) marker
 // and update the current-location state from it. Called from both
 // CHARACTER_MESSAGE_RENDERED and CHAT_CHANGED so greetings and mid-chat
@@ -1451,17 +1499,27 @@ function updateLocationFromMessage(messageText) {
 // through to the stored gallery entry so `renderGallery()` can decide
 // whether the image is eligible to become the chat background.
 async function generateSceneImage(rawDescription, kind = 'subject') {
-    const { prompt: augmented, reference_images } = injectNpcContextIntoPrompt(rawDescription);
-    // v2.6.6 — Skip if this exact augmented prompt was generated within
-    // the sliding recent-window. Prevents duplicate frames when the
-    // narrator re-asks for the same shot across two turns, or when the
-    // same marker is processed twice by different code paths.
-    if (__imgGenPromptRecentlySeen(augmented + NO_TEXT_SUFFIX) || __imgGenPromptRecentlySeen(augmented)) {
-        console.log('[Image Generator] Scene prompt seen recently, skipping:', augmented.substring(0, 80));
+    // v2.12.1 — Soft content gate: drop descriptions matching the blocklist.
+    const lc = rawDescription.toLowerCase();
+    if (SD_CONTENT_BLOCKLIST.some(term => lc.includes(term))) {
+        console.warn('[Image Generator] Content blocklist triggered, skipping:', rawDescription.substring(0, 80));
         return null;
     }
-    console.log('[Image Generator] Scene prompt:', augmented.substring(0, 120), '| kind:', kind, '| refs:', reference_images.length);
-    const data = await callSdApi(augmented, {
+    // v2.12.1 — Strip raw SD weight syntax the Fortress may emit (e.g. "(term:1.4)").
+    // These tokens are ours to control; LLM-sourced ones cause prompt drift.
+    const cleanedDescription = rawDescription.replace(/\([^)]*:\d+\.?\d*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+    const { prompt: augmented, reference_images } = injectNpcContextIntoPrompt(cleanedDescription);
+    // v2.12.1 — Prepend the visual style lock so all scene images stay in the
+    // dark-fantasy register regardless of what the Fortress described.
+    const styledPrompt = SCENE_STYLE_PREFIX + augmented;
+    // v2.6.6 — Skip if this exact prompt was generated within the sliding
+    // recent-window. Prevents duplicate frames across turns or double-processing.
+    if (__imgGenPromptRecentlySeen(styledPrompt + NO_TEXT_SUFFIX) || __imgGenPromptRecentlySeen(styledPrompt)) {
+        console.log('[Image Generator] Scene prompt seen recently, skipping:', styledPrompt.substring(0, 80));
+        return null;
+    }
+    console.log('[Image Generator] Scene prompt:', styledPrompt.substring(0, 120), '| kind:', kind, '| refs:', reference_images.length);
+    const data = await callSdApi(styledPrompt, {
         reference_images: reference_images.length > 0 ? reference_images : null,
         reference_scale: 0.5,
     });
@@ -1710,6 +1768,8 @@ async function handleIntroductions(messageText) {
         };
         saveSettingsDebounced();
         renderNpcRoster();
+        // v2.12.1 — record story beat for story retention
+        try { _recordBeat(`Met ${name}${settings.currentLocation ? ' at ' + settings.currentLocation : ''}`); } catch (_) { /* ignore */ }
 
         try {
             updatePanelStatus(`🎭 Sketching ${name}...`);
@@ -1777,6 +1837,22 @@ function handleCodexEntries(messageText) {
         // Re-inject the codex into the LLM prompt so the narrator is
         // immediately aware of the new entry on the very next turn.
         try { applyCodexStatePrompt(); } catch (_) { /* ignore */ }
+        // v2.12.1 — record story beats for new entries
+        try {
+            for (const { name } of items) { if (!settings.codex.items[name] || settings.codex.items[name].first_seen === now) _recordBeat(`Discovered item: ${name}`); }
+            for (const { name } of lore)  { if (!settings.codex.lore[name]  || settings.codex.lore[name].first_seen  === now) _recordBeat(`Learned lore: ${name}`); }
+        } catch (_) { /* ignore */ }
+        // Refresh or badge inventory/lore drawer tabs
+        try {
+            if (items.length > 0) {
+                if (_activeDrawer === 'inventory') _renderDrawer('inventory');
+                else $(`#img-gen-mode-bar .img-gen-mode-btn[data-mode="inventory"]`).addClass('has-unread');
+            }
+            if (lore.length > 0) {
+                if (_activeDrawer === 'lore') _renderDrawer('lore');
+                else $(`#img-gen-mode-bar .img-gen-mode-btn[data-mode="lore"]`).addClass('has-unread');
+            }
+        } catch (_) { /* ignore */ }
     }
 }
 
@@ -1871,6 +1947,11 @@ function handlePlayerTrait(messageText) {
         // v2.7.0 — any material trait update may change the portrait;
         // the scheduler's dedup decides whether to actually fire SD.
         try { schedulePlayerPortraitRefresh(); } catch (_) { /* ignore */ }
+        // v2.12.1 — record story beat for name/trait accrual
+        try {
+            const p = (initSettings().player || {}).profile || {};
+            if (p.named && p.name) _recordBeat(`Player identified as ${p.name}`);
+        } catch (_) { /* ignore */ }
     }
 }
 
@@ -1989,23 +2070,34 @@ const BRACKET_DISCIPLINE_KEY = 'image_generator_bracket_discipline';
 function applyBracketDisciplinePrompt() {
     if (typeof setExtensionPrompt !== 'function') return;
     const body = [
-        'BRACKET DISCIPLINE (strict):',
-        'Square brackets `[...]` are reserved EXCLUSIVELY for canonical sense markers:',
+        'RESPONSE FORMAT (strict — the UI parses these blocks):',
+        'Every response MUST be composed of explicit typed blocks in this order:',
+        '  1. [SAY] blocks  — narration and character dialogue',
+        '  2. [DO] blocks   — physical action beats and world changes',
+        '  3. Sense markers — perceptual data (SIGHT, SOUND, SMELL, TASTE, TOUCH, ENVIRONMENT)',
+        '',
+        'Block syntax:',
+        '  [SAY]',
+        '  Narrative prose and/or dialogue here. Dialogue uses: Name: "words"',
+        '  [/SAY]',
+        '  [DO]',
+        '  Physical action beat here — what bodies and objects are doing.',
+        '  [/DO]',
+        '',
+        'Rules:',
+        '  - Every piece of narration or dialogue goes inside a [SAY] block.',
+        '  - Every stage direction or physical world action goes inside a [DO] block.',
+        '  - Sense markers ([SIGHT:...], [SOUND:...] etc.) appear AFTER the SAY/DO blocks.',
+        '  - Never use bare `*asterisks*` outside a [DO] block — put stage directions in [DO].',
+        '  - Each block should be one coherent beat. Multiple SAY or DO blocks are fine.',
+        '  - Keep each block focused: one beat of narration, one action beat, one sensory reveal.',
+        '',
+        'Sense markers (unchanged):',
         '  [SMELL:...], [SOUND:...], [TASTE:...], [TOUCH:...], [SIGHT:...],',
         '  [ENVIRONMENT:...], [GENERATE_IMAGE(kind):...], [ITEM(name):...],',
         '  [LORE(name):...], [INTRODUCE(name):...], [PLAYER_TRAIT(field):...],',
         '  [UPDATE_PLAYER:...], [UPDATE_APPEARANCE(name):...], [RENAME_ITEM(old):...],',
         '  [RESET_STORY], [END_RUN(death|voluntary):...], [RESET_RUN].',
-        'NEVER write stage directions, character dialogue, character names, speaker tags, or any other prose inside square brackets.',
-        'For stage directions / italics use *asterisks*. For character dialogue use "quotes" after `Name: `.',
-        '',
-        'STAGE DIRECTION DISCIPLINE (strict):',
-        'Stage directions use a SINGLE `*...*` italic block per beat — not a spray of one-sentence asides. Each block is prose, and its length SCALES with the magnitude of the moment:',
-        '  - Tiny beat (a gesture, a glance): 1 short sentence inside the block.',
-        '  - Normal beat (a reaction, a room shift, a sensory reveal): 3–4 sentences.',
-        '  - Major beat (an abduction, a death, a portal opening): up to 6 sentences.',
-        'Never emit back-to-back `*...*` blocks separated only by whitespace — combine them into one block.',
-        'Never wrap individual words in `*...*`. The block sits BETWEEN dialogue lines, never inside them.',
         '',
         'DIALOGUE DISCIPLINE (strict):',
         'Every spoken line MUST use the canonical play-script form on its own line:',
@@ -2023,12 +2115,19 @@ function applyBracketDisciplinePrompt() {
         'If the player has not yet acted, END your turn and wait. Silence is correct. Do not fill it by puppeting them.',
         '',
         'NO CODE FENCES / NO DIAGRAMS (strict):',
-        'NEVER emit triple-backtick code fences (```), NEVER emit mermaid / graphviz / ascii-art diagrams, NEVER emit markdown tables, NEVER emit JSON or YAML blocks. This is prose interactive fiction, not a technical document. Everything you produce is either prose, canonical `[MARKER:...]` tokens, `*stage direction*` blocks, or `Name: "dialogue"` lines. No other formats.',
+        'NEVER emit triple-backtick code fences (```), NEVER emit mermaid / graphviz / ascii-art diagrams, NEVER emit markdown tables, NEVER emit JSON or YAML blocks.',
         '',
-        'Example (normal beat — one 3-sentence italic block between speakers):',
-        '  *The Remnant tilts its head, goo shivering along the ridge of its shoulders. Across the chamber, The Fortress hums in low recognition, the sound settling into the walls. Somewhere above, a light that is not a light briefly brightens and dims.*',
+        'Example (normal beat):',
+        '  [SAY]',
+        '  The Remnant tilts its head, goo shivering along the ridge of its shoulders.',
         '  The Remnant: "And so another being arrives."',
         '  The Fortress: "Welcome, small traveller."',
+        '  [/SAY]',
+        '  [DO]',
+        '  Across the chamber, The Fortress hums in low recognition, the sound settling into the walls. Somewhere above, a light that is not a light briefly brightens and dims.',
+        '  [/DO]',
+        '  [SOUND: "a deep resonant hum filling the chamber"]',
+        '  [ENVIRONMENT: "the air thickens slightly, warm and electric"]',
     ].join('\n');
     setExtensionPrompt(BRACKET_DISCIPLINE_KEY, body, extension_prompt_types.IN_PROMPT, 0);
 }
@@ -3784,31 +3883,80 @@ function fixNarratorNames() {
  *
  * v2.3.0: Say/Do/Sense each open a history drawer when clicked.
  */
+// ---------------------------------------------------------------------------
+// Tab cycling, font zoom, resize helpers (shared across mode bar + keyboard)
+// ---------------------------------------------------------------------------
+
+const _CYCLE_ORDER = ['say', 'do', 'sense', 'insights', 'inventory', 'lore'];
+
+function _cycleTab(dir) {
+    const $bar = $('#img-gen-mode-bar');
+    const cur  = _CYCLE_ORDER.indexOf(_activeDrawer || 'say');
+    const next = _CYCLE_ORDER[(cur + dir + _CYCLE_ORDER.length) % _CYCLE_ORDER.length];
+    $bar.find('.img-gen-mode-btn:not(.img-gen-qr-btn)').removeClass('active');
+    $bar.find(`.img-gen-mode-btn[data-mode="${next}"]`).addClass('active');
+    $('body').removeClass('img-gen-say-mode img-gen-do-mode img-gen-sense-mode img-gen-insights-mode img-gen-inventory-mode img-gen-lore-mode');
+    $('body').addClass(`img-gen-${next}-mode`);
+    _updateInputPlaceholder(next);
+    toggleChannelDrawer(next);
+}
+
+function _applyUiZoom(scale) {
+    const clamped = Math.max(0.7, Math.min(1.5, +scale || 1));
+    document.documentElement.style.setProperty('--img-gen-zoom', clamped);
+    const settings = initSettings();
+    settings.uiZoom = clamped;
+    saveSettingsDebounced();
+}
+
+function _resizeDrawer() {
+    const winH  = $(window).height();
+    const barH  = $('#img-gen-mode-bar').outerHeight(true) || 44;
+    const formH = $('#send_form').outerHeight(true) || 60;
+    const h     = Math.max(120, winH - barH - formH - 20);
+    $('#img-gen-channel-drawer').css('height', h + 'px');
+}
+
+// v2.12.1 — Language-agnostic placeholder. Uses punctuation / symbols
+// to suggest the current mode without words. ST resets the placeholder
+// on every chat load, so this must be re-applied from onChatChanged too.
+const _PLACEHOLDER = { say: '…', do: '*  *', sense: '⊹', insights: '∿', inventory: '…', lore: '…' };
+function _updateInputPlaceholder(mode) {
+    const current = mode || (
+        $('body').hasClass('img-gen-do-mode')       ? 'do'       :
+        $('body').hasClass('img-gen-sense-mode')    ? 'sense'    :
+        $('body').hasClass('img-gen-insights-mode') ? 'insights' : 'say'
+    );
+    $('#send_textarea').attr('placeholder', _PLACEHOLDER[current] || '…');
+}
+
 function installModeBar() {
     if ($('#img-gen-mode-bar').length) return;
 
-    // --- Channel drawer (sits above the mode bar, expands upward) ---
+    // --- Channel drawer (permanent narrative panel — always open) ---
     const $drawer = $('<div id="img-gen-channel-drawer"></div>');
     $drawer.append(
         '<div id="img-gen-drawer-header">' +
             '<span id="img-gen-drawer-label">Say</span>' +
-            '<button id="img-gen-drawer-close" title="Close">✕</button>' +
         '</div>' +
         '<div id="img-gen-drawer-content"></div>'
     );
 
     // --- Mode bar ---
-    const $bar   = $('<div id="img-gen-mode-bar"></div>');
-    const $say   = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
-    const $do    = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
-    // Sense button: label + mini sense icon container
-    const $sense = $('<button class="img-gen-mode-btn" data-mode="sense">Sense<span class="img-gen-sense-mini-icons"></span></button>');
+    const $bar      = $('<div id="img-gen-mode-bar"></div>');
+    const $say       = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
+    const $do        = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
+    const $sense     = $('<button class="img-gen-mode-btn" data-mode="sense">Sense<span class="img-gen-sense-mini-icons"></span></button>');
+    const $insights  = $('<button class="img-gen-mode-btn" data-mode="insights">Insights<span class="img-gen-sense-mini-icons"></span></button>');
+    const $inventory = $('<button class="img-gen-mode-btn" data-mode="inventory">Inventory</button>');
+    const $lore      = $('<button class="img-gen-mode-btn" data-mode="lore">Lore</button>');
 
-    $bar.append($say, $do, $sense);
+    $bar.append($say, $do, $sense, $insights, $inventory, $lore);
     $('#send_form').before($bar);
     $bar.before($drawer);
 
-    $('#send_textarea').attr('placeholder', 'Speak, act, or look...');
+    _updateInputPlaceholder();
+    _resizeDrawer();
 
     // --- Mode switch + drawer toggle ---
     $bar.on('click', '.img-gen-mode-btn:not(.img-gen-qr-btn)', function () {
@@ -3816,21 +3964,23 @@ function installModeBar() {
         // Switch active mode
         $bar.find('.img-gen-mode-btn:not(.img-gen-qr-btn)').removeClass('active');
         $(this).addClass('active');
-        $('body').removeClass('img-gen-say-mode img-gen-do-mode img-gen-sense-mode img-gen-look-mode');
+        $('body').removeClass('img-gen-say-mode img-gen-do-mode img-gen-sense-mode img-gen-insights-mode img-gen-inventory-mode img-gen-lore-mode img-gen-look-mode');
         $('body').addClass(`img-gen-${mode}-mode`);
+        _updateInputPlaceholder(mode);
         // Toggle drawer
         toggleChannelDrawer(mode);
     });
 
-    // Drawer close button
-    $drawer.on('click', '#img-gen-drawer-close', () => {
-        if (_activeDrawer) {
-            const ch = _activeDrawer;
-            _activeDrawer = null;
-            $drawer.removeClass('open');
-            $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
-            $bar.find(`.img-gen-mode-btn[data-mode="${ch}"]`).addClass('active');
-        }
+    // No close button — the drawer is permanently visible.
+
+    // --- Mouse wheel cycles tabs (drawer or chat input box) ---
+    $drawer.on('wheel', function (e) {
+        e.preventDefault();
+        _cycleTab(e.originalEvent.deltaY > 0 ? 1 : -1);
+    });
+    $('#send_form').on('wheel.imgGenTabs', function (e) {
+        e.preventDefault();
+        _cycleTab(e.originalEvent.deltaY > 0 ? 1 : -1);
     });
 
     // --- Send intercept — transform text + capture for channel history ---
@@ -3847,6 +3997,10 @@ function installModeBar() {
         } else if ($('body').hasClass('img-gen-sense-mode')) {
             channel = 'sense';
             $ta.val(`*focuses their senses* ${val}`);
+        } else if ($('body').hasClass('img-gen-insights-mode')) {
+            channel = 'insights';
+            val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
+            $ta.val(`*${val}*`);
         }
         // Capture raw text for channel history (consumed in USER_MESSAGE_RENDERED)
         _pendingUserEntry = { text: val, channel, isPlayer: true };
@@ -3872,9 +4026,11 @@ function installModeBar() {
         });
     }, 1500);
 
-    // Boot-time channel population from history
+    // Boot-time channel population from history, then auto-open Say drawer
+    // so the player immediately sees the last thing The Fortress said.
     setTimeout(() => {
         try { _populateChannelsFromHistory(); } catch (_) { /* ignore */ }
+        try { if (!_activeDrawer) toggleChannelDrawer('say'); } catch (_) { /* ignore */ }
     }, 2000);
 }
 
@@ -3884,13 +4040,42 @@ function installModeBar() {
 // ---------------------------------------------------------------------------
 
 const _MAX_CH_ENTRIES = 100;
-const _channelHistory  = { say: [], do: [], sense: [] };
-let   _activeDrawer    = null;   // 'say' | 'do' | 'sense' | null
+const _channelHistory  = { say: [], do: [], sense: [], insights: [] };
+let   _activeDrawer    = null;   // 'say' | 'do' | 'sense' | 'insights' | null
 const _channelHydrated = new Set(); // mesids already parsed into channels
 let   _pendingUserEntry = null;  // { text, channel, isPlayer:true } set in _applyModeTransform
 let   _senseMiniLast   = {};     // { type: label } — guards sense button re-render
 
-const _CHANNEL_LABELS = { say: 'Say', do: 'Do', sense: 'Sense' };
+// Reveal queue — new message entries are staggered for dramatic cadence
+const _revealQueue  = [];
+let   _revealTimer  = null;
+const _REVEAL_MS    = 320;  // ms between successive channel entries
+
+function _drainRevealQueue() {
+    if (!_revealQueue.length) { _revealTimer = null; return; }
+    const { channel, entry } = _revealQueue.shift();
+    addChannelEntry(channel, entry);
+    _revealTimer = setTimeout(_drainRevealQueue, _REVEAL_MS);
+}
+
+function _queueChannelEntry(channel, entry) {
+    _revealQueue.push({ channel, entry });
+    if (!_revealTimer) _revealTimer = setTimeout(_drainRevealQueue, _REVEAL_MS);
+}
+
+function _clearRevealQueue() {
+    _revealQueue.length = 0;
+    if (_revealTimer) { clearTimeout(_revealTimer); _revealTimer = null; }
+}
+
+const _CHANNEL_LABELS = { say: 'Say', do: 'Do', sense: 'Sense', insights: 'Insights', inventory: 'Inventory', lore: 'Lore' };
+// v2.12.1 — Sense/Insights split. Traditional sensory perception (sight,
+// sound, smell, taste) goes to Sense. Physical-spatial and felt knowledge
+// (touch, environment, Fortress whispers) goes to Insights.
+const _INSIGHTS_SENSE_TYPES = new Set(['ENVIRONMENT', 'TOUCH']);
+function _senseChannelFor(type) {
+    return _INSIGHTS_SENSE_TYPES.has(type) ? 'insights' : 'sense';
+}
 
 /**
  * Push one entry into a channel's history ring buffer.
@@ -3900,6 +4085,8 @@ const _CHANNEL_LABELS = { say: 'Say', do: 'Do', sense: 'Sense' };
 function addChannelEntry(channel, entry) {
     const arr = _channelHistory[channel];
     if (!arr) return;
+    // Hard guard: bracket markers must never bleed into narrative channels
+    if ((channel === 'say' || channel === 'do') && /^\[[A-Z_]+(?:\([^)]*\))?\s*:/.test(entry.text || '')) return;
     entry.ts = Date.now();
     arr.push(entry);
     if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
@@ -3912,6 +4099,36 @@ function addChannelEntry(channel, entry) {
 }
 
 /**
+ * Render the full codex for inventory or lore into the drawer content area.
+ * Reads directly from settings.codex — not a ring buffer.
+ */
+function _renderCodexDrawer(which, $content) {
+    const settings = initSettings();
+    const bag = which === 'inventory'
+        ? (settings.codex && settings.codex.items || {})
+        : (settings.codex && settings.codex.lore  || {});
+    const entries = Object.values(bag).sort((a, b) =>
+        Date.parse(a.first_seen || 0) - Date.parse(b.first_seen || 0));
+
+    if (entries.length === 0) {
+        $content.append('<div class="img-gen-drawer-empty">Nothing discovered yet.</div>');
+        return;
+    }
+    for (const e of entries) {
+        const $row = $('<div class="img-gen-drawer-entry img-gen-codex-drawer-entry"></div>');
+        $row.addClass(which);
+        const $name = $('<div class="img-gen-codex-drawer-name"></div>').text(e.name || '');
+        $row.append($name);
+        if (e.description) {
+            const $desc = $('<div class="img-gen-codex-drawer-desc"></div>').text(e.description);
+            $row.append($desc);
+        }
+        $content.append($row);
+    }
+    $content.scrollTop($content[0].scrollHeight);
+}
+
+/**
  * Render the entries for `channel` into the open drawer.
  */
 function _renderDrawer(channel) {
@@ -3919,88 +4136,156 @@ function _renderDrawer(channel) {
     if (!$content.length) return;
     $content.empty();
 
-    const entries = _channelHistory[channel] || [];
-    if (entries.length === 0) {
+    // Inventory + Lore are full-codex reference views — scrollable, top-down
+    if (channel === 'inventory' || channel === 'lore') {
+        $content.addClass('img-gen-codex-active');
+        _renderCodexDrawer(channel, $content);
+        return;
+    }
+    $content.removeClass('img-gen-codex-active');
+
+    const all = _channelHistory[channel] || [];
+    if (all.length === 0) {
         $content.append('<div class="img-gen-drawer-empty">Nothing yet.</div>');
         return;
     }
+    const display = all.slice(-20);
 
-    for (const e of entries) {
+    // Render newest-first in DOM. flex-direction:column-reverse places
+    // the first DOM child at the visual bottom, so newest always anchors
+    // there. Old entries that exceed the container height clip off the top
+    // silently — no scrollbar needed.
+    for (let i = display.length - 1; i >= 0; i--) {
+        const e = display[i];
         let iconHtml = '';
         let cls = channel;
-        if (channel === 'sense' && e.senseType) {
+        if (e.senseType) {
             cls += ` sense-${e.senseType.toLowerCase()}`;
             iconHtml = `<span class="img-gen-drawer-icon">${e.icon || '•'}</span>`;
         }
         if (e.isPlayer) cls += ' is-player';
-        const $row = $(`<div class="img-gen-drawer-entry ${cls}">${iconHtml}<span class="img-gen-drawer-text"></span></div>`);
-        $row.find('.img-gen-drawer-text').text(e.text);
+        // newest entry = display[display.length-1], rendered first (i === display.length-1)
+        if (i === display.length - 1) cls += ' arriving';
+        const displayText = e.text.length > 200 ? e.text.substring(0, 197) + '…' : e.text;
+        const $row = $(`<div class="img-gen-drawer-entry ${cls}">${iconHtml}<span class="img-gen-drawer-speaker"></span><span class="img-gen-drawer-text"></span></div>`);
+        $row.find('.img-gen-drawer-speaker').text(e.isPlayer ? 'You' : '—');
+        $row.find('.img-gen-drawer-text').text(displayText);
         $content.append($row);
     }
-    // Newest at bottom
-    $content.scrollTop($content[0].scrollHeight);
 }
 
 /**
  * Toggle the drawer for `channel`. Sets input mode at the same time.
  */
+// v2.12.1 — Drawer is permanent; this only switches the visible channel.
 function toggleChannelDrawer(channel) {
     const $drawer = $('#img-gen-channel-drawer');
     const $bar    = $('#img-gen-mode-bar');
-
-    // Clear badge for this channel
     $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).removeClass('has-unread');
-
-    if (_activeDrawer === channel) {
-        // Close
-        _activeDrawer = null;
-        $drawer.removeClass('open');
-        $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
-    } else {
-        // Open
-        _activeDrawer = channel;
-        $drawer.addClass('open');
-        $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
-        $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).addClass('drawer-open');
-        $('#img-gen-drawer-label').text(_CHANNEL_LABELS[channel] || channel);
-        _renderDrawer(channel);
-    }
+    _activeDrawer = channel;
+    $drawer.addClass('open');
+    $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
+    $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).addClass('drawer-open');
+    $('#img-gen-drawer-label').text(_CHANNEL_LABELS[channel] || channel);
+    _renderDrawer(channel);
 }
 
 /**
- * Strip sense marker brackets from narrator text, then split the
- * remainder into Say (prose) and Do (*action*) segments and push
- * each into the appropriate channel. Guards against double-processing
- * via `_channelHydrated`.
+ * Translate raw narrator text into an ordered array of typed channel blocks.
+ *
+ * Single-pass scanner — handles all block types in document order:
+ *   [SAY]...[/SAY]          → say channel
+ *   [DO]...[/DO]            → do channel
+ *   [SIGHT: "desc"]         → sense channel
+ *   [SOUND/SMELL/TASTE: ""] → sense channel
+ *   [TOUCH/ENVIRONMENT: ""] → insights channel
+ *   *legacy stage direction* → do channel (fallback)
+ *   remaining prose          → say channel (fallback)
+ *
+ * System-only markers (INTRODUCE, ITEM, LORE, PLAYER_TRAIT, etc.) are
+ * silently skipped here — they are handled by the detectSenseMarkers pipeline.
+ *
+ * Returns: Array<{ channel, text, senseType?, icon? }>
  */
-function _parseNarratorIntoChannels(messageId, rawText) {
-    if (_channelHydrated.has(messageId)) return;
-    _channelHydrated.add(messageId);
+const _DISPLAY_SENSE_TYPES = new Set(['SIGHT', 'SOUND', 'SMELL', 'TASTE', 'TOUCH', 'ENVIRONMENT']);
 
-    // Strip all [MARKER...] brackets
-    const stripped = rawText
-        .replace(/\[[A-Z_]+[^\]]*\]/g, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
+function _translateToBlocks(rawText) {
+    const htmlCut = rawText.indexOf('<');
+    const safe = (htmlCut !== -1 ? rawText.substring(0, htmlCut) : rawText).substring(0, 2000);
 
-    if (!stripped) return;
+    const result = [];
 
-    // Split into *action* (Do) and prose (Say) segments
-    const actionRe = /\*([^*\n]+)\*/g;
+    // Tokenizes ALL markup in one pass. Groups:
+    //  1  [SAY]...[/SAY]
+    //  2  [DO]...[/DO]
+    //  3,4  [TYPE: "quoted desc"]
+    //  5,6  [TYPE: unquoted desc]
+    //  7  *legacy stage direction*
+    const tokenRe = /\[SAY\]([\s\S]*?)\[\/SAY\]|\[DO\]([\s\S]*?)\[\/DO\]|\[([A-Z_]+)(?:\([^)]*\))?\s*:\s*"([^"]+?)"\]|\[([A-Z_]+)(?:\([^)]*\))?\s*:\s*([^\]]+?)\]|\*([^*\n]+?)\*/g;
+
+    // Strip any bracket marker that the tokenizer consumed but didn't route,
+    // so it can never bleed into a SAY prose entry.
+    const _stripMarkers = (s) => s.replace(/\[[A-Z_]+(?:\([^)]*\))?\s*:[^\]]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+
     let lastIdx = 0;
     let m;
-    while ((m = actionRe.exec(stripped)) !== null) {
+    while ((m = tokenRe.exec(safe)) !== null) {
+        // Prose between tokens → SAY (markers stripped as safety net)
         if (m.index > lastIdx) {
-            const prose = stripped.slice(lastIdx, m.index).trim();
-            if (prose.length > 8) addChannelEntry('say', { text: prose });
+            const prose = _stripMarkers(safe.slice(lastIdx, m.index));
+            if (prose.length > 8) result.push({ channel: 'say', text: prose });
         }
-        const action = m[1].trim();
-        if (action.length > 4) addChannelEntry('do', { text: action });
+
+        if (m[1] !== undefined) {
+            // [SAY]...[/SAY]
+            const text = m[1].replace(/\s{2,}/g, ' ').trim();
+            if (text.length > 4) result.push({ channel: 'say', text });
+        } else if (m[2] !== undefined) {
+            // [DO]...[/DO]
+            const text = m[2].replace(/\s{2,}/g, ' ').trim();
+            if (text.length > 4) result.push({ channel: 'do', text });
+        } else if (m[3] !== undefined) {
+            // [TYPE: "quoted"]
+            const type = m[3], desc = m[4].trim();
+            if (_DISPLAY_SENSE_TYPES.has(type) && desc.length > 2) {
+                result.push({ channel: _senseChannelFor(type), text: desc, senseType: type, icon: SENSE_ICONS[type] || '•' });
+            }
+        } else if (m[5] !== undefined) {
+            // [TYPE: unquoted]
+            const type = m[5], desc = (m[6] || '').trim();
+            if (_DISPLAY_SENSE_TYPES.has(type) && desc.length > 2) {
+                result.push({ channel: _senseChannelFor(type), text: desc, senseType: type, icon: SENSE_ICONS[type] || '•' });
+            }
+        } else if (m[7] !== undefined) {
+            // *legacy stage direction* → DO
+            const text = m[7].trim();
+            if (text.length > 4) result.push({ channel: 'do', text });
+        }
+
         lastIdx = m.index + m[0].length;
     }
-    if (lastIdx < stripped.length) {
-        const prose = stripped.slice(lastIdx).trim();
-        if (prose.length > 8) addChannelEntry('say', { text: prose });
+
+    // Trailing prose → SAY (markers stripped as safety net)
+    if (lastIdx < safe.length) {
+        const prose = _stripMarkers(safe.slice(lastIdx));
+        if (prose.length > 8) result.push({ channel: 'say', text: prose });
+    }
+
+    return result;
+}
+
+/**
+ * Parse narrator text into channel blocks and push to the reveal queue (live
+ * messages) or directly to channel history (instant=true, used by history load).
+ * Guards against double-processing via _channelHydrated.
+ */
+function _parseNarratorIntoChannels(messageId, rawText, instant = false) {
+    if (_channelHydrated.has(messageId)) return;
+    _channelHydrated.add(messageId);
+    const blocks = _translateToBlocks(rawText);
+    const push = instant ? addChannelEntry : _queueChannelEntry;
+    for (const b of blocks) {
+        push(b.channel, { text: b.text, senseType: b.senseType, icon: b.icon });
     }
 }
 
@@ -4013,9 +4298,10 @@ function _parseNarratorIntoChannels(messageId, rawText) {
  * button icons without creating duplicates.
  */
 function _populateChannelsFromHistory() {
-    _channelHistory.say.length   = 0;
-    _channelHistory.do.length    = 0;
-    _channelHistory.sense.length = 0;
+    _channelHistory.say.length      = 0;
+    _channelHistory.do.length       = 0;
+    _channelHistory.sense.length    = 0;
+    _channelHistory.insights.length = 0;
     _channelHydrated.clear();
     _senseMiniLast = {};
 
@@ -4026,38 +4312,22 @@ function _populateChannelsFromHistory() {
         if (!msg || !msg.mes) continue;
 
         if (msg.is_user) {
-            // Classify by text shape
+            // Classify user messages by text shape, push directly (no queue on history load)
             const t = msg.mes.trim();
             let channel = 'say';
             if (/^\*[^*].+[^*]\*$/.test(t)) channel = 'do';
             else if (/^\*focuses their senses/i.test(t)) channel = 'sense';
-            // Push directly (no badge/render side effects during history load)
             const arr = _channelHistory[channel];
             arr.push({ ts: Date.now(), text: t.replace(/^\*|\*$/g, '').trim(), isPlayer: true });
             if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
         } else {
-            // Narrator: push sense entries directly, then split prose
-            const markers = detectSenseMarkers(msg.mes);
-            const byType = {};
-            for (const mk of markers) {
-                if (!SENSE_BAR_TYPES.has(mk.type)) continue;
-                if (!mk.description) continue;
-                (byType[mk.type] ||= []).push(mk);
-            }
-            for (const type of Object.keys(byType)) {
-                const label = byType[type].map(e => e.description).join(' / ');
-                // Pre-populate senseMiniLast so the later syncSenseButton won't re-add entries
-                _senseMiniLast[type] = label;
-                const arr = _channelHistory.sense;
-                arr.push({ ts: Date.now(), text: label, senseType: type, icon: SENSE_ICONS[type] || '•' });
-                if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
-            }
-            _parseNarratorIntoChannels(i, msg.mes);
+            // Narrator: translator handles ALL channel routing (SAY, DO, and all sense channels).
+            // instant=true bypasses the reveal queue — history loads without animation delay.
+            _parseNarratorIntoChannels(i, msg.mes, true);
         }
     }
 
-    // Update Sense button icons from the most recent narrator message with senses.
-    // senseMiniLast is already seeded so syncSenseButton only updates the DOM / flash.
+    // Update sense button icons from the most recent narrator message with markers.
     for (let i = chat.length - 1; i >= start; i--) {
         const msg = chat[i];
         if (msg && !msg.is_user && msg.mes) {
@@ -4094,43 +4364,46 @@ function syncSenseButton(messageId, markers) {
     }
     if (Object.keys(byType).length === 0) return;
 
-    // Push new sense entries to channel history
-    for (const type of Object.keys(byType)) {
-        const label = byType[type].map(e => e.description).join(' / ');
-        if (_senseMiniLast[type] !== label) {
-            addChannelEntry('sense', {
-                text: label, senseType: type, icon: SENSE_ICONS[type] || '•',
-            });
-        }
-    }
+    // Channel entries for sense data are handled by _translateToBlocks in document order.
+    // syncSenseButton is responsible for mode-bar icon updates only.
 
-    // Rebuild mini icons inside the Sense button
-    const $senseBtn = $('#img-gen-mode-bar .img-gen-mode-btn[data-mode="sense"]');
+    // Rebuild mini icons in Sense button (perceptual) and Insights button (felt/spatial)
+    const $senseBtn    = $('#img-gen-mode-bar .img-gen-mode-btn[data-mode="sense"]');
+    const $insightsBtn = $('#img-gen-mode-bar .img-gen-mode-btn[data-mode="insights"]');
     if (!$senseBtn.length) return;
-    const $mini = $senseBtn.find('.img-gen-sense-mini-icons');
-    $mini.empty();
+    $senseBtn.find('.img-gen-sense-mini-icons').empty();
+    $insightsBtn.find('.img-gen-sense-mini-icons').empty();
 
-    let anyNew = false;
+    let anyNewSense = false;
+    let anyNewInsights = false;
     const nextLast = {};
     for (const type of ['SIGHT', 'SMELL', 'SOUND', 'TASTE', 'TOUCH', 'ENVIRONMENT']) {
         const entries = byType[type];
         if (!entries || !entries.length) continue;
-        const icon  = SENSE_ICONS[type] || '•';
-        const label = entries.map(e => e.description).join(' / ');
-        const isNew = _senseMiniLast[type] !== label;
-        if (isNew) anyNew = true;
-        $mini.append(
+        const icon    = SENSE_ICONS[type] || '•';
+        const label   = entries.map(e => e.description).join(' / ');
+        const isNew   = _senseMiniLast[type] !== label;
+        const isInsights = _INSIGHTS_SENSE_TYPES.has(type);
+        const $target = isInsights
+            ? $insightsBtn.find('.img-gen-sense-mini-icons')
+            : $senseBtn.find('.img-gen-sense-mini-icons');
+        if (isNew) { if (isInsights) anyNewInsights = true; else anyNewSense = true; }
+        $target.append(
             $(`<span class="img-gen-sense-mini sense-${type.toLowerCase()}" title="${escapeHtml(label)}">${icon}</span>`)
         );
         nextLast[type] = label;
     }
     _senseMiniLast = nextLast;
 
-    if (anyNew) {
+    if (anyNewSense && $senseBtn.length) {
         $senseBtn.removeClass('sense-flash');
-        // Force reflow to restart animation
         void $senseBtn[0].offsetWidth;
         $senseBtn.addClass('sense-flash');
+    }
+    if (anyNewInsights && $insightsBtn.length) {
+        $insightsBtn.removeClass('sense-flash');
+        void $insightsBtn[0].offsetWidth;
+        $insightsBtn.addClass('sense-flash');
     }
 }
 
@@ -4319,6 +4592,9 @@ async function onCharacterMessageRendered(messageId) {
     try { updateLocationFromMessage(message.mes); } catch (_) { /* ignore */ }
     // v2.6.0 — persist the current run snapshot after every rendered turn.
     try { persistRun(); } catch (err) { console.warn('[Image Generator] persistRun error:', err); }
+    // v2.12.1 — re-inject story beats after each turn so the injection
+    // reflects any beats just recorded this turn.
+    try { applyStoryBeatPrompt(); } catch (_) { /* ignore */ }
 
     // Scene images
     const imageMarkers = detectImageMarkers(message.mes);
@@ -4422,6 +4698,10 @@ function installChatObserver() {
 
 async function onChatChanged() {
     const settings = initSettings();
+    // Discard any queued reveal entries from the previous chat
+    try { _clearRevealQueue(); } catch (_) { /* ignore */ }
+    // v2.12.1 — ST resets the textarea placeholder on every chat load; re-apply ours.
+    try { _updateInputPlaceholder(); } catch (_) { /* ignore */ }
     // Re-seed Remnant on chat change — the Narrator character might only
     // become available (this_chid set) after the chat has opened.
     try { seedRemnantNpc(); } catch (err) { console.warn('[Image Generator] seedRemnantNpc (chat change) failed', err); }
@@ -4515,6 +4795,8 @@ async function onChatChanged() {
     }
     applyCurrentLocationPrompt();
     applyCodexStatePrompt();
+    // v2.12.1 — inject story beats thread
+    try { applyStoryBeatPrompt(); } catch (_) { /* ignore */ }
     // v2.6.0 — keep the profile and Remnant-memory injections fresh.
     try { applyPlayerProfilePrompt(); } catch (_) { /* ignore */ }
     try { applyRemnantMemoryPrompt(); } catch (_) { /* ignore */ }
@@ -4552,8 +4834,20 @@ async function onChatChanged() {
             if (run.currentLocation) lines.push(`- Last known location: ${run.currentLocation}`);
             if (Array.isArray(run.goals) && run.goals.length) lines.push(`- Current goals: ${run.goals.join('; ')}`);
             if (run.summary) lines.push(`- Recap: ${run.summary}`);
+            if (Array.isArray(run.significantEvents) && run.significantEvents.length) {
+                lines.push(`- Story beats: ${run.significantEvents.slice(-10).join(' → ')}`);
+            }
             lines.push('');
-            lines.push('Do NOT re-introduce the pod, the hoop, the goo, or the Fold. Do NOT ask "who are you, being?" — you already know them. Open this chat from the last known location, in media res, in the tone established previously.');
+            if (profile && profile.named && profile.name) {
+                lines.push(`OPENING INSTRUCTIONS — WARM WELCOME BACK:`);
+                lines.push(`1. Greet ${profile.name} by name. "Welcome back, ${profile.name}." — warm, personal, unhurried.`);
+                lines.push(`2. Give a brief recap of what they did last session. Use the story beats and known facts above. Keep it to 2–4 sentences.`);
+                lines.push(`3. Invent 0–2 short, casual updates about what happened in the Fortress while the player was away — a small thing a known NPC did, an odd event in the corridors, something the Fortress noticed. Each update should be one or two sentences, lightly whimsical, grounded in the world. If there are no known NPCs yet, skip this entirely.`);
+                lines.push(`4. Close with: "Are you ready to tackle the Astral Foam's many problems today?"`);
+                lines.push(`Do NOT re-introduce the pod, the hoop, the goo, or the Fold. Do NOT ask "Who are you, being?" — that ritual is spent.`);
+            } else {
+                lines.push('Do NOT re-introduce the pod, the hoop, the goo, or the Fold. Do NOT ask "who are you, being?" — you already know them. Open this chat from the last known location, in media res, in the tone established previously.');
+            }
             applyRunBriefingPrompt(lines.join('\n'));
         } else {
             applyRunBriefingPrompt('');
@@ -4627,6 +4921,20 @@ async function onChatChanged() {
 // every rendered message (debounced via saveSettingsDebounced inside).
 // Flips run.active = true the first time there is actually anything to
 // remember (a named player, an NPC, a codex entry, or a location).
+// v2.12.1 — Push a story beat string into run.significantEvents[]. Capped
+// at 50; oldest entries are dropped to keep the array lean. No-ops if there
+// is no active run object (run hasn't started yet is fine — beats accumulate
+// and will be persisted the first time persistRun() fires run.active = true).
+function _recordBeat(text) {
+    if (!text) return;
+    const settings = initSettings();
+    if (!settings.run) return;
+    if (!Array.isArray(settings.run.significantEvents)) settings.run.significantEvents = [];
+    settings.run.significantEvents.push(text);
+    while (settings.run.significantEvents.length > 50) settings.run.significantEvents.shift();
+    try { applyStoryBeatPrompt(); } catch (_) { /* ignore */ }
+}
+
 function persistRun() {
     const settings = initSettings();
     if (!settings.run) return;
@@ -4704,6 +5012,24 @@ function initializeExtension() {
     try { installSecretForgetPhraseInterceptor(); } catch (err) { console.warn('[Image Generator] secret-phrase interceptor failed:', err); }
     // v2.1.0 — Say/Do mode bar above the chat input.
     try { installModeBar(); } catch (err) { console.warn('[Image Generator] installModeBar failed:', err); }
+
+    // Restore saved font zoom and attach Shift+=/- keyboard shortcuts.
+    try {
+        _applyUiZoom(settings.uiZoom || 1);
+        $(document).on('keydown.imgGenZoom', function (e) {
+            if (!e.shiftKey) return;
+            if (e.key === '+' || e.key === '=') {
+                e.preventDefault();
+                _applyUiZoom((initSettings().uiZoom || 1) + 0.05);
+            } else if (e.key === '_' || e.key === '-') {
+                e.preventDefault();
+                _applyUiZoom((initSettings().uiZoom || 1) - 0.05);
+            }
+        });
+    } catch (_) { /* ignore */ }
+
+    // Reflow drawer height on window resize (replaces hard-coded calc).
+    try { $(window).on('resize.imgGenDrawer', _resizeDrawer); } catch (_) { /* ignore */ }
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
