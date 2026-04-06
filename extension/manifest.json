@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Aaron",
-    "version": "2.11.0",
+    "version": "2.12.0",
     "description": "The Remnant — locally-run interactive fiction engine. Dynamic player identity built from your own responses (start as 'Unknown Being'), hoop-and-goo roguelike abductions, permanent Remnant ledger of every being it has ever borrowed (nostalgia is the payoff), in-chat item renaming, four run-endings (restart/voluntary home/death/OOC), auto-saved single-run continuity across ST chats, synesthetic sensory markers, auto-NPC cards, and a codex for items/lore. Shipped as part of the Dockerized Fortress stack.",
     "homepage": "https://github.com/SillyTavern/SillyTavern",
     "minimum_client_version": "1.10.0",

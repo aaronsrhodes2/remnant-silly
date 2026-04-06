@@ -41,6 +41,11 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 
+# Browser console health — populated by POST /browser-health from warm_test.py
+# or the extension's self-report after boot. None until first report.
+_browser_health: dict = {"errors": None, "warnings": None, "reported_at": None}
+_sidecar_start: float = time.time()
+
 STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
 FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:5000").rstrip("/")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
@@ -506,6 +511,8 @@ def _build_ai_snapshot() -> dict:
         "schema_version": SCHEMA_VERSION,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "summary": summary,
+        "sidecar_uptime_s": round(time.time() - _sidecar_start, 1),
+        "browser_console": dict(_browser_health),
         "services": services,
         "sentinels": sentinels,
         "recent_log": {
@@ -555,7 +562,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._send_json(200, {
                 "service": "remnant-diag",
-                "endpoints": ["/ai.json", "/actions", "/actions/<id> (POST)"],
+                "endpoints": ["/ai.json", "/actions", "/actions/<id> (POST)",
+                              "/browser-health (POST)"],
             })
             return
         if path == "/ai.json":
@@ -570,7 +578,27 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "not found", "path": path})
 
     def do_POST(self) -> None:  # noqa: N802
+        global _browser_health
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+
+        # Browser console health report — POSTed by warm_test.py after
+        # a Playwright boot of the stack. Populates browser_console in /ai.json.
+        if path == "/browser-health":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                d = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                d = {}
+            _browser_health = {
+                "errors": int(d.get("errors", 0)),
+                "warnings": int(d.get("warnings", 0)),
+                "reported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            _log(f"browser-health report: errors={_browser_health['errors']} warnings={_browser_health['warnings']}")
+            self._send_json(200, {"ok": True})
+            return
+
         if not path.startswith("/actions/"):
             self._send_json(404, {"error": "not found", "path": path})
             return

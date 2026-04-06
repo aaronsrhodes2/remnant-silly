@@ -38,6 +38,17 @@ import {
 import { user_avatar } from '../../personas.js';
 import { power_user } from '../../power-user.js';
 
+// ---------------------------------------------------------------------------
+// Console health tracking (v2.12.0)
+// Must sit before any other code so errors emitted during import/init
+// are also counted. Intercept is transparent — originals still called.
+// ---------------------------------------------------------------------------
+const _consoleCounts = { errors: 0, warnings: 0 };
+const _origError = console.error.bind(console);
+const _origWarn  = console.warn.bind(console);
+console.error = (...a) => { _consoleCounts.errors++;  _origError(...a); };
+console.warn  = (...a) => { _consoleCounts.warnings++; _origWarn(...a); };
+
 // Reach the local Flask/SD backend through nginx's dedicated passthrough
 // location `/api/flask-sd/`. Previously we tunneled through ST's built-in
 // `/proxy/<url>` endpoint, but that has an SSRF guard that rejects
@@ -2711,6 +2722,9 @@ window.__remnantTest = {
                 }
             }
         }
+        // Attach live console health counts so cross-stack parity tests
+        // can assert both stacks have the same error profile.
+        snap._consoleCounts = { ..._consoleCounts };
         return snap;
     },
 
@@ -2726,6 +2740,14 @@ window.__remnantTest = {
         try { initSettings(); } catch (_) { /* ignore */ }
         return true;
     },
+
+    /**
+     * Current browser console error/warning counts since page load.
+     * Counts every call to console.error / console.warn in this tab,
+     * including those from ST internals (not just this extension).
+     * Exposed so tests and warm_test.py can assert "0 console errors".
+     */
+    consoleCounts: () => ({ ..._consoleCounts }),
 };
 
 // ---------------------------------------------------------------------------
