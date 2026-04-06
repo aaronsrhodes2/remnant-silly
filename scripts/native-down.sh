@@ -15,6 +15,7 @@ NATIVE_STATUS_DIR="$REPO_ROOT/scripts/splash/status"
 NATIVE_RUN_DIR="$NATIVE_STATUS_DIR/.native-run"
 ST_PID_FILE="$NATIVE_RUN_DIR/sillytavern.pid"
 DIAG_PID_FILE="$NATIVE_RUN_DIR/diag.pid"
+WATCH_PID_FILE="$NATIVE_RUN_DIR/watch-extension.pid"
 NGINX_CONTAINER="${NGINX_CONTAINER:-remnant-native-nginx}"
 
 log() { echo "[native-down] $*"; }
@@ -52,11 +53,21 @@ else
     log "$NGINX_CONTAINER not present"
 fi
 
-# 2. diag
+# 2. extension watcher
+if [ -f "$WATCH_PID_FILE" ]; then
+    wpid=$(cat "$WATCH_PID_FILE" 2>/dev/null || true)
+    if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
+        log "stopping extension watcher (pid $wpid)"
+        kill "$wpid" 2>/dev/null || true
+    fi
+    rm -f "$WATCH_PID_FILE"
+fi
+
+# 3. diag
 kill_port "${DIAG_PORT:-8700}" "diag"
 rm -f "$DIAG_PID_FILE"
 
-# 3. SillyTavern
+# 4. SillyTavern
 kill_port "${ST_PORT:-8000}" "SillyTavern"
 rm -f "$ST_PID_FILE"
 

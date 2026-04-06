@@ -2312,6 +2312,62 @@ function startFortressSensesLoop() {
     pollFortressSensesOnce();
     fortressSensesTimer = setInterval(pollFortressSensesOnce, FORTRESS_SENSES_POLL_MS);
 }
+
+// ---------------------------------------------------------------------------
+// Dev hot-reload — polls /status/extension-version.json (written by
+// scripts/watch-extension.py during native-up). When css_version changes
+// the stylesheet is swapped in-place (no page reload). When js_version
+// changes the page reloads. In docker / production this file never exists,
+// so the first fetch returns 404 and the feature silently disables itself.
+// ---------------------------------------------------------------------------
+let _devReloadTimer = null;
+let _devJsVersion   = null;
+let _devCssVersion  = null;
+const DEV_VERSION_URL = '/status/extension-version.json';
+
+async function _devCheckVersion() {
+    try {
+        const r = await fetch(DEV_VERSION_URL, { cache: 'no-store' });
+        if (!r.ok) {
+            // File absent (production) — kill the timer, never check again.
+            clearInterval(_devReloadTimer);
+            _devReloadTimer = null;
+            return;
+        }
+        const d = await r.json();
+
+        // Seed on first successful fetch — don't reload on the initial read.
+        if (_devJsVersion === null) {
+            _devJsVersion  = d.js_version;
+            _devCssVersion = d.css_version;
+            return;
+        }
+
+        if (d.css_version !== _devCssVersion) {
+            _devCssVersion = d.css_version;
+            // Hot-swap: find our stylesheet link and bump its query string.
+            const link = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+                .find(el => el.href.includes('image-generator') || el.href.includes('style.css'));
+            if (link) {
+                const base = link.href.split('?')[0];
+                link.href = `${base}?v=${d.css_version}`;
+                console.log(`[Image Generator] CSS hot-swapped (${d.css_version})`);
+            }
+        }
+
+        if (d.js_version !== _devJsVersion) {
+            console.log(`[Image Generator] JS changed (${d.js_version}) — reloading`);
+            location.reload();
+        }
+    } catch (_) { /* network hiccup — try again next tick */ }
+}
+
+function startDevHotReload() {
+    if (_devReloadTimer) return;
+    // Check quickly — 1s feels instant
+    _devReloadTimer = setInterval(_devCheckVersion, 1000);
+    _devCheckVersion(); // immediate probe to detect production early
+}
 function stopFortressSensesLoop() {
     if (fortressSensesTimer) {
         clearInterval(fortressSensesTimer);
@@ -4314,6 +4370,7 @@ function initializeExtension() {
     // the host plane via /diagnostics/ai.json. Silently no-ops in
     // native dev where there is no shared origin with the diag sidecar.
     try { startFortressSensesLoop();     } catch (_) { /* ignore */ }
+    try { startDevHotReload();           } catch (_) { /* ignore */ }
 
     // v2.6.0 — default top bar hidden. Apply the class before first paint
     // so the grey menu bar never flashes on load.

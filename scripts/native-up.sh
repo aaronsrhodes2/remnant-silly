@@ -327,6 +327,32 @@ else
 fi
 
 # ---------------------------------------------------------------
+# 2b. Start extension file watcher (dev hot-reload).
+#
+# Polls extension/ for JS/CSS changes every 0.6s and writes
+# /status/extension-version.json. The extension polls that file
+# at 1s intervals: CSS changes are hot-swapped in-place, JS
+# changes trigger a full page reload. No browser interaction needed.
+# ---------------------------------------------------------------
+WATCH_LOG="$NATIVE_RUN_DIR/watch-extension.log"
+WATCH_PID_FILE="$NATIVE_RUN_DIR/watch-extension.pid"
+
+# Kill any stale watcher from a previous run
+if [ -f "$WATCH_PID_FILE" ]; then
+    old_pid=$(cat "$WATCH_PID_FILE" 2>/dev/null || true)
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        kill "$old_pid" 2>/dev/null || true
+    fi
+    rm -f "$WATCH_PID_FILE"
+fi
+
+log "starting extension watcher (log: $WATCH_LOG)"
+nohup python "$REPO_ROOT/scripts/watch-extension.py" \
+    "$EXT_SRC" "$NATIVE_STATUS_DIR" \
+    >"$WATCH_LOG" 2>&1 &
+echo $! >"$WATCH_PID_FILE"
+
+# ---------------------------------------------------------------
 # 3. Start SillyTavern (if not already running).
 # ---------------------------------------------------------------
 if port_listening "$ST_PORT"; then
