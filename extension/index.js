@@ -1101,7 +1101,11 @@ function updateMessageDisplay(messageId) {
         // whether any inline markers remain — the sense bar is the new home
         // for the six sensory channels.
         try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
-        try { syncBottomSenses(messageId, markers); } catch (_) { /* ignore */ }
+        try { syncSenseButton(messageId, markers); } catch (_) { /* ignore */ }
+        // Feed narrator text into channel history (Say/Do/Sense drawers)
+        if (message && !message.is_user) {
+            try { _parseNarratorIntoChannels(messageId, message.mes); } catch (_) { /* ignore */ }
+        }
 
         if (transformedText === message.mes) return;
 
@@ -3774,49 +3778,78 @@ function fixNarratorNames() {
 }
 
 /**
- * Inject the Say / Do toggle bar above the send form. Also moves any
- * Quick Reply "End Story" / "Reset World" buttons into the bar so they
- * are accessible without the QR bar cluttering the Image Gallery header.
+ * Inject the Say / Do / Sense mode bar + channel history drawer above
+ * the send form. Also relocates QR action buttons (End Story / Reset World)
+ * into the bar so they're accessible without the QR clutter.
+ *
+ * v2.3.0: Say/Do/Sense each open a history drawer when clicked.
  */
 function installModeBar() {
     if ($('#img-gen-mode-bar').length) return;
 
-    const $bar = $('<div id="img-gen-mode-bar"></div>');
-    const $say  = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
-    const $do   = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
-    const $look = $('<button class="img-gen-mode-btn" data-mode="look">Look</button>');
-    // Bottom sense icons live between the verb buttons and the action buttons
-    const $senses = $('<div id="img-gen-bottom-senses"><div class="img-gen-bottom-sense-icons"></div></div>');
-    $bar.append($say, $do, $look, $senses);
+    // --- Channel drawer (sits above the mode bar, expands upward) ---
+    const $drawer = $('<div id="img-gen-channel-drawer"></div>');
+    $drawer.append(
+        '<div id="img-gen-drawer-header">' +
+            '<span id="img-gen-drawer-label">Say</span>' +
+            '<button id="img-gen-drawer-close" title="Close">✕</button>' +
+        '</div>' +
+        '<div id="img-gen-drawer-content"></div>'
+    );
+
+    // --- Mode bar ---
+    const $bar   = $('<div id="img-gen-mode-bar"></div>');
+    const $say   = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
+    const $do    = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
+    // Sense button: label + mini sense icon container
+    const $sense = $('<button class="img-gen-mode-btn" data-mode="sense">Sense<span class="img-gen-sense-mini-icons"></span></button>');
+
+    $bar.append($say, $do, $sense);
     $('#send_form').before($bar);
+    $bar.before($drawer);
 
     $('#send_textarea').attr('placeholder', 'Speak, act, or look...');
 
-    // Say / Do / Look toggle
+    // --- Mode switch + drawer toggle ---
     $bar.on('click', '.img-gen-mode-btn:not(.img-gen-qr-btn)', function () {
         const mode = $(this).data('mode');
+        // Switch active mode
         $bar.find('.img-gen-mode-btn:not(.img-gen-qr-btn)').removeClass('active');
         $(this).addClass('active');
-        $('body').removeClass('img-gen-say-mode img-gen-do-mode img-gen-look-mode');
+        $('body').removeClass('img-gen-say-mode img-gen-do-mode img-gen-sense-mode img-gen-look-mode');
         $('body').addClass(`img-gen-${mode}-mode`);
+        // Toggle drawer
+        toggleChannelDrawer(mode);
     });
 
-    // Send intercept — transform text based on active mode
+    // Drawer close button
+    $drawer.on('click', '#img-gen-drawer-close', () => {
+        if (_activeDrawer) {
+            const ch = _activeDrawer;
+            _activeDrawer = null;
+            $drawer.removeClass('open');
+            $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
+            $bar.find(`.img-gen-mode-btn[data-mode="${ch}"]`).addClass('active');
+        }
+    });
+
+    // --- Send intercept — transform text + capture for channel history ---
     function _applyModeTransform() {
         const $ta = $('#send_textarea');
         let val = $ta.val().trim();
         if (!val) return;
+
+        let channel = 'say';
         if ($('body').hasClass('img-gen-do-mode')) {
-            // Do: wrap in *action*
+            channel = 'do';
             val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
             $ta.val(`*${val}*`);
-        } else if ($('body').hasClass('img-gen-look-mode')) {
-            // Look: prefix so the narrator describes the scene in detail
-            if (!val.toLowerCase().startsWith('look')) {
-                $ta.val(`*looks around carefully* ${val}`);
-            }
+        } else if ($('body').hasClass('img-gen-sense-mode')) {
+            channel = 'sense';
+            $ta.val(`*focuses their senses* ${val}`);
         }
-        // Say mode: no transform
+        // Capture raw text for channel history (consumed in USER_MESSAGE_RENDERED)
+        _pendingUserEntry = { text: val, channel, isPlayer: true };
     }
     $(document).off('submit.imgGenMode').on('submit.imgGenMode', '#send_form', _applyModeTransform);
     $(document).off('keydown.imgGenMode').on('keydown.imgGenMode', '#send_textarea', function (e) {
@@ -3827,8 +3860,7 @@ function installModeBar() {
     // Harvest QR action buttons with retries (they mount asynchronously)
     _harvestQrButtons($bar, 0);
 
-    // Nuclear QR bar hide — catches any ST QR bar variant that CSS misses.
-    // Runs after a delay so the QR extension has time to mount its bar.
+    // Nuclear QR bar hide
     setTimeout(() => {
         const _QR_NAV_LABELS = ['API Connections', 'Character Management', 'Extensions'];
         _QR_NAV_LABELS.forEach(label => {
@@ -3840,37 +3872,212 @@ function installModeBar() {
         });
     }, 1500);
 
-    // Boot-time sense sync — populate the bottom bar from the last narrator
-    // message without waiting for the next CHARACTER_MESSAGE_RENDERED event.
+    // Boot-time channel population from history
     setTimeout(() => {
-        try {
-            if (!Array.isArray(chat)) return;
-            for (let i = chat.length - 1; i >= 0; i--) {
-                const m = chat[i];
-                if (m && !m.is_user && m.mes) {
-                    const markers = detectSenseMarkers(m.mes);
-                    if (markers.length) {
-                        syncBottomSenses(i, markers);
-                    }
-                    break;
-                }
-            }
-        } catch (_) { /* ignore */ }
+        try { _populateChannelsFromHistory(); } catch (_) { /* ignore */ }
     }, 2000);
 }
 
 // ---------------------------------------------------------------------------
-// Bottom sense bar — persistent sense icons beside the mode bar.
-// Only mirrors from the most-recent narrator message so re-renders of
-// old history don't reset the bar or re-trigger flash animations.
+// v2.3.0 — Channel history system (Say / Do / Sense)
+// Each mode has a history drawer that logs player inputs and narrator output.
 // ---------------------------------------------------------------------------
-let _bottomSenseLast = {};
 
-function syncBottomSenses(messageId, markers) {
-    const $bottom = $('#img-gen-bottom-senses .img-gen-bottom-sense-icons');
-    if (!$bottom.length) return;
+const _MAX_CH_ENTRIES = 100;
+const _channelHistory  = { say: [], do: [], sense: [] };
+let   _activeDrawer    = null;   // 'say' | 'do' | 'sense' | null
+const _channelHydrated = new Set(); // mesids already parsed into channels
+let   _pendingUserEntry = null;  // { text, channel, isPlayer:true } set in _applyModeTransform
+let   _senseMiniLast   = {};     // { type: label } — guards sense button re-render
 
-    // Only update when this IS the latest narrator message
+const _CHANNEL_LABELS = { say: 'Say', do: 'Do', sense: 'Sense' };
+
+/**
+ * Push one entry into a channel's history ring buffer.
+ * If the drawer for that channel is open, re-render it immediately.
+ * Otherwise, badge the button with an unread dot.
+ */
+function addChannelEntry(channel, entry) {
+    const arr = _channelHistory[channel];
+    if (!arr) return;
+    entry.ts = Date.now();
+    arr.push(entry);
+    if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
+
+    if (_activeDrawer === channel) {
+        _renderDrawer(channel);
+    } else {
+        $(`#img-gen-mode-bar .img-gen-mode-btn[data-mode="${channel}"]`).addClass('has-unread');
+    }
+}
+
+/**
+ * Render the entries for `channel` into the open drawer.
+ */
+function _renderDrawer(channel) {
+    const $content = $('#img-gen-drawer-content');
+    if (!$content.length) return;
+    $content.empty();
+
+    const entries = _channelHistory[channel] || [];
+    if (entries.length === 0) {
+        $content.append('<div class="img-gen-drawer-empty">Nothing yet.</div>');
+        return;
+    }
+
+    for (const e of entries) {
+        let iconHtml = '';
+        let cls = channel;
+        if (channel === 'sense' && e.senseType) {
+            cls += ` sense-${e.senseType.toLowerCase()}`;
+            iconHtml = `<span class="img-gen-drawer-icon">${e.icon || '•'}</span>`;
+        }
+        if (e.isPlayer) cls += ' is-player';
+        const $row = $(`<div class="img-gen-drawer-entry ${cls}">${iconHtml}<span class="img-gen-drawer-text"></span></div>`);
+        $row.find('.img-gen-drawer-text').text(e.text);
+        $content.append($row);
+    }
+    // Newest at bottom
+    $content.scrollTop($content[0].scrollHeight);
+}
+
+/**
+ * Toggle the drawer for `channel`. Sets input mode at the same time.
+ */
+function toggleChannelDrawer(channel) {
+    const $drawer = $('#img-gen-channel-drawer');
+    const $bar    = $('#img-gen-mode-bar');
+
+    // Clear badge for this channel
+    $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).removeClass('has-unread');
+
+    if (_activeDrawer === channel) {
+        // Close
+        _activeDrawer = null;
+        $drawer.removeClass('open');
+        $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
+    } else {
+        // Open
+        _activeDrawer = channel;
+        $drawer.addClass('open');
+        $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
+        $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).addClass('drawer-open');
+        $('#img-gen-drawer-label').text(_CHANNEL_LABELS[channel] || channel);
+        _renderDrawer(channel);
+    }
+}
+
+/**
+ * Strip sense marker brackets from narrator text, then split the
+ * remainder into Say (prose) and Do (*action*) segments and push
+ * each into the appropriate channel. Guards against double-processing
+ * via `_channelHydrated`.
+ */
+function _parseNarratorIntoChannels(messageId, rawText) {
+    if (_channelHydrated.has(messageId)) return;
+    _channelHydrated.add(messageId);
+
+    // Strip all [MARKER...] brackets
+    const stripped = rawText
+        .replace(/\[[A-Z_]+[^\]]*\]/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    if (!stripped) return;
+
+    // Split into *action* (Do) and prose (Say) segments
+    const actionRe = /\*([^*\n]+)\*/g;
+    let lastIdx = 0;
+    let m;
+    while ((m = actionRe.exec(stripped)) !== null) {
+        if (m.index > lastIdx) {
+            const prose = stripped.slice(lastIdx, m.index).trim();
+            if (prose.length > 8) addChannelEntry('say', { text: prose });
+        }
+        const action = m[1].trim();
+        if (action.length > 4) addChannelEntry('do', { text: action });
+        lastIdx = m.index + m[0].length;
+    }
+    if (lastIdx < stripped.length) {
+        const prose = stripped.slice(lastIdx).trim();
+        if (prose.length > 8) addChannelEntry('say', { text: prose });
+    }
+}
+
+/**
+ * Walk the last N messages in chat and rebuild _channelHistory from scratch.
+ * Called on chat load / onChatChanged so the drawers have context immediately.
+ *
+ * Sense entries are pushed directly into the ring buffer (bypassing addChannelEntry
+ * and its senseMiniLast guard) so the last syncSenseButton call can update the
+ * button icons without creating duplicates.
+ */
+function _populateChannelsFromHistory() {
+    _channelHistory.say.length   = 0;
+    _channelHistory.do.length    = 0;
+    _channelHistory.sense.length = 0;
+    _channelHydrated.clear();
+    _senseMiniLast = {};
+
+    if (!Array.isArray(chat)) return;
+    const start = Math.max(0, chat.length - 60);
+    for (let i = start; i < chat.length; i++) {
+        const msg = chat[i];
+        if (!msg || !msg.mes) continue;
+
+        if (msg.is_user) {
+            // Classify by text shape
+            const t = msg.mes.trim();
+            let channel = 'say';
+            if (/^\*[^*].+[^*]\*$/.test(t)) channel = 'do';
+            else if (/^\*focuses their senses/i.test(t)) channel = 'sense';
+            // Push directly (no badge/render side effects during history load)
+            const arr = _channelHistory[channel];
+            arr.push({ ts: Date.now(), text: t.replace(/^\*|\*$/g, '').trim(), isPlayer: true });
+            if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
+        } else {
+            // Narrator: push sense entries directly, then split prose
+            const markers = detectSenseMarkers(msg.mes);
+            const byType = {};
+            for (const mk of markers) {
+                if (!SENSE_BAR_TYPES.has(mk.type)) continue;
+                if (!mk.description) continue;
+                (byType[mk.type] ||= []).push(mk);
+            }
+            for (const type of Object.keys(byType)) {
+                const label = byType[type].map(e => e.description).join(' / ');
+                // Pre-populate senseMiniLast so the later syncSenseButton won't re-add entries
+                _senseMiniLast[type] = label;
+                const arr = _channelHistory.sense;
+                arr.push({ ts: Date.now(), text: label, senseType: type, icon: SENSE_ICONS[type] || '•' });
+                if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
+            }
+            _parseNarratorIntoChannels(i, msg.mes);
+        }
+    }
+
+    // Update Sense button icons from the most recent narrator message with senses.
+    // senseMiniLast is already seeded so syncSenseButton only updates the DOM / flash.
+    for (let i = chat.length - 1; i >= start; i--) {
+        const msg = chat[i];
+        if (msg && !msg.is_user && msg.mes) {
+            const markers = detectSenseMarkers(msg.mes);
+            if (markers.length) { syncSenseButton(i, markers); break; }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sense mini-icons on the Sense button (replaces the standalone bottom bar)
+// ---------------------------------------------------------------------------
+
+/**
+ * Update the mini sense icons inside the Sense button from the most-recent
+ * narrator message. Also adds sense entries to the Sense channel history.
+ * Replaces the old `syncBottomSenses` bottom bar update.
+ */
+function syncSenseButton(messageId, markers) {
+    // Only update from the latest narrator message
     let lastNarratorId = -1;
     if (Array.isArray(chat)) {
         for (let i = chat.length - 1; i >= 0; i--) {
@@ -3880,28 +4087,56 @@ function syncBottomSenses(messageId, markers) {
     if (messageId !== lastNarratorId) return;
 
     const byType = {};
-    for (const m of markers) {
-        if (!SENSE_BAR_TYPES.has(m.type)) continue;
-        if (!m.description) continue;
-        (byType[m.type] ||= []).push(m);
+    for (const mk of markers) {
+        if (!SENSE_BAR_TYPES.has(mk.type)) continue;
+        if (!mk.description) continue;
+        (byType[mk.type] ||= []).push(mk);
+    }
+    if (Object.keys(byType).length === 0) return;
+
+    // Push new sense entries to channel history
+    for (const type of Object.keys(byType)) {
+        const label = byType[type].map(e => e.description).join(' / ');
+        if (_senseMiniLast[type] !== label) {
+            addChannelEntry('sense', {
+                text: label, senseType: type, icon: SENSE_ICONS[type] || '•',
+            });
+        }
     }
 
-    // Don't wipe the bar if the new message has no senses — keep the last
-    // known senses visible until the world explicitly changes them.
-    if (Object.keys(byType).length === 0) return;
-    $bottom.empty();
+    // Rebuild mini icons inside the Sense button
+    const $senseBtn = $('#img-gen-mode-bar .img-gen-mode-btn[data-mode="sense"]');
+    if (!$senseBtn.length) return;
+    const $mini = $senseBtn.find('.img-gen-sense-mini-icons');
+    $mini.empty();
+
+    let anyNew = false;
     const nextLast = {};
     for (const type of ['SIGHT', 'SMELL', 'SOUND', 'TASTE', 'TOUCH', 'ENVIRONMENT']) {
         const entries = byType[type];
         if (!entries || !entries.length) continue;
         const icon  = SENSE_ICONS[type] || '•';
         const label = entries.map(e => e.description).join(' / ');
-        const isNew = _bottomSenseLast[type] !== label;
-        const $chip = $(`<button type="button" class="img-gen-bottom-sense-icon sense-${type.toLowerCase()}${isNew ? ' sense-flash' : ''}" data-type="${type}" data-label="${escapeHtml(label)}">${icon}</button>`);
-        $bottom.append($chip);
+        const isNew = _senseMiniLast[type] !== label;
+        if (isNew) anyNew = true;
+        $mini.append(
+            $(`<span class="img-gen-sense-mini sense-${type.toLowerCase()}" title="${escapeHtml(label)}">${icon}</span>`)
+        );
         nextLast[type] = label;
     }
-    _bottomSenseLast = nextLast;
+    _senseMiniLast = nextLast;
+
+    if (anyNew) {
+        $senseBtn.removeClass('sense-flash');
+        // Force reflow to restart animation
+        void $senseBtn[0].offsetWidth;
+        $senseBtn.addClass('sense-flash');
+    }
+}
+
+// Keep the old name alive as an alias so existing call sites still work
+function syncBottomSenses(messageId, markers) {
+    syncSenseButton(messageId, markers);
 }
 
 const _QR_HARVEST_LABELS = ['End Story', 'Reset World'];
@@ -4383,19 +4618,8 @@ async function onChatChanged() {
     try { handleItemRenames(lastMessage.mes || ''); } catch (_) {}
     try { persistRun(); } catch (_) {}
     try { fixNarratorNames(); } catch (_) {}
-    // Sync bottom senses from the most recent narrator message on every chat load.
-    try {
-        if (Array.isArray(chat)) {
-            for (let i = chat.length - 1; i >= 0; i--) {
-                const m = chat[i];
-                if (m && !m.is_user && m.mes) {
-                    const markers = detectSenseMarkers(m.mes);
-                    if (markers.length) syncBottomSenses(i, markers);
-                    break;
-                }
-            }
-        }
-    } catch (_) {}
+    // Rebuild channel history drawers and sense button from loaded chat.
+    try { _populateChannelsFromHistory(); } catch (_) {}
 }
 
 // v2.6.0 — snapshot the current run into settings.run so a new ST chat
@@ -4508,6 +4732,16 @@ function initializeExtension() {
             } catch (err) {
                 console.warn('[Image Generator] USER_MESSAGE_RENDERED handler error:', err);
             }
+            // Capture player input into the appropriate channel drawer
+            try {
+                if (_pendingUserEntry) {
+                    addChannelEntry(_pendingUserEntry.channel, {
+                        text: _pendingUserEntry.text,
+                        isPlayer: _pendingUserEntry.isPlayer,
+                    });
+                    _pendingUserEntry = null;
+                }
+            } catch (_) { /* ignore */ }
             // v2.6.2 — belt-and-suspenders marker-transform walk. Every
             // user send re-renders the message list subtly in ST, and this
             // is our guaranteed moment to catch any greeting/prior-message

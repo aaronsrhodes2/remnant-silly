@@ -1206,12 +1206,12 @@ body.img-gen-do-mode #send_textarea {
     border-color: rgba(186, 104, 200, 0.4) !important;
     caret-color: #ba68c8;
 }
-body.img-gen-look-mode #send_textarea {
+body.img-gen-sense-mode #send_textarea {
     border-color: rgba(38, 198, 218, 0.4) !important;
     caret-color: #26c6da;
 }
-/* Look active button */
-.img-gen-mode-btn.active[data-mode="look"] {
+/* Sense active button */
+.img-gen-mode-btn.active[data-mode="sense"] {
     border-color: rgba(38, 198, 218, 0.75);
     color: #26c6da;
     background: rgba(38, 198, 218, 0.1);
@@ -1239,81 +1239,174 @@ body.img-gen-do-mode #send_textarea {
 }
 
 /* ============================================
-   BOTTOM SENSE BAR (v2.2.0)
-   Persistent sense icons beside the mode bar.
-   Replaces the per-message sense bar.
+   CHANNEL HISTORY DRAWER (v2.3.0)
+   Expands upward above the mode bar when
+   Say / Do / Sense button is clicked.
    ============================================ */
-#img-gen-bottom-senses,
-#img-gen-bottom-senses .img-gen-bottom-sense-icons {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex: 1;
-    padding: 0 6px;
-}
-.img-gen-bottom-sense-icon {
-    position: relative;
-    font-size: 26px;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    background: rgba(0, 0, 0, 0.35);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-    overflow: visible;
-}
-.img-gen-bottom-sense-icon:hover {
-    transform: scale(1.18);
-    border-color: rgba(255, 255, 255, 0.5);
-}
-/* Sense-specific glow on hover */
-.img-gen-bottom-sense-icon.sense-sight:hover     { box-shadow: 0 0 18px 4px rgba(255, 140, 0, 0.6); }
-.img-gen-bottom-sense-icon.sense-smell:hover     { box-shadow: 0 0 18px 4px rgba(0, 200, 83, 0.6); }
-.img-gen-bottom-sense-icon.sense-sound:hover     { box-shadow: 0 0 18px 4px rgba(41, 182, 246, 0.6); }
-.img-gen-bottom-sense-icon.sense-taste:hover     { box-shadow: 0 0 18px 4px rgba(255, 202, 40, 0.6); }
-.img-gen-bottom-sense-icon.sense-touch:hover     { box-shadow: 0 0 18px 4px rgba(244, 67, 54, 0.6); }
-.img-gen-bottom-sense-icon.sense-environment:hover { box-shadow: 0 0 18px 4px rgba(171, 71, 188, 0.6); }
-/* Resting glow so active senses feel alive even before hover */
-.img-gen-bottom-sense-icon.sense-sight     { box-shadow: 0 0 6px 1px rgba(255, 140, 0, 0.25); }
-.img-gen-bottom-sense-icon.sense-smell     { box-shadow: 0 0 6px 1px rgba(0, 200, 83, 0.25); }
-.img-gen-bottom-sense-icon.sense-sound     { box-shadow: 0 0 6px 1px rgba(41, 182, 246, 0.25); }
-.img-gen-bottom-sense-icon.sense-taste     { box-shadow: 0 0 6px 1px rgba(255, 202, 40, 0.25); }
-.img-gen-bottom-sense-icon.sense-touch     { box-shadow: 0 0 6px 1px rgba(244, 67, 54, 0.25); }
-.img-gen-bottom-sense-icon.sense-environment { box-shadow: 0 0 6px 1px rgba(171, 71, 188, 0.25); }
-/* Flash: bigger and brighter than the in-message version */
-@keyframes bottomSenseFlash {
-    0%   { transform: scale(1);    box-shadow: 0 0 0 0     rgba(255, 255, 255, 0.0); }
-    18%  { transform: scale(1.65); box-shadow: 0 0 32px 10px rgba(255, 255, 255, 0.95); }
-    55%  { transform: scale(1.2);  box-shadow: 0 0 16px 5px rgba(255, 255, 255, 0.4); }
-    100% { transform: scale(1);    box-shadow: 0 0 6px 1px  var(--sense-resting-glow, rgba(255,255,255,0.1)); }
-}
-.img-gen-bottom-sense-icon.sense-flash {
-    animation: bottomSenseFlash 1.8s ease-out 1;
-}
-/* Tooltip above the icon */
-.img-gen-bottom-sense-icon::after {
-    content: attr(data-label);
-    position: absolute;
-    bottom: calc(100% + 10px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(10, 10, 20, 0.92);
-    color: #d0d0d0;
-    padding: 4px 9px;
-    border-radius: 5px;
-    font-size: 11px;
-    white-space: nowrap;
-    pointer-events: none;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+#img-gen-channel-drawer {
+    max-height: 0;
+    overflow: hidden;
     opacity: 0;
-    transition: opacity 0.1s ease;
-    font-style: normal;
-    font-family: sans-serif;
+    transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s ease;
+    background: rgba(8, 8, 18, 0.96);
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    display: flex;
+    flex-direction: column;
 }
-.img-gen-bottom-sense-icon:hover::after {
+#img-gen-channel-drawer.open {
+    max-height: 260px;
     opacity: 1;
+}
+#img-gen-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px 3px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 10px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.3);
+    flex-shrink: 0;
+}
+#img-gen-drawer-label {
+    font-weight: 700;
+}
+#img-gen-drawer-close {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.25);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color 0.1s;
+}
+#img-gen-drawer-close:hover {
+    color: rgba(255, 255, 255, 0.6);
+}
+#img-gen-drawer-content {
+    overflow-y: auto;
+    flex: 1;
+    padding: 6px 10px 4px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.12) transparent;
+}
+.img-gen-drawer-entry {
+    font-size: 12.5px;
+    line-height: 1.45;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+.img-gen-drawer-entry:last-child {
+    border-bottom: none;
+}
+.img-gen-drawer-entry.say {
+    color: rgba(200, 220, 255, 0.82);
+}
+.img-gen-drawer-entry.say.is-player {
+    color: #64b5f6;
+    font-style: normal;
+}
+.img-gen-drawer-entry.do {
+    color: rgba(186, 104, 200, 0.9);
+    font-style: italic;
+}
+.img-gen-drawer-entry.do.is-player {
+    color: #ce93d8;
+}
+.img-gen-drawer-entry.sense {
+    font-style: italic;
+}
+.img-gen-drawer-entry.sense.sense-sight        { color: #ff8c00; }
+.img-gen-drawer-entry.sense.sense-smell        { color: #00c853; }
+.img-gen-drawer-entry.sense.sense-sound        { color: #29b6f6; }
+.img-gen-drawer-entry.sense.sense-taste        { color: #ffd600; }
+.img-gen-drawer-entry.sense.sense-touch        { color: #ba68c8; }
+.img-gen-drawer-entry.sense.sense-environment  { color: #81d4fa; }
+.img-gen-drawer-entry.sense.is-player          { font-style: normal; opacity: 0.75; }
+.img-gen-drawer-icon {
+    flex-shrink: 0;
+    font-size: 14px;
+    line-height: 1;
+}
+.img-gen-drawer-text {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+.img-gen-drawer-empty {
+    color: rgba(255, 255, 255, 0.2);
+    font-size: 12px;
+    text-align: center;
+    padding: 12px 0;
+    font-style: italic;
+}
+
+/* ============================================
+   UNREAD BADGE on mode buttons (v2.3.0)
+   Pulsing dot when channel has new content.
+   ============================================ */
+@keyframes badgePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.55; transform: scale(0.7); }
+}
+.img-gen-mode-btn {
+    position: relative;
+}
+.img-gen-mode-btn.has-unread::before {
+    content: '';
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef5350;
+    animation: badgePulse 1.2s ease-in-out infinite;
+}
+/* Drawer-open state: underline indicator */
+.img-gen-mode-btn.drawer-open {
+    border-bottom-color: rgba(255, 255, 255, 0.5);
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+/* ============================================
+   SENSE MINI ICONS — tiny inline icons inside
+   the Sense button showing active senses.
+   ============================================ */
+.img-gen-sense-mini-icons {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+.img-gen-sense-mini {
+    font-size: 13px;
+    line-height: 1;
+    transition: transform 0.15s ease;
+}
+.img-gen-sense-mini.sense-sight       { color: #ff8c00; }
+.img-gen-sense-mini.sense-smell       { color: #00c853; }
+.img-gen-sense-mini.sense-sound       { color: #29b6f6; }
+.img-gen-sense-mini.sense-taste       { color: #ffd600; }
+.img-gen-sense-mini.sense-touch       { color: #ba68c8; }
+.img-gen-sense-mini.sense-environment { color: #81d4fa; }
+@keyframes senseButtonFlash {
+    0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+    20%  { box-shadow: 0 0 18px 6px rgba(255,255,255,0.85); }
+    60%  { box-shadow: 0 0 10px 3px rgba(255,255,255,0.35); }
+    100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
+.img-gen-mode-btn.sense-flash {
+    animation: senseButtonFlash 1.4s ease-out 1;
 }
