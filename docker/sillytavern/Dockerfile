@@ -37,7 +37,9 @@ COPY --chown=node:node docker/sillytavern/config.yaml /home/node/app/default/con
 # into each user's chats/ subtree with subdir structure preserved.
 # See docker/sillytavern/patches/add-chat-seed.js for the full story.
 COPY --chown=node:node docker/sillytavern/patches/ /tmp/st-patches/
-RUN node /tmp/st-patches/add-chat-seed.js && rm -rf /tmp/st-patches
+RUN node /tmp/st-patches/add-chat-seed.js \
+ && node /tmp/st-patches/fix-scrollbar-focus-visible.js \
+ && rm -rf /tmp/st-patches
 
 # --- Pre-seed canonical Remnant content (characters, worlds, chats, settings) ---
 #
