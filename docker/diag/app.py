@@ -132,6 +132,26 @@ def _tail_log(n: int = 120) -> list[str]:
         return [f"(log read failed: {e})"]
 
 
+# Known service identifiers as they appear in [service:...] log prefixes.
+_KNOWN_SERVICES = ("flask-sd", "ollama", "sillytavern", "diag", "bootstrap")
+
+
+def _tail_service_log(service: str, n: int = 40) -> list[str]:
+    """Return the last n lines from diagnostics.log that belong to *service*.
+
+    Lines are tagged by the entrypoints with the pattern:
+        [TIMESTAMP] [flask-sd:runtime] message
+        [TIMESTAMP] [ollama:bootstrap] message
+        [TIMESTAMP] [diag] message
+
+    We match '] [<service>' so the filter is prefix-exact (flask-sd does
+    not match flask-sd-bootstrap, etc.).
+    """
+    all_lines = _tail_log(4000)
+    tag = f"] [{service}"
+    return [l for l in all_lines if tag in l][-n:]
+
+
 def _categorize_log_lines(lines: list[str]) -> dict:
     errors, warnings = [], []
     for line in lines:
@@ -317,6 +337,18 @@ def _action_catalog() -> list[dict]:
             "risk": "safe",
             "requires_host": False,
         },
+        {
+            "id": "logs.tail_service",
+            "summary": "Return the last N lines from diagnostics.log that belong to a specific service.",
+            "params": {
+                "service": {"type": "string", "enum": list(_KNOWN_SERVICES),
+                            "example": "flask-sd"},
+                "n": {"type": "integer", "default": 40, "max": 200},
+            },
+            "side_effects": "none",
+            "risk": "safe",
+            "requires_host": False,
+        },
     ]
 
 
@@ -403,6 +435,16 @@ def _exec_action(action_id: str, params: dict) -> tuple[int, dict]:
             n = int(params.get("n", 120))
             n = max(1, min(n, 500))
             return 200, {"ok": True, "lines": _tail_log(n)}
+
+        if action_id == "logs.tail_service":
+            service = params.get("service", "")
+            if not service:
+                return 400, {"ok": False, "error": "param 'service' is required"}
+            if service not in _KNOWN_SERVICES:
+                return 400, {"ok": False, "error": f"unknown service '{service}'. Known: {list(_KNOWN_SERVICES)}"}
+            n = int(params.get("n", 40))
+            n = max(1, min(n, 200))
+            return 200, {"ok": True, "service": service, "lines": _tail_service_log(service, n)}
 
         if action_id == "logs.clear":
             try:
@@ -520,6 +562,10 @@ def _build_ai_snapshot() -> dict:
             "errors": log_cat["errors"],
             "warnings": log_cat["warnings"],
         },
+        "per_service_log": {
+            svc: _tail_service_log(svc, 20)
+            for svc in ("flask-sd", "ollama", "sillytavern", "diag")
+        },
         "detected_issues": issues,
         "suggested_action_ids": suggested,
         "action_catalog": _action_catalog(),
@@ -557,13 +603,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_text(self, code: int, text: str) -> None:
+        body = text.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == "/":
             self._send_json(200, {
                 "service": "remnant-diag",
-                "endpoints": ["/ai.json", "/actions", "/actions/<id> (POST)",
-                              "/browser-health (POST)"],
+                "endpoints": [
+                    "/ai.json",
+                    "/actions",
+                    "/actions/<id> (POST)",
+                    "/browser-health (POST)",
+                    "/logs/<service> (GET, plain-text)",
+                ],
             })
             return
         if path == "/ai.json":
@@ -574,6 +634,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/actions":
             self._send_json(200, {"actions": _action_catalog()})
+            return
+        # Per-service log tail: GET /logs/<service>
+        if path.startswith("/logs/"):
+            service = path[len("/logs/"):]
+            if not service or service not in _KNOWN_SERVICES:
+                self._send_json(404, {
+                    "error": f"unknown service '{service}'",
+                    "known": list(_KNOWN_SERVICES),
+                })
+                return
+            lines = _tail_service_log(service, 100)
+            self._send_text(200, "\n".join(lines) + ("\n" if lines else ""))
             return
         self._send_json(404, {"error": "not found", "path": path})
 
