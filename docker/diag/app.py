@@ -595,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
                 "warnings": int(d.get("warnings", 0)),
                 "reported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
-            _log(f"browser-health report: errors={_browser_health['errors']} warnings={_browser_health['warnings']}")
+            _log(f"browser-health: console_err={_browser_health['errors']} console_warn={_browser_health['warnings']}")
             self._send_json(200, {"ok": True})
             return
 

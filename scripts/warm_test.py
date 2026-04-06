@@ -148,26 +148,28 @@ def main() -> None:
     report: dict = {}
     t_total_start = time.time()
 
-    # Step 1: build
+    # Step 1: build (sillytavern + diag + nginx all track code in this repo)
     build_s = 0.0
     if not args.no_build:
         try:
             build_s = _run(
-                ["docker", "compose", "build", "sillytavern"],
-                "docker compose build sillytavern",
+                ["docker", "compose", "build", "sillytavern", "diag", "nginx"],
+                "docker compose build sillytavern diag nginx",
             )
         except subprocess.CalledProcessError as e:
             print(f"[warm_test] build failed: {e}")
             sys.exit(1)
 
     # Step 2: teardown + restart
-    print("\n[warm_test] Tearing down old sillytavern container + data volume...")
+    # Restart nginx + diag (may have new config/code), nuke the ST data volume
+    # for a truly clean first-boot seed, then bring everything up.
+    print("\n[warm_test] Tearing down sillytavern, refreshing nginx + diag...")
     try:
         subprocess.run(["docker", "compose", "stop", "sillytavern"], check=True)
         subprocess.run(["docker", "compose", "rm", "-f", "sillytavern"], check=True)
         subprocess.run(["docker", "volume", "rm", "remnant-silly_sillytavern-data"],
                        check=False)  # ok if volume didn't exist
-        subprocess.run(["docker", "compose", "up", "-d", "sillytavern", "nginx"], check=True)
+        subprocess.run(["docker", "compose", "up", "-d", "sillytavern", "diag", "nginx"], check=True)
     except subprocess.CalledProcessError as e:
         print(f"[warm_test] container restart failed: {e}")
         sys.exit(1)
