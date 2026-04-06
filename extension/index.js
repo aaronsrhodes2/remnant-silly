@@ -3700,6 +3700,105 @@ function updatePanelStatus(message) {
 }
 
 // ---------------------------------------------------------------------------
+// v2.1.0 — Mode bar (Say / Do) + narrator rename
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk all visible "Narrator" ch_name spans and set their text to
+ * "The Fortress". The CSS ::after rule is the instant fallback; this
+ * sets the actual text node so it's clean in the DOM.
+ */
+function fixNarratorNames() {
+    document.querySelectorAll('.mes[ch_name="Narrator"] .name_text').forEach(el => {
+        if (el.textContent.trim() !== 'The Fortress') {
+            el.textContent = 'The Fortress';
+        }
+    });
+}
+
+/**
+ * Inject the Say / Do toggle bar above the send form. Also moves any
+ * Quick Reply "End Story" / "Reset World" buttons into the bar so they
+ * are accessible without the QR bar cluttering the Image Gallery header.
+ */
+function installModeBar() {
+    if ($('#img-gen-mode-bar').length) return;
+
+    const $bar = $('<div id="img-gen-mode-bar"></div>');
+    const $say = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
+    const $do  = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
+    $bar.append($say, $do);
+    $('#send_form').before($bar);
+
+    $('#send_textarea').attr('placeholder', 'Speak or *do*...');
+
+    // Say / Do toggle
+    $bar.on('click', '.img-gen-mode-btn:not(.img-gen-qr-btn)', function () {
+        const mode = $(this).data('mode');
+        $bar.find('.img-gen-mode-btn:not(.img-gen-qr-btn)').removeClass('active');
+        $(this).addClass('active');
+        if (mode === 'do') {
+            $('body').addClass('img-gen-do-mode').removeClass('img-gen-say-mode');
+        } else {
+            $('body').addClass('img-gen-say-mode').removeClass('img-gen-do-mode');
+        }
+    });
+
+    // Send intercept — wrap text in *…* when in Do mode
+    $(document).off('submit.imgGenMode').on('submit.imgGenMode', '#send_form', function () {
+        if (!$('body').hasClass('img-gen-do-mode')) return;
+        const $ta = $('#send_textarea');
+        let val = $ta.val().trim();
+        if (!val) return;
+        val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
+        $ta.val(`*${val}*`);
+    });
+    $(document).off('keydown.imgGenMode').on('keydown.imgGenMode', '#send_textarea', function (e) {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+        if (!$('body').hasClass('img-gen-do-mode')) return;
+        let val = $(this).val().trim();
+        if (!val) return;
+        val = val.replace(/^\*+/, '').replace(/\*+$/, '').trim();
+        $(this).val(`*${val}*`);
+    });
+
+    // Harvest QR action buttons with retries (they mount asynchronously)
+    _harvestQrButtons($bar, 0);
+}
+
+const _QR_HARVEST_LABELS = ['End Story', 'Reset World'];
+const _QR_HARVEST_RETRIES = [600, 1800, 3500, 7000];
+
+function _harvestQrButtons($bar, attempt) {
+    let harvested = 0;
+    _QR_HARVEST_LABELS.forEach(label => {
+        if ($bar.find(`[data-qr-label="${CSS.escape(label)}"]`).length) {
+            harvested++;
+            return; // already harvested
+        }
+        const $src = $('button:not(.img-gen-mode-btn)').filter(function () {
+            return $(this).text().trim() === label;
+        }).first();
+        if (!$src.length) return;
+
+        if (harvested === 0) {
+            $bar.append($('<span class="img-gen-mode-sep"></span>'));
+        }
+        const $btn = $(`<button class="img-gen-mode-btn img-gen-qr-btn" data-qr-label="${label}">${label}</button>`);
+        $btn.on('click', () => $src.trigger('click'));
+        $bar.append($btn);
+        // Hide the source button's container (QR bar row)
+        $src.closest('#qr--bar, .qr--bar, .quickReplyBar, #quickReplyBar, .qr--bar-container').hide();
+        $src.hide();
+        harvested++;
+    });
+
+    if (harvested < _QR_HARVEST_LABELS.length && attempt < _QR_HARVEST_RETRIES.length) {
+        setTimeout(() => _harvestQrButtons($bar, attempt + 1), _QR_HARVEST_RETRIES[attempt]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main event handler
 // ---------------------------------------------------------------------------
 
@@ -3738,6 +3837,7 @@ async function onCharacterMessageRendered(messageId) {
     // Always re-render the message display so marker spans are applied,
     // even if there's nothing to image-generate.
     updateMessageDisplay(messageId);
+    try { fixNarratorNames(); } catch (_) { /* ignore */ }
 
     // v2.6.3 — Apply spoken cadence AFTER the final transform runs.
     // This is the one-shot moment at stream end; doing it here (instead
@@ -4143,6 +4243,7 @@ async function onChatChanged() {
     try { handlePlayerTrait(lastMessage.mes || ''); } catch (_) {}
     try { handleItemRenames(lastMessage.mes || ''); } catch (_) {}
     try { persistRun(); } catch (_) {}
+    try { fixNarratorNames(); } catch (_) {}
 }
 
 // v2.6.0 — snapshot the current run into settings.run so a new ST chat
@@ -4224,6 +4325,8 @@ function initializeExtension() {
     // send pipeline. Clears The Remnant's permanent memory only on
     // explicit two-step confirm.
     try { installSecretForgetPhraseInterceptor(); } catch (err) { console.warn('[Image Generator] secret-phrase interceptor failed:', err); }
+    // v2.1.0 — Say/Do mode bar above the chat input.
+    try { installModeBar(); } catch (err) { console.warn('[Image Generator] installModeBar failed:', err); }
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onCharacterMessageRendered);
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);

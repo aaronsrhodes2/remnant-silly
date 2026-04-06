@@ -1074,3 +1074,135 @@ body.img-gen-topbar-hidden #top-settings-holder {
 
 /* (Character detail modal removed — detail is rendered inline in the
    left-of-chat speaker spotlight via pinSpotlightToCharacter.) */
+
+/* ============================================
+   UI TUNING (v2.1.0)
+   ============================================ */
+
+/* RED — hide the gallery close button and the "Image Gallery" title.
+   The ▲ topbar toggle is sufficient for recoverability; the title wastes
+   header real-estate. */
+#img-gen-close,
+.img-gen-panel-title {
+    display: none !important;
+}
+
+/* RED — ST quick-reply bar (various class/id variants across ST versions).
+   Already hidden: .qr--bar, .qr--buttons. Covering newer names too. */
+#qr--bar,
+#quickReplyBar,
+.qr--bar-container,
+.quickReplyBar {
+    display: none !important;
+}
+
+/* GREEN — Bigger, bolder sense icons. The senses are a first-class UI
+   feature — they should feel tactile and substantial. */
+.img-gen-sense-bar {
+    padding: 8px 10px;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.09);
+}
+.img-gen-sense-icons {
+    gap: 8px;
+}
+.img-gen-sense-icon {
+    font-size: 22px;
+    width: 40px;
+    height: 40px;
+    border-width: 1.5px;
+}
+/* Flash — more dramatic pulse so new senses grab attention. */
+@keyframes imgGenSenseFlash {
+    0%   { transform: scale(1);    box-shadow: 0 0 0 0   rgba(255, 255, 255, 0.0);  }
+    15%  { transform: scale(1.5);  box-shadow: 0 0 22px 6px rgba(255, 255, 255, 0.85); }
+    50%  { transform: scale(1.1);  box-shadow: 0 0 12px 3px rgba(255, 255, 255, 0.4);  }
+    100% { transform: scale(1);    box-shadow: 0 0 0 0   rgba(255, 255, 255, 0.0);  }
+}
+.img-gen-sense-icon.sense-flash {
+    animation: imgGenSenseFlash 1.4s ease-out 1;
+}
+
+/* YELLOW — Bigger chat input. The player is the star. */
+#send_textarea {
+    min-height: 72px !important;
+    font-size: 15px !important;
+    padding: 12px 14px !important;
+    line-height: 1.5 !important;
+}
+
+/* BLUE — Rename "Narrator" to "The Fortress" via CSS content swap on the
+   name_text span. CSS can't change text nodes directly, so we use the JS
+   fixNarratorNames() approach; this rule hides the raw text as a fallback. */
+.mes[ch_name="Narrator"] .name_text {
+    visibility: hidden;
+    position: relative;
+}
+.mes[ch_name="Narrator"] .name_text::after {
+    content: "The Fortress";
+    visibility: visible;
+    position: absolute;
+    left: 0;
+    white-space: nowrap;
+}
+
+/* ============================================
+   SAY / DO MODE BAR (v2.1.0)
+   A two-button toggle above the chat input.
+   "Say" = plain speech. "Do" = action wrapped in *asterisks*.
+   ============================================ */
+#img-gen-mode-bar {
+    display: flex;
+    gap: 6px;
+    padding: 6px 8px 2px 8px;
+    align-items: center;
+}
+.img-gen-mode-btn {
+    padding: 4px 20px;
+    border-radius: 20px;
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    background: rgba(0, 0, 0, 0.3);
+    color: #9e9e9e;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.img-gen-mode-btn:hover {
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #e0e0e0;
+}
+.img-gen-mode-btn.active[data-mode="say"] {
+    border-color: rgba(100, 181, 246, 0.75);
+    color: #64b5f6;
+    background: rgba(100, 181, 246, 0.1);
+    box-shadow: 0 0 8px rgba(100, 181, 246, 0.25);
+}
+.img-gen-mode-btn.active[data-mode="do"] {
+    border-color: rgba(186, 104, 200, 0.75);
+    color: #ba68c8;
+    background: rgba(186, 104, 200, 0.1);
+    box-shadow: 0 0 8px rgba(186, 104, 200, 0.25);
+}
+/* Input tint when in "Do" (action) mode */
+body.img-gen-do-mode #send_textarea {
+    border-color: rgba(186, 104, 200, 0.4) !important;
+    caret-color: #ba68c8;
+}
+/* Spacer that pushes QR action buttons to the right of the mode bar */
+.img-gen-mode-sep {
+    flex: 1;
+}
+/* QR action buttons (End Story, Reset World) relocated into mode bar */
+.img-gen-qr-btn {
+    font-size: 11px;
+    padding: 3px 10px;
+    color: #616161;
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.img-gen-qr-btn:hover {
+    border-color: rgba(239, 83, 80, 0.45);
+    color: #ef9a9a;
+}
