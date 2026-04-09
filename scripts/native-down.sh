@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # native-down.sh — stop the dev stack started by scripts/native-up.sh.
 #
-# Stops: native-nginx container, diag python process, SillyTavern
+# Stops: nginx (native process), diag python process, SillyTavern
 # node process. Leaves flask-sd and ollama alone (they're owned by
 # the developer, not this script).
 
@@ -16,7 +16,8 @@ NATIVE_RUN_DIR="$NATIVE_STATUS_DIR/.native-run"
 ST_PID_FILE="$NATIVE_RUN_DIR/sillytavern.pid"
 DIAG_PID_FILE="$NATIVE_RUN_DIR/diag.pid"
 WATCH_PID_FILE="$NATIVE_RUN_DIR/watch-extension.pid"
-NGINX_CONTAINER="${NGINX_CONTAINER:-remnant-native-nginx}"
+NGINX_PID_FILE="$NATIVE_RUN_DIR/nginx.pid"
+NGINX_PORT="${NGINX_PORT:-1580}"
 
 log() { echo "[native-down] $*"; }
 
@@ -45,12 +46,19 @@ kill_port() {
     done
 }
 
-# 1. nginx container
-if docker ps -a --format '{{.Names}}' | grep -qx "$NGINX_CONTAINER"; then
-    log "removing $NGINX_CONTAINER"
-    docker rm -f "$NGINX_CONTAINER" >/dev/null
+# 1. nginx (native process — stop via PID file, fall back to port kill)
+if [ -f "$NGINX_PID_FILE" ]; then
+    nginx_pid=$(cat "$NGINX_PID_FILE" 2>/dev/null || true)
+    if [ -n "$nginx_pid" ] && kill -0 "$nginx_pid" 2>/dev/null; then
+        log "stopping nginx (pid $nginx_pid)"
+        kill "$nginx_pid" 2>/dev/null || true
+    else
+        log "nginx PID file present but process is gone — clearing"
+    fi
+    rm -f "$NGINX_PID_FILE"
 else
-    log "$NGINX_CONTAINER not present"
+    # PID file missing — fall back to killing by port
+    kill_port "${NGINX_PORT}" "nginx"
 fi
 
 # 2. extension watcher
@@ -68,7 +76,7 @@ kill_port "${DIAG_PORT:-8700}" "diag"
 rm -f "$DIAG_PID_FILE"
 
 # 4. SillyTavern
-kill_port "${ST_PORT:-8000}" "SillyTavern"
+kill_port "${ST_PORT:-1581}" "SillyTavern"
 rm -f "$ST_PID_FILE"
 
 log "done. flask-sd and ollama left running (manage those yourself)."

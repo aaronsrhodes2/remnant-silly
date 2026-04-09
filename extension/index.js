@@ -3946,10 +3946,10 @@ function installModeBar() {
     const $bar      = $('<div id="img-gen-mode-bar"></div>');
     const $say       = $('<button class="img-gen-mode-btn active" data-mode="say">Say</button>');
     const $do        = $('<button class="img-gen-mode-btn" data-mode="do">Do</button>');
-    const $sense     = $('<button class="img-gen-mode-btn" data-mode="sense">Sense<span class="img-gen-sense-mini-icons"></span></button>');
-    const $insights  = $('<button class="img-gen-mode-btn" data-mode="insights">Insights<span class="img-gen-sense-mini-icons"></span></button>');
-    const $inventory = $('<button class="img-gen-mode-btn" data-mode="inventory">Inventory</button>');
-    const $lore      = $('<button class="img-gen-mode-btn" data-mode="lore">Lore</button>');
+    const $sense     = $('<button class="img-gen-mode-btn" data-mode="sense">Sense</button>');
+    const $insights  = $('<button class="img-gen-mode-btn" data-mode="insights">Insights</button>');
+    const $inventory = $('<button class="img-gen-mode-btn" data-mode="inventory">🎒 Inventory</button>');
+    const $lore      = $('<button class="img-gen-mode-btn" data-mode="lore">📖 Lore</button>');
 
     $bar.append($say, $do, $sense, $insights, $inventory, $lore);
     $('#send_form').before($bar);
@@ -4151,10 +4151,10 @@ function _renderDrawer(channel) {
     }
     const display = all.slice(-20);
 
-    // Render newest-first in DOM. flex-direction:column-reverse places
-    // the first DOM child at the visual bottom, so newest always anchors
-    // there. Old entries that exceed the container height clip off the top
-    // silently — no scrollbar needed.
+    // Render newest-first in DOM. flex-direction:column means the first
+    // DOM child appears at the visual top, so newest entry is always visible.
+    // Older entries below scroll off the bottom; scrollTop(0) ensures the
+    // newest stays pinned at the top after each render.
     for (let i = display.length - 1; i >= 0; i--) {
         const e = display[i];
         let iconHtml = '';
@@ -4172,6 +4172,7 @@ function _renderDrawer(channel) {
         $row.find('.img-gen-drawer-text').text(displayText);
         $content.append($row);
     }
+    $content.scrollTop(0);
 }
 
 /**
@@ -4183,7 +4184,7 @@ function toggleChannelDrawer(channel) {
     const $bar    = $('#img-gen-mode-bar');
     $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).removeClass('has-unread');
     _activeDrawer = channel;
-    $drawer.addClass('open');
+    $drawer.addClass('open').attr('data-channel', channel);
     $bar.find('.img-gen-mode-btn').removeClass('drawer-open');
     $bar.find(`.img-gen-mode-btn[data-mode="${channel}"]`).addClass('drawer-open');
     $('#img-gen-drawer-label').text(_CHANNEL_LABELS[channel] || channel);
@@ -4279,6 +4280,55 @@ function _translateToBlocks(rawText) {
  * messages) or directly to channel history (instant=true, used by history load).
  * Guards against double-processing via _channelHydrated.
  */
+function _detectNarratorWarnings(rawText, blocks) {
+    const w = [];
+    // Narrator impersonated the player: asterisked *you verb* or *You verb*
+    const impMatches = rawText.match(/\*\s*[Yy]ou\s+\w+/g);
+    if (impMatches) w.push({ code: 'player_impersonation', examples: impMatches.slice(0, 5) });
+    // No image trigger this turn (not always wrong, but worth flagging)
+    if (!/\[GENERATE_IMAGE|\[SIGHT/i.test(rawText)) w.push({ code: 'no_image_trigger' });
+    // Overly long (first 2000 chars survive _translateToBlocks; rest is invisible)
+    if (rawText.length > 2500) w.push({ code: 'response_too_long', chars: rawText.length });
+    return w;
+}
+
+async function _postNarratorTurn(messageId, rawText, blocks) {
+    try {
+        const warnings = _detectNarratorWarnings(rawText, blocks);
+        const markers = [];
+        const markerRe = /\[([A-Z_]{2,})(?:[:(][^\]]*)?]/g;
+        let m;
+        while ((m = markerRe.exec(rawText)) !== null) {
+            if (!markers.includes(m[1])) markers.push(m[1]);
+        }
+        const channelCounts = {};
+        for (const b of blocks) channelCounts[b.channel] = (channelCounts[b.channel] || 0) + 1;
+        const settings = initSettings();
+        const turn = {
+            ts: Date.now(),
+            turn_id: String(messageId),
+            raw_text: rawText.substring(0, 3000),
+            parsed_blocks: blocks.map(b => ({ channel: b.channel, text: b.text.substring(0, 300), senseType: b.senseType || null })),
+            markers_found: markers,
+            channel_counts: channelCounts,
+            warnings,
+            context: {
+                location: (settings.currentLocation || '').substring(0, 200),
+                player_name: settings.player?.profile?.name || null,
+                codex_items: Object.keys(settings.codex?.items || {}).length,
+            },
+        };
+        const ctrl = new AbortController();
+        setTimeout(() => ctrl.abort(), 3000);
+        await fetch('/diagnostics/narrator-turn', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(turn),
+            signal: ctrl.signal,
+        });
+    } catch (_) { /* fire-and-forget — diag errors must never affect gameplay */ }
+}
+
 function _parseNarratorIntoChannels(messageId, rawText, instant = false) {
     if (_channelHydrated.has(messageId)) return;
     _channelHydrated.add(messageId);
@@ -4287,6 +4337,7 @@ function _parseNarratorIntoChannels(messageId, rawText, instant = false) {
     for (const b of blocks) {
         push(b.channel, { text: b.text, senseType: b.senseType, icon: b.icon });
     }
+    if (!instant) _postNarratorTurn(messageId, rawText, blocks).catch(() => {});
 }
 
 /**
@@ -4298,6 +4349,10 @@ function _parseNarratorIntoChannels(messageId, rawText, instant = false) {
  * button icons without creating duplicates.
  */
 function _populateChannelsFromHistory() {
+    // Clear any queued reveal entries that were enqueued by the walkAll pass
+    // in onChatChanged — they would re-add to the freshly-cleared history and
+    // create duplicates once this instant-load completes.
+    _clearRevealQueue();
     _channelHistory.say.length      = 0;
     _channelHistory.do.length       = 0;
     _channelHistory.sense.length    = 0;
@@ -4456,7 +4511,6 @@ async function onCharacterMessageRendered(messageId) {
     if (!message || !message.mes) return;
 
     const settings = initSettings();
-    if (!settings.autoGenerate) return;
 
     // Strip any `Aaron: "..."` dialogue lines the narrator produced for
     // the player character. This mutates the stored chat entry so the
@@ -4468,6 +4522,20 @@ async function onCharacterMessageRendered(messageId) {
         message.mes = scrubbed;
         try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
     }
+
+    // Re-render the message display: transforms markers, feeds the channel
+    // drawer, renders the sense bar. Always runs — not gated on image gen.
+    updateMessageDisplay(messageId);
+    try { fixNarratorNames(); } catch (_) { /* ignore */ }
+
+    // v2.6.3 — Apply spoken cadence AFTER the final transform runs.
+    // This is the one-shot moment at stream end; doing it here (instead
+    // of inside updateMessageDisplay) means the observer-driven mid-
+    // stream re-renders don't keep restarting the stagger animation.
+    try {
+        const $mes = $(`#chat .mes[mesid="${messageId}"]`);
+        applyDialogueCadence($mes);
+    } catch (_) { /* ignore */ }
 
     // v2.7.1 — first narrator turn of a run consumes the "Who are you,
     // being?" ritual. Flip the flag the first time we see any narrator
@@ -4481,19 +4549,9 @@ async function onCharacterMessageRendered(messageId) {
         }
     } catch (_) { /* ignore */ }
 
-    // Always re-render the message display so marker spans are applied,
-    // even if there's nothing to image-generate.
-    updateMessageDisplay(messageId);
-    try { fixNarratorNames(); } catch (_) { /* ignore */ }
-
-    // v2.6.3 — Apply spoken cadence AFTER the final transform runs.
-    // This is the one-shot moment at stream end; doing it here (instead
-    // of inside updateMessageDisplay) means the observer-driven mid-
-    // stream re-renders don't keep restarting the stagger animation.
-    try {
-        const $mes = $(`#chat .mes[mesid="${messageId}"]`);
-        applyDialogueCadence($mes);
-    } catch (_) { /* ignore */ }
+    // Gate the full image-generation pipeline. Channel drawer, marker
+    // transforms, and sense bar already ran above regardless of this flag.
+    if (!settings.autoGenerate) return;
 
     // v2.6.2 — stall recovery. The narrator sometimes returns a truncated
     // response (token budget hit, stop sequence, connection hiccup). When

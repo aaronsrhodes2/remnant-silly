@@ -10,34 +10,33 @@
 #
 # ARCHITECTURE
 # ------------
-# The dev stack parallels the docker stack (published on :1582) but
-# runs on the host machine, so the developer can iterate on code
-# without docker rebuilds on every change.
+# The dev stack is entirely Docker-free. Every process runs natively
+# on the host machine; no Docker Desktop is required for development.
 #
-#   Host-native processes (already running, managed elsewhere):
+#   Prerequisite (already running, managed by you):
 #     flask-sd           127.0.0.1:5000   (python backend/image_generator_api.py)
-#     ollama             127.0.0.1:11434  (ollama serve, user's own install)
+#     ollama             127.0.0.1:11434  (ollama serve)
 #
-#   Host-native processes (started by THIS script):
-#     SillyTavern        127.0.0.1:8000   (node server.js from user's ST install)
+#   Started by THIS script:
+#     SillyTavern        127.0.0.1:8001   (node server.js from your ST install)
 #     diag sidecar       127.0.0.1:8700   (python docker/diag/app.py)
+#     nginx              0.0.0.0:1580     (native nginx, installed via winget)
+#                        reverse-proxies to 127.0.0.1:{5000,8001,8700,11434}
+#                        serves splash + diagnostics static HTML
 #
-#   Docker container (started by THIS script):
-#     native-nginx       0.0.0.0:1580  ->  container :80
-#                        reverse-proxies to host.docker.internal:{5000,8000,
-#                        8700,11434}, serves splash + diagnostics static HTML.
+# The Docker stack (docker-compose.yml) uses the same nginx config pattern
+# but on port 1582 with Docker-network DNS names as upstreams instead of
+# 127.0.0.1. That is the ONLY difference between dev and Docker.
 #
-# Why nginx-in-a-container instead of native Windows nginx? Keeps the
-# dev machine clean (no extra binary to install) and the nginx config
-# is the same nginx:1.27-alpine image the docker stack uses. Docker
-# Desktop for Windows auto-maps host.docker.internal to the host
-# gateway and forwards to 127.0.0.1-bound host services, so native ST
-# and diag don't need to listen on 0.0.0.0 to be reachable.
+# nginx prerequisite: winget install nginxinc.nginx
 #
-# Why is THIS script bash instead of PowerShell? Every other script
-# in this repo is bash (git-bash/msys on Windows), parity tests are
-# bash-callable, and the docker orchestration uses bash. Staying on
-# one shell language keeps the project approachable.
+# Why native nginx instead of a container? Because the entire point of
+# the native dev stack is to avoid needing Docker Desktop running. Using
+# Docker just for nginx negates that completely.
+#
+# Why bash instead of PowerShell? Every other script in this repo is bash,
+# parity tests are bash-callable, and the docker orchestration uses bash.
+# Staying on one shell language keeps the project approachable.
 
 set -eu
 
@@ -49,13 +48,11 @@ cd "$REPO_ROOT"
 # Config — override any of these with env vars if needed.
 # ---------------------------------------------------------------
 ST_DIR="${ST_DIR:-/c/Users/aaron/SillyTavern}"
-ST_PORT="${ST_PORT:-8000}"
+ST_PORT="${ST_PORT:-1581}"     # 1580=nginx 1581=ST 1582=docker-nginx — project-specific, away from all defaults
 DIAG_PORT="${DIAG_PORT:-8700}"
 FLASK_SD_PORT="${FLASK_SD_PORT:-5000}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 NGINX_PORT="${NGINX_PORT:-1580}"
-NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.27-alpine}"
-NGINX_CONTAINER="${NGINX_CONTAINER:-remnant-native-nginx}"
 
 # Status dir — mirrors the remnant-status named volume in docker.
 NATIVE_STATUS_DIR="$REPO_ROOT/scripts/splash/status"
@@ -401,40 +398,91 @@ write_status_flask_sd "pending"
 write_status_ollama   "pending"
 
 # ---------------------------------------------------------------
-# 5. Start native nginx gateway container.
+# 5. Start native nginx gateway.
 # ---------------------------------------------------------------
-# Stop any stale instance first (idempotent re-runs).
-if docker ps -a --format '{{.Names}}' | grep -qx "$NGINX_CONTAINER"; then
-    log "removing stale container $NGINX_CONTAINER"
-    docker rm -f "$NGINX_CONTAINER" >/dev/null
+# Verify nginx is installed.
+NGINX_EXEC="${NGINX_EXEC:-$(which nginx 2>/dev/null || true)}"
+if [ -z "$NGINX_EXEC" ]; then
+    # Not in PATH — scan the WinGet packages directory (default install location for
+    # `winget install nginxinc.nginx`).  $LOCALAPPDATA is a Windows env var that
+    # Git Bash inherits; cygpath converts it to a POSIX path.
+    _winget="$(cygpath "$LOCALAPPDATA/Microsoft/WinGet/Packages" 2>/dev/null || true)"
+    [ -n "$_winget" ] && NGINX_EXEC="$(find "$_winget" -name "nginx.exe" 2>/dev/null | head -1 || true)"
+fi
+if [ -z "$NGINX_EXEC" ]; then
+    die "nginx not found in PATH or WinGet packages. Install: winget install nginxinc.nginx"
 fi
 
-log "starting $NGINX_CONTAINER on :$NGINX_PORT"
-# Bind-mount:
-#   - the native nginx config
-#   - the splash bundle (shared with docker image)
-#   - the diagnostics dashboard HTML (shared with docker image)
-#   - the status dir (shared state with diag + any downloaders)
-# Docker Desktop Windows auto-resolves host.docker.internal, but the
-# --add-host flag makes this portable to Linux docker too.
-#
-# MSYS_NO_PATHCONV=1: prevent git-bash from mangling the container-side
-# paths in -v arguments. Without this, "/etc/nginx/nginx.conf" becomes
-# "C:/Program Files/Git/etc/nginx/nginx.conf" and silently mounts to
-# the wrong location inside the container.
-MSYS_NO_PATHCONV=1 docker run -d \
-    --name "$NGINX_CONTAINER" \
-    -p "${NGINX_PORT}:80" \
-    --add-host=host.docker.internal:host-gateway \
-    -v "$REPO_ROOT/scripts/native-nginx.conf:/etc/nginx/nginx.conf:ro" \
-    -v "$REPO_ROOT/scripts/splash/splash.html:/usr/share/nginx/html/splash.html:ro" \
-    -v "$REPO_ROOT/scripts/splash/splash.css:/usr/share/nginx/html/splash.css:ro" \
-    -v "$REPO_ROOT/scripts/splash/splash.js:/usr/share/nginx/html/splash.js:ro" \
-    -v "$REPO_ROOT/docker/nginx/diagnostics.html:/usr/share/nginx/html/diagnostics.html:ro" \
-    -v "$NATIVE_STATUS_DIR:/remnant-status:ro" \
-    "$NGINX_IMAGE" >/dev/null
+# Find nginx's install directory.
+# winget layout: nginx.exe and conf/ are siblings inside <install_dir>/.
+# We start nginx with -p <install_dir> so it finds its own temp/, logs/,
+# and conf/ for core files. Our config overrides pid and error_log with
+# absolute paths inside the run dir.
+NGINX_INSTALL_DIR="$(dirname "$NGINX_EXEC")"
+NGINX_INSTALL_WIN="$(cygpath -m "$NGINX_INSTALL_DIR" 2>/dev/null || echo "$NGINX_INSTALL_DIR")"
 
-# Wait for nginx to accept connections via the host-published port.
+MIME_TYPES=""
+for candidate in \
+    "$NGINX_INSTALL_DIR/conf/mime.types" \
+    "$NGINX_INSTALL_DIR/../conf/mime.types" \
+    "$NGINX_INSTALL_DIR/mime.types" \
+    "/etc/nginx/mime.types"; do
+    if [ -f "$candidate" ]; then
+        MIME_TYPES="$(cygpath -m "$(realpath "$candidate")" 2>/dev/null || realpath "$candidate")"
+        break
+    fi
+done
+[ -n "$MIME_TYPES" ] || die "Cannot locate nginx mime.types. Set MIME_TYPES=/path/to/mime.types and re-run."
+log "nginx mime.types: $MIME_TYPES"
+
+# Stop any nginx already holding our port (idempotent re-runs).
+NGINX_PID_FILE="$NATIVE_RUN_DIR/nginx.pid"
+if [ -f "$NGINX_PID_FILE" ]; then
+    old_pid=$(cat "$NGINX_PID_FILE" 2>/dev/null || true)
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        log "stopping previous nginx (pid $old_pid)"
+        kill "$old_pid" 2>/dev/null || true
+        sleep 0.5
+    fi
+    rm -f "$NGINX_PID_FILE"
+fi
+
+# Generate the resolved nginx config by substituting placeholders.
+NGINX_CONF="$NATIVE_RUN_DIR/nginx.conf"
+SPLASH_ROOT="$(cygpath -m "$REPO_ROOT/scripts/splash")"
+DIAG_HTML_DIR="$(cygpath -m "$REPO_ROOT/docker/nginx")"
+STATUS_DIR="$(cygpath -m "$NATIVE_STATUS_DIR")"
+CACHE_DIR_PATH="$(cygpath -m "$REPO_ROOT/dev-cache/nginx-cache")"
+NGINX_PID_WIN="$(cygpath -m "$NGINX_PID_FILE")"
+NGINX_ERROR_LOG="$(cygpath -m "$NATIVE_RUN_DIR/nginx-error.log")"
+NGINX_ACCESS_LOG="$(cygpath -m "$NATIVE_RUN_DIR/nginx-access.log")"
+
+mkdir -p "$REPO_ROOT/dev-cache/nginx-cache"
+
+sed \
+    -e "s|{{NGINX_PORT}}|${NGINX_PORT}|g" \
+    -e "s|{{ST_UPSTREAM}}|127.0.0.1:${ST_PORT}|g" \
+    -e "s|{{FLASK_SD_UPSTREAM}}|127.0.0.1:${FLASK_SD_PORT}|g" \
+    -e "s|{{OLLAMA_UPSTREAM}}|127.0.0.1:${OLLAMA_PORT}|g" \
+    -e "s|{{DIAG_UPSTREAM}}|127.0.0.1:${DIAG_PORT}|g" \
+    -e "s|{{SPLASH_ROOT}}|${SPLASH_ROOT}|g" \
+    -e "s|{{DIAG_HTML_DIR}}|${DIAG_HTML_DIR}|g" \
+    -e "s|{{STATUS_DIR}}|${STATUS_DIR}|g" \
+    -e "s|{{CACHE_DIR}}|${CACHE_DIR_PATH}|g" \
+    -e "s|{{MIME_TYPES}}|${MIME_TYPES}|g" \
+    -e "s|{{NGINX_PID_FILE}}|${NGINX_PID_WIN}|g" \
+    -e "s|{{NGINX_ERROR_LOG}}|${NGINX_ERROR_LOG}|g" \
+    -e "s|{{NGINX_ACCESS_LOG}}|${NGINX_ACCESS_LOG}|g" \
+    "$REPO_ROOT/scripts/native-nginx.conf" \
+    > "$NGINX_CONF"
+
+log "starting native nginx on :$NGINX_PORT (config: $NGINX_CONF)"
+NGINX_CONF_WIN="$(cygpath -m "$NGINX_CONF")"
+# -p sets nginx's prefix (for temp/, logs/ relative paths in nginx core).
+# Our config overrides pid + error_log with absolute paths in the run dir.
+"$NGINX_EXEC" -p "$NGINX_INSTALL_WIN" -c "$NGINX_CONF_WIN"
+
+# Wait for nginx to accept connections.
 log "waiting for nginx gateway on :$NGINX_PORT..."
 for i in $(seq 1 20); do
     if curl -fsS "http://localhost:$NGINX_PORT/health" >/dev/null 2>&1; then

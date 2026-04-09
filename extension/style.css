@@ -1460,21 +1460,25 @@ body.img-gen-do-mode #send_textarea {
 #img-gen-drawer-header {
     padding: 6px 12px 5px 12px !important;
 }
-/* Content area: column-reverse so newest entry is at visual bottom;
-   overflow:hidden clips old entries at top — no scrollbar. */
+/* Content area: column so newest entry (rendered first in DOM) is at top;
+   overflow-y:auto lets older entries scroll off the bottom. */
 #img-gen-drawer-content {
     flex: 1 1 auto !important;
-    overflow: hidden !important;
+    overflow-y: auto !important;
     padding: 8px 14px 6px 14px !important;
     gap: 5px !important;
     display: flex !important;
-    flex-direction: column-reverse !important;
-}
-/* Codex tabs (Inventory / Lore) need normal scroll — override column-reverse */
-#img-gen-drawer-content.img-gen-codex-active {
     flex-direction: column !important;
-    overflow-y: auto !important;
 }
+/* Codex tabs (Inventory / Lore) are already column + overflow-y:auto — no override needed */
+
+/* Channel-specific left border tint — set via data-channel on the drawer element */
+#img-gen-channel-drawer[data-channel="say"]       { border-left: 3px solid rgba(100, 181, 246, 0.55); }
+#img-gen-channel-drawer[data-channel="do"]        { border-left: 3px solid rgba(186, 104, 200, 0.55); }
+#img-gen-channel-drawer[data-channel="sense"]     { border-left: 3px solid rgba(38,  198, 218, 0.55); }
+#img-gen-channel-drawer[data-channel="insights"]  { border-left: 3px solid rgba(129, 212, 250, 0.55); }
+#img-gen-channel-drawer[data-channel="inventory"] { border-left: 3px solid rgba(255, 171,   0, 0.55); }
+#img-gen-channel-drawer[data-channel="lore"]      { border-left: 3px solid rgba( 77, 208, 225, 0.55); }
 
 /* Insights channel entry colors */
 .img-gen-drawer-entry.insights {
@@ -1492,16 +1496,22 @@ body.img-gen-do-mode #send_textarea {
     gap: 3px;
     padding: 6px 0;
     animation: none;
+    width: 100%;
+    min-width: 0;
 }
 .img-gen-codex-drawer-name {
     font-weight: 700;
     font-size: 12px;
     line-height: 1.3;
+    word-break: break-word;
 }
 .img-gen-codex-drawer-desc {
     font-size: 11px;
     line-height: 1.35;
     opacity: 0.65;
+    word-break: break-word;
+    white-space: normal;
+    width: 100%;
 }
 .img-gen-drawer-entry.inventory .img-gen-codex-drawer-name { color: #ffab00; }
 .img-gen-drawer-entry.lore      .img-gen-codex-drawer-name { color: #4dd0e1; }

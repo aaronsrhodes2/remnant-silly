@@ -30,6 +30,7 @@ Environment:
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import time
@@ -38,6 +39,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 SCHEMA_VERSION = 1
 
@@ -46,6 +48,9 @@ SCHEMA_VERSION = 1
 _browser_health: dict = {"errors": None, "warnings": None, "reported_at": None}
 _sidecar_start: float = time.time()
 
+# Narrator turn log — ring buffer populated by POST /narrator-turn from the extension.
+_narrator_turns: collections.deque = collections.deque(maxlen=200)
+
 STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
 FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:5000").rstrip("/")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
@@ -53,6 +58,7 @@ SILLYTAVERN_URL = os.environ.get("SILLYTAVERN_URL", "http://sillytavern:8000").r
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8700"))
 
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
+NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +156,15 @@ def _tail_service_log(service: str, n: int = 40) -> list[str]:
     all_lines = _tail_log(4000)
     tag = f"] [{service}"
     return [l for l in all_lines if tag in l][-n:]
+
+
+def _store_narrator_turn(turn: dict) -> None:
+    _narrator_turns.append(turn)
+    try:
+        with NARRATOR_TURNS_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(turn, default=str) + "\n")
+    except Exception:
+        pass
 
 
 def _categorize_log_lines(lines: list[str]) -> dict:
@@ -622,6 +637,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/actions",
                     "/actions/<id> (POST)",
                     "/browser-health (POST)",
+                    "/narrator-turn (POST)",
+                    "/narrator-turns (GET, ?n=50)",
                     "/logs/<service> (GET, plain-text)",
                 ],
             })
@@ -635,6 +652,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/actions":
             self._send_json(200, {"actions": _action_catalog()})
             return
+        if path == "/narrator-turns":
+            qs = parse_qs(urlparse(self.path).query)
+            n = int(qs.get("n", ["50"])[0])
+            n = max(1, min(n, 200))
+            turns = list(_narrator_turns)[-n:]
+            self._send_json(200, {"turns": turns, "count": len(turns), "total_seen": len(_narrator_turns)})
+            return
+
         # Per-service log tail: GET /logs/<service>
         if path.startswith("/logs/"):
             service = path[len("/logs/"):]
@@ -669,6 +694,20 @@ class Handler(BaseHTTPRequestHandler):
             }
             _log(f"browser-health: console_err={_browser_health['errors']} console_warn={_browser_health['warnings']}")
             self._send_json(200, {"ok": True})
+            return
+
+        if path == "/narrator-turn":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                turn = json.loads(raw.decode("utf-8")) if raw else {}
+                if not isinstance(turn, dict):
+                    raise ValueError("body must be a JSON object")
+                turn.setdefault("received_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                _store_narrator_turn(turn)
+                self._send_json(200, {"ok": True})
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
             return
 
         if not path.startswith("/actions/"):
