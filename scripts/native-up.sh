@@ -438,16 +438,20 @@ done
 log "nginx mime.types: $MIME_TYPES"
 
 # Stop any nginx already holding our port (idempotent re-runs).
+# On Windows, kill-by-pid is unreliable across restarts — kill ALL nginx.exe
+# processes first so stale workers can't accumulate across re-runs.
 NGINX_PID_FILE="$NATIVE_RUN_DIR/nginx.pid"
-if [ -f "$NGINX_PID_FILE" ]; then
-    old_pid=$(cat "$NGINX_PID_FILE" 2>/dev/null || true)
-    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-        log "stopping previous nginx (pid $old_pid)"
-        kill "$old_pid" 2>/dev/null || true
-        sleep 0.5
+if command -v taskkill >/dev/null 2>&1; then
+    taskkill //F //IM nginx.exe //T >/dev/null 2>&1 || true
+else
+    # Non-Windows fallback: kill by pid file only
+    if [ -f "$NGINX_PID_FILE" ]; then
+        old_pid=$(cat "$NGINX_PID_FILE" 2>/dev/null || true)
+        [ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
     fi
-    rm -f "$NGINX_PID_FILE"
 fi
+rm -f "$NGINX_PID_FILE"
+sleep 0.5
 
 # Generate the resolved nginx config by substituting placeholders.
 NGINX_CONF="$NATIVE_RUN_DIR/nginx.conf"
