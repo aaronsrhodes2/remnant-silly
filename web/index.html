@@ -147,21 +147,19 @@ html, body {
 }
 #player-input::placeholder { color: var(--dim); }
 #player-input:focus { border-color: rgba(255,255,255,0.18); }
-#send-btn {
+/* auto-send countdown hint */
+#input-hint {
   flex-shrink: 0;
-  background: rgba(100,181,246,0.12);
-  color: var(--c-player);
-  border: 1px solid rgba(100,181,246,0.25);
-  border-radius: 4px;
-  padding: 6px 16px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.3px;
+  align-self: flex-end;
+  padding-bottom: 8px;
+  min-width: 28px;
+  text-align: right;
+  transition: color 0.3s;
 }
-#send-btn:hover { background: rgba(100,181,246,0.22); }
-#send-btn:active { background: rgba(100,181,246,0.32); }
-#send-btn:disabled { opacity: 0.4; cursor: default; }
+#input-hint.urgent { color: rgba(196,106,90,0.8); }
 </style>
 </head>
 <body>
@@ -177,7 +175,7 @@ html, body {
 
   <div id="bottombar">
     <textarea id="player-input" rows="2" placeholder="Speak, act, or perceive…"></textarea>
-    <button id="send-btn">Send</button>
+    <span id="input-hint"></span>
   </div>
 </div>
 
@@ -262,15 +260,48 @@ function connect() {
 
 connect();
 
-// ── Player input ──
+// ── Player input — no escape ──
+// Enter sends immediately. Inactivity for 30s auto-appends "…" and sends.
 const inputEl  = document.getElementById('player-input');
-const sendBtn  = document.getElementById('send-btn');
+const hintEl   = document.getElementById('input-hint');
 
-async function sendInput() {
-  const text = inputEl.value.trim();
+const AUTO_SEND_MS = 30000;
+let _autoTimer   = null;
+let _countdown   = 0;
+let _tickTimer   = null;
+let _sending     = false;
+
+function _clearTimers() {
+  clearTimeout(_autoTimer);
+  clearInterval(_tickTimer);
+  _autoTimer = _tickTimer = null;
+  hintEl.textContent = '';
+  hintEl.classList.remove('urgent');
+}
+
+function _startCountdown() {
+  _clearTimers();
+  if (!inputEl.value.trim()) return;
+  _countdown = Math.round(AUTO_SEND_MS / 1000);
+  hintEl.textContent = _countdown + 's';
+  _tickTimer = setInterval(() => {
+    _countdown--;
+    hintEl.textContent = _countdown > 0 ? _countdown + 's' : '';
+    if (_countdown <= 10) hintEl.classList.add('urgent');
+  }, 1000);
+  _autoTimer = setTimeout(() => {
+    let text = inputEl.value.trim();
+    if (text) sendInput(text + '…');
+  }, AUTO_SEND_MS);
+}
+
+async function sendInput(overrideText) {
+  if (_sending) return;
+  const text = overrideText || inputEl.value.trim();
   if (!text) return;
+  _sending = true;
+  _clearTimers();
   inputEl.value = '';
-  sendBtn.disabled = true;
   try {
     await fetch('/player-input', {
       method: 'POST',
@@ -278,15 +309,24 @@ async function sendInput() {
       body: JSON.stringify({text}),
     });
   } catch (_) {}
-  sendBtn.disabled = false;
+  _sending = false;
   inputEl.focus();
 }
 
-sendBtn.addEventListener('click', sendInput);
 inputEl.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendInput();
+    return;
+  }
+});
+
+// Restart countdown on every keystroke that leaves text in the box
+inputEl.addEventListener('input', () => {
+  if (inputEl.value.trim()) {
+    _startCountdown();
+  } else {
+    _clearTimers();
   }
 });
 </script>

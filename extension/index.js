@@ -5340,17 +5340,18 @@ async function _pollGameUiInput() {
         if (res.ok) {
             const data = await res.json();
             if (data && data.text) {
-                const playerName = (typeof name1 !== 'undefined' && name1) ? name1 : 'Player';
-                chat.push({
-                    name: playerName,
-                    is_user: true,
-                    is_system: false,
-                    mes: data.text,
-                    send_date: Date.now(),
-                    extra: { injected_from_game_ui: true },
-                });
-                try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
-                try { if (typeof Generate === 'function') Generate('normal'); } catch (_) { /* ignore */ }
+                // Inject via ST's native textarea + send button — the only
+                // reliable way to trigger the full ST generation pipeline.
+                const $ta = $('#send_textarea');
+                const $btn = $('#send_but');
+                if ($ta.length && $btn.length) {
+                    $ta.val(data.text).trigger('input');
+                    await new Promise(r => setTimeout(r, 80));
+                    $btn.trigger('click');
+                    console.log(`[Image Generator] Game UI relay: sending "${data.text}"`);
+                } else {
+                    console.warn('[Image Generator] Game UI relay: ST send controls not found');
+                }
             }
         }
     } catch (_) { /* sidecar may not be running — ignore */ }
