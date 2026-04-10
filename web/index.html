@@ -181,6 +181,19 @@ html, body {
   color: #b8960c;
 }
 .meta-text { flex: 1; min-width: 0; font-size: 12px; }
+.meta-btn {
+  background: none;
+  border: 1px solid #b8960c;
+  color: #b8960c;
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  margin: 0 2px;
+}
+.meta-btn:hover { background: rgba(184,150,12,0.15); }
+.meta-btn:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -253,11 +266,43 @@ function renderMetaEvent(data) {
   const el = document.createElement('div');
   el.className = 'meta-event';
   if (!data.type) return;
-  const label = data.type === 'reset'          ? `RESET:${(data.level||'scene').toUpperCase()}`
+
+  // Special path: clarify prompt renders interactive buttons
+  if (data.type === 'player_clarify') {
+    el.innerHTML =
+      '<span class="meta-label">WHO ARE YOU?</span>' +
+      '<span class="meta-text">Is <em>' + esc(data.name || '?') + '</em> ' +
+      '<button class="meta-btn" data-choice="alias">another name for you</button>' +
+      ' or ' +
+      '<button class="meta-btn" data-choice="switch">a new story</button>?' +
+      '</span>';
+    el.querySelectorAll('.meta-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const clarText = btn.dataset.choice === 'alias'
+          ? "that's me, I am also known as " + data.name
+          : "that's not me, my name is " + data.name;
+        fetch('/player-input', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({text: clarText}),
+        });
+        el.querySelectorAll('.meta-btn').forEach(b => b.disabled = true);
+      });
+    });
+    feed.appendChild(el);
+    emptyMsg.style.display = 'none';
+    feed.scrollTop = feed.scrollHeight;
+    return;
+  }
+
+  const label = data.type === 'reset'          ? 'RESET:' + (data.level || 'scene').toUpperCase()
               : data.type === 'portrait'        ? 'PORTRAIT'
               : data.type === 'portrait_saved'  ? 'FOREVER'
+              : data.type === 'player_alias'    ? 'ALIAS'
+              : data.type === 'player_switch'   ? 'NEW PLAYER'
+              : data.type === 'player_restore'  ? 'RESTORED'
               :                                   'FOREVER';
-  const text = data.text || (data.url ? data.url.split('/').pop() : '');
+  const text = data.name || data.text || (data.url ? data.url.split('/').pop() : '');
   el.innerHTML =
     '<span class="meta-label">' + esc(label) + '</span>' +
     '<span class="meta-text">' + esc(text) + '</span>';

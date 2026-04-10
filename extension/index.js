@@ -5426,3 +5426,103 @@ async function _pollPortrait() {
     _portraitPollActive = false;
 }
 setInterval(_pollPortrait, 2000);
+
+// ---------------------------------------------------------------------------
+// Player identity relay — polls /pending-player-context and updates the
+// extension's player profile when the sidecar detects a name declaration.
+//
+// switch:  archive current player, install fresh profile with new name
+// restore: archive current player, load a previously archived profile
+// ---------------------------------------------------------------------------
+function _freshPlayerProfileShape(name) {
+    return { name: name || 'Unknown Being', named: !!(name && name !== 'Unknown Being'),
+             pronouns: null, appearance: [], traits: [], history: [], goals: [] };
+}
+
+function _archiveCurrentPlayer(settings) {
+    try {
+        const profile = (settings.player && settings.player.profile) || {};
+        const portrait = (settings.player &&
+                          (settings.player.portrait_image || settings.player.reference_image_url)) || null;
+        const nostalgicImages = Array.isArray(settings.images)
+            ? settings.images
+                .map(img => (img && (img.description || img.prompt_sent || img.prompt)) || '')
+                .filter(s => s && typeof s === 'string')
+                .slice(-20)
+            : [];
+        const archiveEntry = {
+            name: profile.named ? profile.name : null,
+            profile: JSON.parse(JSON.stringify(profile)),
+            portrait,
+            nostalgicImages,
+            endedAt: new Date().toISOString(),
+        };
+        if (!Array.isArray(settings.playerArchive)) settings.playerArchive = [];
+        settings.playerArchive.push(archiveEntry);
+        if (settings.playerArchive.length > 50) {
+            settings.playerArchive = settings.playerArchive.slice(-50);
+        }
+    } catch (err) {
+        console.warn('[Remnant] Player archive write failed:', err);
+    }
+}
+
+async function _handlePlayerSwitch(name) {
+    const settings = initSettings();
+    _archiveCurrentPlayer(settings);
+    if (!settings.player) settings.player = {};
+    settings.player.profile = _freshPlayerProfileShape(name);
+    settings.player.portrait_image = null;
+    settings.player.reference_image_url = null;
+    settings.player.portrait_phrase = null;
+    saveSettingsDebounced();
+    try { applyPlayerProfilePrompt(); } catch (_) {}
+    console.log(`[Remnant] Player switched to: ${name}`);
+}
+
+async function _handlePlayerRestore(name) {
+    const settings = initSettings();
+    _archiveCurrentPlayer(settings);
+    // Fuzzy search playerArchive for the named player
+    const low = (name || '').toLowerCase();
+    const archive = Array.isArray(settings.playerArchive) ? settings.playerArchive : [];
+    const match = archive.slice().reverse().find(e => {
+        const n = (e.name || '').toLowerCase();
+        return n && (n.includes(low) || low.includes(n));
+    });
+    if (!settings.player) settings.player = {};
+    if (match) {
+        settings.player.profile = JSON.parse(JSON.stringify(match.profile || {}));
+        settings.player.portrait_image = match.portrait || null;
+        settings.player.reference_image_url = null;
+        settings.player.portrait_phrase = null;
+        console.log(`[Remnant] Player restored: ${name} from archive`);
+    } else {
+        settings.player.profile = _freshPlayerProfileShape(name);
+        settings.player.portrait_image = null;
+        settings.player.reference_image_url = null;
+        settings.player.portrait_phrase = null;
+        console.log(`[Remnant] Player restore: ${name} not in archive — fresh profile`);
+    }
+    saveSettingsDebounced();
+    try { applyPlayerProfilePrompt(); } catch (_) {}
+}
+
+let _playerCtxPollActive = false;
+async function _pollPlayerContext() {
+    if (_playerCtxPollActive) return;
+    _playerCtxPollActive = true;
+    try {
+        const res = await fetch('/pending-player-context');
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.action === 'switch') {
+                await _handlePlayerSwitch(data.name);
+            } else if (data && data.action === 'restore') {
+                await _handlePlayerRestore(data.name);
+            }
+        }
+    } catch (_) { /* sidecar may not be running — ignore */ }
+    _playerCtxPollActive = false;
+}
+setInterval(_pollPlayerContext, 2000);

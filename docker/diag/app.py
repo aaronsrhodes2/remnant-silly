@@ -68,6 +68,9 @@ _pending_reset: dict | None = None
 # Portrait promotion relay — consumed by the extension to grab the last image.
 _pending_portrait: str | None = None
 
+# Player identity context — consumed by the extension to switch/restore profiles.
+_pending_player_context: dict | None = None
+
 def _sse_broadcast(event_type: str, data: object) -> None:
     """Push one SSE event to every connected client. Drops slow/dead clients."""
     raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
@@ -150,6 +153,7 @@ def _ensure_entity(entity_id: str, name: str, etype: str, parent_id: str | None 
             "parent_id": parent_id,
             "sense_layers": [],
             "promoted_at": None,
+            "was_player": False,
             "first_seen": now,
             "last_referenced": now,
         }
@@ -399,6 +403,39 @@ _META_RESET_KW = frozenset({
     "forget the scene", "forget the story", "forget everything",
 })
 
+# Player identity — additive alias signals ("I'm also X")
+_META_ALIAS_KW = frozenset({
+    "also known as", "also called", "i go by", "my alias is",
+    "i'm also", "i am also", "that's also me", "that is also me",
+    "another name", "i also go by",
+})
+
+# Player identity — negation/switch signals ("that's not me")
+_META_SWITCH_KW = frozenset({
+    "that's not me", "that is not me", "i am not that",
+    "i'm not that", "wrong person", "that's someone else",
+    "that is someone else", "not my name", "my name is not",
+})
+
+# Player identity — bare name declaration (ambiguous without context)
+_META_NAME_KW = frozenset({
+    "my name is", "i am called", "call me", "my name's", "i'm called",
+})
+
+# Name extraction patterns (applied in order, first match wins)
+_NAME_PATTERNS = [
+    r"my name is\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"my name's\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"i am called\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"i'm called\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"call me\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"also known as\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"also called\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"i go by\s+([A-Za-z][\w\s'\-]{1,40})",
+    r"i am\s+([A-Z][A-Za-z][\w\s'\-]{1,39})",
+    r"i'm\s+([A-Z][A-Za-z][\w\s'\-]{1,39})",
+]
+
 # Permanence tier map — value used for numeric comparisons in /reset
 _PERMANENCE_VALUE: dict[str, int] = {
     "NONE":     1,
@@ -451,6 +488,14 @@ def _rule_based_intent(text: str) -> str | None:
         return "META:PORTRAIT"
     if any(kw in lower for kw in _META_PROMOTE_KW):
         return "META:PROMOTE"
+
+    # Player identity — check alias/switch before bare name (more specific first)
+    if any(kw in lower for kw in _META_ALIAS_KW):
+        return "META:PLAYER_ALIAS"
+    if any(kw in lower for kw in _META_SWITCH_KW):
+        return "META:PLAYER_SWITCH"
+    if any(kw in lower for kw in _META_NAME_KW):
+        return "META:PLAYER_NAME"
 
     # Outer quotes = explicit speech
     if stripped.startswith(('"', '\u201c', "'")):
@@ -694,6 +739,133 @@ def _handle_meta_command(text: str, sub: str) -> dict:
     _append_forever(entry)
     _sse_broadcast("meta", {"type": "promote", "text": text})
     return {"ok": True, "meta": "PROMOTE", "text": text}
+
+
+def _extract_declared_name(text: str) -> str | None:
+    """Pull the declared name from an identity statement.
+
+    Tries each pattern in order; returns title-cased name on first match.
+    Returns None if no recognizable name is found.
+    """
+    lower = text.lower()
+    for pat in _NAME_PATTERNS:
+        m = re.search(pat, lower)
+        if m:
+            name = m.group(1).strip().rstrip('.,!? ')
+            if 2 <= len(name) <= 42:
+                return name.title()
+    return None
+
+
+def _find_known_player(name: str) -> dict | None:
+    """Search world entities for a former player matching name.
+
+    Looks for any entity with was_player=True whose canonical_name or aliases
+    fuzzy-match the given name. Returns the entity dict or None.
+    """
+    low = name.lower().strip()
+    if not low:
+        return None
+    for ent in _world["entities"].values():
+        if not ent.get("was_player"):
+            continue
+        existing = [ent.get("canonical_name", "").lower()]
+        existing += [a["name"].lower() for a in ent.get("aliases", [])]
+        if any(low in n or n in low for n in existing if n):
+            return ent
+    return None
+
+
+def _promote_player_to_npc(old_name: str) -> None:
+    """Promote the current __player__ entity to a World-tier NPC.
+
+    Renames the entity key, marks it was_player=True, sets permanence=WORLD,
+    and writes a canon entry to forever.jsonl so it survives story resets.
+    """
+    if "__player__" not in _world["entities"]:
+        return
+    ent = _world["entities"].pop("__player__")
+    ent["type"] = "npc"
+    ent["was_player"] = True
+    ent["permanence"] = "WORLD"
+    ent["promoted_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    new_id = _loc_id(old_name or ent.get("canonical_name", "former_player"))
+    # Avoid clobbering if same id already exists
+    if new_id in _world["entities"]:
+        new_id = new_id + "_former"
+    _world["entities"][new_id] = ent
+    _append_forever({
+        "type": "former_player",
+        "key": f"__former_player_{new_id}__",
+        "canonical_name": ent.get("canonical_name", old_name),
+        "entity_id": new_id,
+        "permanence": "WORLD",
+        "was_player": True,
+    })
+
+
+def _do_player_switch(name: str, text: str) -> dict:
+    """Archive current player as World NPC, create fresh player entity."""
+    global _pending_player_context, _pending_reset
+    old_name = (_world["entities"].get("__player__") or {}).get("canonical_name", "Unknown Being")
+    _promote_player_to_npc(old_name)
+    _ensure_entity("__player__", name, "player")
+    _pending_player_context = {"action": "switch", "name": name}
+    _pending_reset = {"level": "story"}
+    _sse_broadcast("meta", {"type": "player_switch", "name": name, "text": text})
+    return {"ok": True, "meta": "PLAYER_SWITCH", "name": name, "former": old_name}
+
+
+def _do_player_restore(name: str, entity: dict, text: str) -> dict:
+    """Archive current player as World NPC, restore a former player entity."""
+    global _pending_player_context, _pending_reset
+    old_name = (_world["entities"].get("__player__") or {}).get("canonical_name", "Unknown Being")
+    _promote_player_to_npc(old_name)
+    # Move the target entity back to __player__
+    old_id = entity["id"]
+    if old_id in _world["entities"]:
+        del _world["entities"][old_id]
+    entity["id"] = "__player__"
+    entity["type"] = "player"
+    entity["was_player"] = False
+    entity["last_referenced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _world["entities"]["__player__"] = entity
+    _pending_player_context = {"action": "restore", "name": name}
+    _pending_reset = {"level": "story"}
+    _sse_broadcast("meta", {"type": "player_restore", "name": name, "text": text})
+    return {"ok": True, "meta": "PLAYER_RESTORE", "name": name, "former": old_name}
+
+
+def _handle_player_identity(text: str, sub: str) -> dict:
+    """Handle META:PLAYER_* classified inputs.
+
+    sub: "PLAYER_ALIAS" | "PLAYER_NAME" | "PLAYER_SWITCH"
+    """
+    name = _extract_declared_name(text) or "Unknown Being"
+
+    if sub == "PLAYER_ALIAS":
+        if "__player__" in _world["entities"]:
+            _add_alias(_world["entities"]["__player__"], name)
+        _sse_broadcast("meta", {"type": "player_alias", "name": name, "text": text})
+        return {"ok": True, "meta": "PLAYER_ALIAS", "name": name}
+
+    if sub == "PLAYER_NAME":
+        # Ambiguous — check if this is a known former player
+        known = _find_known_player(name)
+        if known:
+            return _do_player_restore(name, known, text)
+        # Unknown — ask for clarification in the feed
+        _sse_broadcast("meta", {"type": "player_clarify", "name": name, "text": text})
+        return {"ok": True, "meta": "PLAYER_CLARIFY", "name": name}
+
+    if sub == "PLAYER_SWITCH":
+        # Explicit switch/negation — restore if known, else fresh switch
+        known = _find_known_player(name)
+        if known:
+            return _do_player_restore(name, known, text)
+        return _do_player_switch(name, text)
+
+    return {"ok": False, "error": f"unknown player identity sub: {sub}"}
 
 
 def _store_narrator_turn(turn: dict) -> None:
@@ -1185,6 +1357,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/pending-player-input (GET — consume-once relay for extension)",
                     "/pending-reset (GET — consume-once reset signal for extension)",
                     "/pending-portrait (GET — consume-once portrait signal for extension)",
+                    "/pending-player-context (GET — consume-once player identity switch for extension)",
                     "/forever (GET — canon facts log)",
                     "/forever-portrait (POST — promote image URL to forever canon)",
                     "/reset (POST or GET ?level=scene|story|world|all)",
@@ -1278,6 +1451,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"pending": result} if result else {})
             return
 
+        if path == "/pending-player-context":
+            global _pending_player_context
+            result = _pending_player_context
+            _pending_player_context = None  # consume once
+            self._send_json(200, result or {})
+            return
+
         if path == "/forever":
             self._send_json(200, {"entries": _load_forever_log()})
             return
@@ -1352,7 +1532,10 @@ class Handler(BaseHTTPRequestHandler):
                 # META intents are sidecar-only — not relayed to SillyTavern.
                 if intent.startswith("META:"):
                     sub = intent.split(":", 1)[1]
-                    result = _handle_meta_command(text, sub)
+                    if sub.startswith("PLAYER_"):
+                        result = _handle_player_identity(text, sub)
+                    else:
+                        result = _handle_meta_command(text, sub)
                     self._send_json(200, result)
                     return
 
