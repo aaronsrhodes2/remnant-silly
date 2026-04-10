@@ -453,6 +453,7 @@ fi
 NGINX_CONF="$NATIVE_RUN_DIR/nginx.conf"
 SPLASH_ROOT="$(cygpath -m "$REPO_ROOT/scripts/splash")"
 DIAG_HTML_DIR="$(cygpath -m "$REPO_ROOT/docker/nginx")"
+GAME_HTML_DIR="$(cygpath -m "$REPO_ROOT/web")"
 STATUS_DIR="$(cygpath -m "$NATIVE_STATUS_DIR")"
 CACHE_DIR_PATH="$(cygpath -m "$REPO_ROOT/dev-cache/nginx-cache")"
 NGINX_PID_WIN="$(cygpath -m "$NGINX_PID_FILE")"
@@ -471,6 +472,7 @@ sed \
     -e "s|{{STT_UPSTREAM}}|127.0.0.1:${STT_PORT}|g" \
     -e "s|{{SPLASH_ROOT}}|${SPLASH_ROOT}|g" \
     -e "s|{{DIAG_HTML_DIR}}|${DIAG_HTML_DIR}|g" \
+    -e "s|{{GAME_HTML_DIR}}|${GAME_HTML_DIR}|g" \
     -e "s|{{STATUS_DIR}}|${STATUS_DIR}|g" \
     -e "s|{{CACHE_DIR}}|${CACHE_DIR_PATH}|g" \
     -e "s|{{MIME_TYPES}}|${MIME_TYPES}|g" \

@@ -33,7 +33,9 @@ from __future__ import annotations
 import collections
 import json
 import os
+import queue as _queue
 import re
+import threading
 import time
 import traceback
 import urllib.error
@@ -51,6 +53,22 @@ _sidecar_start: float = time.time()
 
 # Narrator turn log — ring buffer populated by POST /narrator-turn from the extension.
 _narrator_turns: collections.deque = collections.deque(maxlen=200)
+
+# Server-Sent Events — connected game UI clients.
+_sse_clients: set = set()
+_sse_lock = threading.Lock()
+
+def _sse_broadcast(event_type: str, data: object) -> None:
+    """Push one SSE event to every connected client. Drops slow/dead clients."""
+    raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
+    with _sse_lock:
+        dead = set()
+        for q in _sse_clients:
+            try:
+                q.put_nowait(raw)
+            except _queue.Full:
+                dead.add(q)
+        _sse_clients -= dead
 
 STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
 FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:5000").rstrip("/")
@@ -854,6 +872,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/narrator-turn (POST)",
                     "/narrator-turns (GET, ?n=50)",
                     "/world-state (GET, ?type=location|npc|item|player)",
+                    "/events (GET, text/event-stream — SSE for game UI)",
                     "/logs/<service> (GET, plain-text)",
                 ],
             })
@@ -873,6 +892,42 @@ class Handler(BaseHTTPRequestHandler):
             n = max(1, min(n, 200))
             turns = list(_narrator_turns)[-n:]
             self._send_json(200, {"turns": turns, "count": len(turns), "total_seen": len(_narrator_turns)})
+            return
+
+        if path == "/events":
+            # Server-Sent Events stream for the v3.0 game UI.
+            # Immediately replays the last 30 turns as a "history" event,
+            # then streams new turns live. Heartbeat every 15 s keeps the
+            # connection alive through proxies.
+            q: _queue.Queue = _queue.Queue(maxsize=120)
+            with _sse_lock:
+                _sse_clients.add(q)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                # Initial history burst
+                history = list(_narrator_turns)[-30:]
+                if history:
+                    msg = f"event: history\ndata: {json.dumps(history, separators=(',', ':'))}\n\n"
+                    self.wfile.write(msg.encode())
+                    self.wfile.flush()
+                # Live stream
+                while True:
+                    try:
+                        raw = q.get(timeout=15)
+                        self.wfile.write(raw)
+                        self.wfile.flush()
+                    except _queue.Empty:
+                        self.wfile.write(b": keep-alive\n\n")
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                with _sse_lock:
+                    _sse_clients.discard(q)
             return
 
         if path == "/world-state":
@@ -937,6 +992,7 @@ class Handler(BaseHTTPRequestHandler):
                     _ingest_narrator_turn_into_world(turn)
                 except Exception:
                     pass  # world graph never crashes the turn pipeline
+                _sse_broadcast("turn", turn)
                 self._send_json(200, {"ok": True})
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})

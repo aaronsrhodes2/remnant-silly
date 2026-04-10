@@ -22,6 +22,9 @@ COPY scripts/splash/splash.js     /usr/share/nginx/html/splash.js
 # Client-side fan-out to /status/*, /health, /api/*, /diagnostics/log.txt.
 COPY docker/nginx/diagnostics.html /usr/share/nginx/html/diagnostics.html
 
+# v3.0 game UI — served at /game/.
+COPY web/ /usr/share/nginx/html/game/
+
 # Main nginx config. This is the Docker variant — the proxy upstream
 # to sillytavern is uncommented here (nginx.conf on the host is for
 # native dev where upstreams don't resolve).

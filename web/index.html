@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remnant</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #09090e;
+  --surface: #111118;
+  --border:  rgba(255,255,255,0.06);
+  --dim:     rgba(255,255,255,0.28);
+  --ink:     #cdc5b0;
+  /* channel colours */
+  --c-say:   rgba(200, 220, 255, 0.88);
+  --c-do:    rgba(186, 104, 200, 0.90);
+  --c-touch: #ba68c8;
+  --c-smell: #00c853;
+  --c-sound: #29b6f6;
+  --c-sight: #ff8c00;
+  --c-taste: #ffd600;
+  --c-env:   #81d4fa;
+  --c-ins:   rgba(129, 212, 250, 0.72);
+  --c-player:#64b5f6;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Iosevka", "Consolas", ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.65;
+  overflow: hidden;
+}
+
+/* ── Layout ── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Top bar: location + connection state */
+#topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.4px;
+}
+#topbar #location { color: var(--ink); opacity: 0.55; }
+#topbar #conn-status { font-size: 10px; }
+#topbar #conn-status.ok     { color: #6fa86a; }
+#topbar #conn-status.err    { color: #c46a5a; }
+#topbar #conn-status.wait   { color: #d6a85c; }
+
+/* Narrative feed */
+#feed {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 18px 24px 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: none;
+}
+#feed::-webkit-scrollbar { display: none; }
+
+#empty-msg {
+  margin: auto;
+  color: var(--dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ── Entry rows ── */
+.entry {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.entry-speaker {
+  flex-shrink: 0;
+  width: 68px;
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding-top: 1px;
+}
+.entry-text { flex: 1; min-width: 0; }
+
+/* channel colours */
+.entry.say        .entry-text { color: var(--c-say); }
+.entry.do         .entry-text { color: var(--c-do); font-style: italic; }
+.entry.insights   .entry-text { color: var(--c-ins); font-style: italic; }
+.entry.sense-touch       .entry-text { color: var(--c-touch); font-style: italic; }
+.entry.sense-smell       .entry-text { color: var(--c-smell); font-style: italic; }
+.entry.sense-sound       .entry-text { color: var(--c-sound); font-style: italic; }
+.entry.sense-sight       .entry-text { color: var(--c-sight); font-style: italic; }
+.entry.sense-taste       .entry-text { color: var(--c-taste); font-style: italic; }
+.entry.sense-environment .entry-text { color: var(--c-env);   font-style: italic; }
+.entry.is-player  .entry-text { color: var(--c-player); font-style: normal; }
+
+/* arrival animation */
+.arriving {
+  animation: arrive 0.22s ease-out both;
+}
+@keyframes arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Bottom label bar ── */
+#bottombar {
+  flex-shrink: 0;
+  padding: 5px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.3px;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span id="location">—</span>
+    <span id="conn-status" class="wait">connecting…</span>
+  </div>
+
+  <div id="feed">
+    <div id="empty-msg">Waiting for The Fortress…</div>
+  </div>
+
+  <div id="bottombar">remnant v3.0 — display only</div>
+</div>
+
+<script>
+const feed      = document.getElementById('feed');
+const emptyMsg  = document.getElementById('empty-msg');
+const locationEl= document.getElementById('location');
+const connEl    = document.getElementById('conn-status');
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+function renderTurn(turn, instant) {
+  const blocks = turn.parsed_blocks || [];
+  let added = 0;
+
+  for (const b of blocks) {
+    const text = (b.text || '').trim();
+    if (!text) continue;
+
+    const div = document.createElement('div');
+    div.className = 'entry';
+
+    // Channel / sense class
+    if (b.senseType) {
+      div.classList.add('sense-' + b.senseType.toLowerCase());
+    } else if (b.channel) {
+      div.classList.add(b.channel);
+    }
+    if (b.isPlayer) div.classList.add('is-player');
+    if (!instant) div.classList.add('arriving');
+
+    const speaker = b.isPlayer ? 'You' : (turn.narrator_name || 'Narrator');
+    div.innerHTML =
+      '<span class="entry-speaker">' + esc(speaker) + '</span>' +
+      '<span class="entry-text">' + esc(text) + '</span>';
+
+    feed.appendChild(div);
+    added++;
+  }
+
+  if (added) {
+    emptyMsg.style.display = 'none';
+    feed.scrollTop = feed.scrollHeight;
+
+    const loc = (turn.context || {}).location || '';
+    if (loc) locationEl.textContent = loc.length > 90 ? loc.substring(0, 87) + '…' : loc;
+  }
+}
+
+// ── SSE connection ──
+function connect() {
+  const es = new EventSource('/game/events');
+
+  es.addEventListener('history', e => {
+    try {
+      const turns = JSON.parse(e.data);
+      for (const t of turns) renderTurn(t, true);
+      feed.scrollTop = feed.scrollHeight;
+    } catch (_) {}
+  });
+
+  es.addEventListener('turn', e => {
+    try { renderTurn(JSON.parse(e.data), false); } catch (_) {}
+  });
+
+  es.onopen = () => {
+    connEl.textContent = 'live';
+    connEl.className = 'ok';
+  };
+
+  es.onerror = () => {
+    connEl.textContent = 'reconnecting…';
+    connEl.className = 'err';
+    es.close();
+    // EventSource auto-reconnects; we close and reopen to reset the label
+    setTimeout(connect, 3000);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
