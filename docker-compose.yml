@@ -153,6 +153,36 @@ services:
     networks:
       - play-net
 
+  # ── TTS (Kokoro) ──────────────────────────────────────────────────────
+  # High-quality neural TTS via Kokoro FastAPI. CPU-only image so it runs
+  # without a GPU. Exposed to the stack via nginx /api/tts/ route.
+  # Game integration (SAY channel → speech) is deferred; the service is
+  # reachable now so the feature can be wired in without a stack restart.
+  tts:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: remnant-tts
+    restart: unless-stopped
+    expose:
+      - "8880"
+    networks:
+      - play-net
+
+  # ── STT (Whisper) ──────────────────────────────────────────────────────
+  # OpenAI Whisper wrapped in a REST API. Accepts audio POSTs, returns
+  # transcription JSON. Exposed via nginx /api/stt/ route.
+  # Game integration (mic → text input) is deferred; the service is
+  # reachable now so the feature can be wired in without a stack restart.
+  stt:
+    image: onerahmet/openai-whisper-asr-webservice:latest-cpu
+    container_name: remnant-stt
+    restart: unless-stopped
+    expose:
+      - "9000"
+    environment:
+      - ASR_MODEL=base.en
+    networks:
+      - play-net
+
   # Diagnostics sidecar — tiny stdlib-only Python service. nginx
   # proxies host:1582/diagnostics/ai.json and /diagnostics/actions/*
   # to this container. Attaches ONLY to play-net (no egress); reads +

@@ -648,21 +648,22 @@ body.img-gen-topbar-hidden #top-settings-holder {
 }
 
 /* ============================================
-   Chat gutter — ensure ST's chat wrapper leaves
-   room for the left roster + spotlight on the
-   left, and the gallery panel + a small breathing
-   gap on the right, so text doesn't clip.
-   Spotlight occupies 92-282px, so chat should
-   start no earlier than ~296px.
+   Layout tokens — single source of truth.
+   JS _resizeDrawer() reads panel.offsetWidth and
+   writes #sheld.style.marginRight at runtime, so
+   --gallery-w is only a CSS fallback for the
+   first paint before JS fires.
    ============================================ */
+:root {
+    --gallery-w: clamp(280px, 28vw, 420px);
+}
+
+/* Chat gutter — left side is static (roster + spotlight).
+   Right side is set by _resizeDrawer() JS; the CSS value
+   here is a safe initial fallback only. */
 #sheld {
     margin-left: 336px !important;
-    margin-right: calc(30% + 20px) !important;
-}
-@media (max-width: 1200px) {
-    #sheld {
-        margin-right: calc(35% + 20px) !important;
-    }
+    margin-right: calc(var(--gallery-w) + 8px) !important;
 }
 @media (max-width: 900px) {
     #sheld {
@@ -679,13 +680,12 @@ body.img-gen-topbar-hidden #top-settings-holder {
     }
 }
 
-
 .img-gen-panel {
     position: fixed;
     right: 0;
     top: 0;
     height: 100vh;
-    width: 30%;
+    width: var(--gallery-w);
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     border-left: 2px solid #00d4ff;
     box-shadow: -5px 0 20px rgba(0, 212, 255, 0.1);
@@ -1474,12 +1474,12 @@ body.img-gen-do-mode #send_textarea {
 }
 
 /* The channel drawer fills all freed space — it is the stage.
-   Height is explicit so it works regardless of flex-parent chain. */
+   Height is set by _resizeDrawer() JS (measures bar + form exactly).
+   min-height:0 lets the flex child shrink below its content size. */
 #img-gen-channel-drawer {
     flex: 1 1 auto !important;
     max-height: none !important;
     min-height: 0 !important;
-    height: calc(100vh - 160px) !important;
     opacity: 1 !important;
     transition: none !important;
     overflow: hidden !important;

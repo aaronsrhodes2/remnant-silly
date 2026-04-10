@@ -52,6 +52,8 @@ ST_PORT="${ST_PORT:-1581}"     # 1580=nginx 1581=ST 1582=docker-nginx — projec
 DIAG_PORT="${DIAG_PORT:-8700}"
 FLASK_SD_PORT="${FLASK_SD_PORT:-5000}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+TTS_PORT="${TTS_PORT:-8880}"  # Kokoro FastAPI TTS (optional — not yet started automatically)
+STT_PORT="${STT_PORT:-9000}"  # Whisper ASR (optional — not yet started automatically)
 NGINX_PORT="${NGINX_PORT:-1580}"
 
 # Status dir — mirrors the remnant-status named volume in docker.
@@ -465,6 +467,8 @@ sed \
     -e "s|{{FLASK_SD_UPSTREAM}}|127.0.0.1:${FLASK_SD_PORT}|g" \
     -e "s|{{OLLAMA_UPSTREAM}}|127.0.0.1:${OLLAMA_PORT}|g" \
     -e "s|{{DIAG_UPSTREAM}}|127.0.0.1:${DIAG_PORT}|g" \
+    -e "s|{{TTS_UPSTREAM}}|127.0.0.1:${TTS_PORT}|g" \
+    -e "s|{{STT_UPSTREAM}}|127.0.0.1:${STT_PORT}|g" \
     -e "s|{{SPLASH_ROOT}}|${SPLASH_ROOT}|g" \
     -e "s|{{DIAG_HTML_DIR}}|${DIAG_HTML_DIR}|g" \
     -e "s|{{STATUS_DIR}}|${STATUS_DIR}|g" \

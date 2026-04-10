@@ -3918,11 +3918,19 @@ function _applyUiZoom(scale) {
 }
 
 function _resizeDrawer() {
-    const winH  = $(window).height();
-    const barH  = $('#img-gen-mode-bar').outerHeight(true) || 44;
-    const formH = $('#send_form').outerHeight(true) || 60;
-    const h     = Math.max(120, winH - barH - formH - 20);
-    $('#img-gen-channel-drawer').css('height', h + 'px');
+    const winH   = window.innerHeight;
+    const bar    = document.getElementById('img-gen-mode-bar');
+    const form   = document.getElementById('send_form');
+    const drawer = document.getElementById('img-gen-channel-drawer');
+    const panel  = document.getElementById('image-generator-panel');
+    const sheld  = document.getElementById('sheld');
+    const barH   = bar  ? bar.offsetHeight  : 44;
+    const formH  = form ? form.offsetHeight : 60;
+    const h      = Math.max(120, winH - barH - formH - 20);
+    if (drawer) drawer.style.height = h + 'px';
+    // Sync #sheld right margin to the panel's actual rendered width so the
+    // two never drift regardless of viewport width or zoom level.
+    if (panel && sheld) sheld.style.marginRight = (panel.offsetWidth + 8) + 'px';
 }
 
 // v2.12.1 — Language-agnostic placeholder. Uses punctuation / symbols
@@ -3996,6 +4004,13 @@ function installModeBar() {
 
     _updateInputPlaceholder();
     _resizeDrawer();
+
+    // Keep #sheld margin in sync with the gallery panel's actual width
+    // whenever the viewport resizes or zoom changes.
+    const _panelEl = document.getElementById('image-generator-panel');
+    if (window.ResizeObserver && _panelEl) {
+        new ResizeObserver(_resizeDrawer).observe(_panelEl);
+    }
 
     // --- Mode switch + drawer toggle ---
     $bar.on('click', '.img-gen-mode-btn:not(.img-gen-qr-btn)', function () {
