@@ -752,15 +752,9 @@ function transformMessageText(messageText) {
         messageText = messageText.replace(/```[\s\S]*$/, '');
     }
 
-    // Strip [SAY]/[DO] channel-wrapper tags from the chat display.
-    // Their inner text IS the narration and should be visible; the wrapper
-    // brackets are an internal routing signal consumed by the drawer.
-    // [/SAY] and [/DO] closing tags are handled by the same pass.
-    messageText = messageText.replace(/\[SAY\]([\s\S]*?)\[\/SAY\]/gi, '$1');
-    messageText = messageText.replace(/\[DO\]([\s\S]*?)\[\/DO\]/gi, (_, inner) => `*${inner.trim()}*`);
-    // Orphaned openers/closers (truncated response or missing pair)
-    messageText = messageText.replace(/\[\/?(SAY|DO)\]/gi, '');
-
+    // DEBUG MODE: show all bracket tags raw in the chat message body so
+    // narrator output can be inspected. Tags are still routed to drawers
+    // by _translateToBlocks — this only affects what the reader sees here.
     const markers = detectSenseMarkers(messageText);
     let result = messageText;
     // Replace in reverse order so earlier indices stay valid.
@@ -770,17 +764,15 @@ function transformMessageText(messageText) {
         if (idx === -1) continue;
 
         let replacement;
-        // Sense types: show as compact inline chips in the chat so the
-        // narrator's output is visible. GENERATE_IMAGE is a pure trigger
-        // (no prose value) so it stays hidden. All sense types ALSO go to
-        // the channel drawer via _translateToBlocks — the chip is bonus
-        // visibility, not a substitute.
+        // DEBUG MODE: leave all sense tags visible as raw text in the chat.
+        // GENERATE_IMAGE is the exception — it's a pure image trigger with
+        // no prose value, so strip it to avoid noise.
         if (m.type === 'GENERATE_IMAGE') {
             replacement = '';
         } else if (SENSE_STRIP_TYPES.has(m.type)) {
-            const icon = SENSE_ICONS[m.type] || '•';
-            const shortDesc = m.description ? escapeHtml(m.description.substring(0, 100)) : '';
-            replacement = `<span class="narrator-sense-chip sense-${m.type.toLowerCase()}" title="${shortDesc}">${icon}${shortDesc ? ' ' + shortDesc : ''}</span>`;
+            // Show raw marker text — wrap in a dim span so it's visually
+            // distinct from prose but still readable.
+            replacement = `<span class="narrator-raw-tag">${escapeHtml(m.fullMatch)}</span>`;
         } else if (m.type === 'RESET_STORY' || m.type === 'RESET_RUN') {
             const flavor = escapeHtml(m.description || 'the run ends');
             replacement = `<div class="sense-reset">⟲ ${flavor}</div>`;
@@ -3967,7 +3959,38 @@ function installModeBar() {
     const $inventory = $('<button class="img-gen-mode-btn" data-mode="inventory">🎒 Inventory</button>');
     const $lore      = $('<button class="img-gen-mode-btn" data-mode="lore">📖 Lore</button>');
 
-    $bar.append($say, $do, $sense, $insights, $inventory, $lore);
+    // --- DEV: quick-fire test button ---
+    // Asks Ollama (mistral) for a short human phrase in context, then submits
+    // it as the player's next message. Hidden in production via CSS class.
+    const $testBtn = $('<button class="img-gen-mode-btn img-gen-test-btn" title="Dev: fire a random player line via Ollama">🎲</button>');
+    $testBtn.on('click', async function () {
+        $testBtn.prop('disabled', true).text('…');
+        try {
+            const location = (initSettings().currentLocation || 'an unknown place');
+            const resp = await fetch('/api/ollama/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: 'mistral',
+                    prompt: `You are a player character in a dark fantasy game. You are currently in: ${location}. Write ONE short, natural thing the player character might say or do — 5 to 15 words, first person, no quotes, no narration. Just the line.`,
+                    stream: false,
+                }),
+            });
+            const data = await resp.json();
+            const line = (data.response || '').trim().replace(/^["']|["']$/g, '');
+            if (line) {
+                $('#send_textarea').val(line);
+                // Trigger send
+                $('#send_textarea').closest('form').trigger('submit');
+            }
+        } catch (err) {
+            console.warn('[Image Generator] test-btn Ollama call failed:', err);
+        } finally {
+            $testBtn.prop('disabled', false).text('🎲');
+        }
+    });
+
+    $bar.append($say, $do, $sense, $insights, $inventory, $lore, $testBtn);
     $('#send_form').before($bar);
     $bar.before($drawer);
 
@@ -4167,11 +4190,15 @@ function _renderDrawer(channel) {
     }
     const display = all.slice(-20);
 
-    // Render newest-first in DOM. flex-direction:column means the first
-    // DOM child appears at the visual top, so newest entry is always visible.
-    // Older entries below scroll off the bottom; scrollTop(0) ensures the
-    // newest stays pinned at the top after each render.
-    for (let i = display.length - 1; i >= 0; i--) {
+    // Narrator label: character name from SillyTavern, fallback to "—"
+    const narratorName = (characters && this_chid !== undefined && characters[this_chid])
+        ? (characters[this_chid].name || '—')
+        : '—';
+
+    // Render oldest-first (reading order). Newest entry is last in DOM.
+    // scrollTop to scrollHeight pins the view to the bottom so new entries
+    // are always visible; old entries scroll off the top.
+    for (let i = 0; i < display.length; i++) {
         const e = display[i];
         let iconHtml = '';
         let cls = channel;
@@ -4180,15 +4207,18 @@ function _renderDrawer(channel) {
             iconHtml = `<span class="img-gen-drawer-icon">${e.icon || '•'}</span>`;
         }
         if (e.isPlayer) cls += ' is-player';
-        // newest entry = display[display.length-1], rendered first (i === display.length-1)
+        // Newest entry = last in DOM — animate arrival
         if (i === display.length - 1) cls += ' arriving';
-        const displayText = e.text.length > 200 ? e.text.substring(0, 197) + '…' : e.text;
+        const displayText = e.text.length > 300 ? e.text.substring(0, 297) + '…' : e.text;
+        const speakerLabel = e.isPlayer ? 'You' : narratorName;
         const $row = $(`<div class="img-gen-drawer-entry ${cls}">${iconHtml}<span class="img-gen-drawer-speaker"></span><span class="img-gen-drawer-text"></span></div>`);
-        $row.find('.img-gen-drawer-speaker').text(e.isPlayer ? 'You' : '—');
+        $row.find('.img-gen-drawer-speaker').text(speakerLabel);
         $row.find('.img-gen-drawer-text').text(displayText);
         $content.append($row);
     }
-    $content.scrollTop(0);
+    // Pin scroll to bottom so newest entry is always visible
+    const el = $content[0];
+    if (el) el.scrollTop = el.scrollHeight;
 }
 
 /**

@@ -207,29 +207,16 @@
     margin-top: 2px;
 }
 
-/* Inline sense chips — shown in the chat message body when the narrator
-   emits SIGHT/SMELL/SOUND/TASTE/TOUCH/ENVIRONMENT markers. Complements
-   the channel drawer; the chip shows the sense inline so the raw output
-   is visible without hunting through the drawer. */
-.narrator-sense-chip {
-    display: inline-block;
-    font-size: 0.82em;
-    padding: 1px 6px 1px 4px;
-    margin: 0 2px;
-    border-radius: 3px;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    opacity: 0.80;
-    vertical-align: middle;
-    cursor: help;
-    white-space: nowrap;
+/* DEBUG: raw narrator tag display — shown when sense/SAY/DO markers are
+   left visible in the chat message body for inspection. Dim monospace so
+   they don't distract but are clearly machine syntax. */
+.narrator-raw-tag {
+    display: inline;
+    font-family: monospace;
+    font-size: 0.80em;
+    color: rgba(255, 255, 255, 0.35);
+    word-break: break-all;
 }
-.narrator-sense-chip.sense-sight        { border-color: rgba(100, 181, 246, 0.4); }
-.narrator-sense-chip.sense-sound        { border-color: rgba(129, 212, 250, 0.4); }
-.narrator-sense-chip.sense-smell        { border-color: rgba(165, 214, 167, 0.4); }
-.narrator-sense-chip.sense-taste        { border-color: rgba(255, 204, 128, 0.4); }
-.narrator-sense-chip.sense-touch        { border-color: rgba(240, 98,  146, 0.4); }
-.narrator-sense-chip.sense-environment  { border-color: rgba(38,  198, 218, 0.4); }
 
 /* Orphaned marker fragment — shown when the LLM truncated mid-marker.
    A small ellipsis with a title-tip, discreet and unobtrusive. */
@@ -1268,6 +1255,25 @@ body.img-gen-sense-mode #send_textarea {
     color: #ef9a9a;
 }
 
+/* DEV: test fire button — muted so it doesn't distract during play */
+.img-gen-test-btn {
+    font-size: 13px;
+    padding: 3px 8px;
+    margin-left: auto;
+    color: #555;
+    border-color: rgba(255, 255, 255, 0.06);
+    opacity: 0.6;
+}
+.img-gen-test-btn:hover {
+    color: #aaa;
+    border-color: rgba(255, 255, 255, 0.25);
+    opacity: 1;
+}
+.img-gen-test-btn:disabled {
+    opacity: 0.3;
+    cursor: wait;
+}
+
 /* Do mode: italic textarea text */
 body.img-gen-do-mode #send_textarea {
     font-style: italic !important;
@@ -1539,6 +1545,23 @@ body.img-gen-do-mode #send_textarea {
 }
 .img-gen-drawer-entry.inventory .img-gen-codex-drawer-name { color: #ffab00; }
 .img-gen-drawer-entry.lore      .img-gen-codex-drawer-name { color: #4dd0e1; }
+
+/* ============================================
+   Chat message text wrap + raw tag display
+   ============================================ */
+
+/* ST sometimes sets overflow or white-space on .mes_text children that
+   prevents long bracket markers from wrapping. Force wrap on all our
+   injected spans so raw debug tags never overflow their bubble. */
+#chat .mes_text {
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+#chat .mes_text .narrator-raw-tag {
+    display: inline;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
 
 /* ============================================
    v2.12.1 — DARK SLATE THEME ENFORCEMENT
