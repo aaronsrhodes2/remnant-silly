@@ -4145,6 +4145,7 @@ function addChannelEntry(channel, entry) {
     // No filtering — every entry that reaches here goes into its drawer.
     // Sorting (which drawer) is done upstream in _translateToBlocks.
     entry.ts = Date.now();
+    entry.channel = channel;  // stamp so merged render knows the type
     arr.push(entry);
     if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
 
@@ -4201,12 +4202,23 @@ function _renderDrawer(channel) {
     }
     $content.removeClass('img-gen-codex-active');
 
-    const all = _channelHistory[channel] || [];
+    // Narrative channels (say/do/sense/insights) render as a single unified
+    // timeline so the story reads as one stream. Each entry carries its own
+    // channel/senseType for coloring.
+    const NARRATIVE_CHANNELS = ['say', 'do', 'sense', 'insights'];
+    let all;
+    if (NARRATIVE_CHANNELS.includes(channel)) {
+        all = NARRATIVE_CHANNELS.flatMap(ch => _channelHistory[ch] || []);
+        all.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    } else {
+        all = _channelHistory[channel] || [];
+    }
+
     if (all.length === 0) {
         $content.append('<div class="img-gen-drawer-empty">Nothing yet.</div>');
         return;
     }
-    const display = all.slice(-20);
+    const display = all.slice(-60);
 
     // Narrator label: character name from SillyTavern, fallback to "—"
     const narratorName = (characters && this_chid !== undefined && characters[this_chid])
@@ -4218,20 +4230,20 @@ function _renderDrawer(channel) {
     // are always visible; old entries scroll off the top.
     for (let i = 0; i < display.length; i++) {
         const e = display[i];
+        const entryChannel = e.channel || channel;
         let iconHtml = '';
-        let cls = channel;
+        let cls = entryChannel;
         if (e.senseType) {
-            cls += ` sense-${e.senseType.toLowerCase()}`;
+            cls += ` sense sense-${e.senseType.toLowerCase()}`;
             iconHtml = `<span class="img-gen-drawer-icon">${e.icon || '•'}</span>`;
         }
         if (e.isPlayer) cls += ' is-player';
         // Newest entry = last in DOM — animate arrival
         if (i === display.length - 1) cls += ' arriving';
-        const displayText = e.text.length > 300 ? e.text.substring(0, 297) + '…' : e.text;
         const speakerLabel = e.isPlayer ? 'You' : narratorName;
         const $row = $(`<div class="img-gen-drawer-entry ${cls}">${iconHtml}<span class="img-gen-drawer-speaker"></span><span class="img-gen-drawer-text"></span></div>`);
         $row.find('.img-gen-drawer-speaker').text(speakerLabel);
-        $row.find('.img-gen-drawer-text').text(displayText);
+        $row.find('.img-gen-drawer-text').text(e.text);
         $content.append($row);
     }
     // Pin scroll to bottom so newest entry is always visible

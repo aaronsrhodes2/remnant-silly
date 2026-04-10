@@ -1373,6 +1373,7 @@ body.img-gen-do-mode #send_textarea {
 .img-gen-drawer-text {
     flex: 1;
     min-width: 0;
+    overflow-wrap: anywhere;
     word-break: break-word;
 }
 .img-gen-drawer-speaker {
@@ -1495,10 +1496,15 @@ body.img-gen-do-mode #send_textarea {
 #img-gen-drawer-content {
     flex: 1 1 auto !important;
     overflow-y: auto !important;
+    overflow-x: hidden !important;
     padding: 8px 14px 6px 14px !important;
     gap: 5px !important;
     display: flex !important;
     flex-direction: column !important;
+    scrollbar-width: none !important;
+}
+#img-gen-drawer-content::-webkit-scrollbar {
+    display: none;
 }
 /* Codex tabs (Inventory / Lore) are already column + overflow-y:auto — no override needed */
 
