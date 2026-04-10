@@ -2670,6 +2670,13 @@ async function handleRunEnd(fate, { causeOfDeath = null, title, subtitle } = {})
         // shape). Prevents the ritual from re-triggering when the player
         // opens a new ST chat mid-run.
         ritual_asked: false,
+        // v3.2.0 — tracks whether the opening "Welcome back / greet by name"
+        // briefing has already fired. After the first narrator response,
+        // the briefing prompt is cleared so it doesn't repeat every turn.
+        greeted: false,
+        // v3.2.0 — active mission the player is currently on. Set when the
+        // Fortress offers a mission; cleared when the run ends.
+        activeMission: null,
     };
     const freshPlayerProfile = () => ({
         name: 'Unknown Being', named: false, pronouns: null,
@@ -4640,6 +4647,18 @@ async function onCharacterMessageRendered(messageId) {
         }
     } catch (_) { /* ignore */ }
 
+    // v3.2.0 — First narrator response clears the "Welcome back / greet by
+    // name" opening briefing. The briefing lives in a persistent extension
+    // prompt slot, so without this it repeats its greeting instructions on
+    // every single turn for the entire session.
+    try {
+        if (settings.run && settings.run.active && !settings.run.greeted) {
+            settings.run.greeted = true;
+            applyRunBriefingPrompt('');
+            saveSettingsDebounced();
+        }
+    } catch (_) { /* ignore */ }
+
     // Gate the full image-generation pipeline. Channel drawer, marker
     // transforms, and sense bar already ran above regardless of this flag.
     if (!settings.autoGenerate) return;
@@ -4987,13 +5006,20 @@ async function onChatChanged() {
                 lines.push(`- Story beats: ${run.significantEvents.slice(-10).join(' → ')}`);
             }
             lines.push('');
-            if (profile && profile.named && profile.name) {
+            if (profile && profile.named && profile.name && !run.greeted) {
+                // First-ever greeting for this run: warm welcome back.
                 lines.push(`OPENING INSTRUCTIONS — WARM WELCOME BACK:`);
-                lines.push(`1. Greet ${profile.name} by name. "Welcome back, ${profile.name}." — warm, personal, unhurried.`);
+                lines.push(`1. Greet ${profile.name} by name. "Welcome back, ${profile.name}." — warm, personal, unhurried. Say it ONCE. Do not repeat it.`);
                 lines.push(`2. Give a brief recap of what they did last session. Use the story beats and known facts above. Keep it to 2–4 sentences.`);
                 lines.push(`3. Invent 0–2 short, casual updates about what happened in the Fortress while the player was away — a small thing a known NPC did, an odd event in the corridors, something the Fortress noticed. Each update should be one or two sentences, lightly whimsical, grounded in the world. If there are no known NPCs yet, skip this entirely.`);
-                lines.push(`4. Close with: "Are you ready to tackle the Astral Foam's many problems today?"`);
+                lines.push(`4. After the recap, offer a specific mission (see MISSION MANDATE in your card). Do NOT just ask "Are you ready to tackle the Astral Foam's many problems today?" — name the actual problem.`);
                 lines.push(`Do NOT re-introduce the pod, the hoop, the goo, or the Fold. Do NOT ask "Who are you, being?" — that ritual is spent.`);
+            } else if (profile && profile.named && profile.name && run.greeted) {
+                // Player was already greeted this run — this is a chat reload/refresh.
+                // Slide back into the story without re-greeting.
+                lines.push(`STORY IN PROGRESS — ${profile.name} has already been welcomed this session.`);
+                lines.push(`Do NOT say "Welcome back". Do NOT ask "Are you ready to tackle the Astral Foam's many problems today?" — the story is already moving.`);
+                lines.push(`Pick up exactly where things left off. If ${profile.name} has no active mission, offer one now (see MISSION MANDATE in your card).`);
             } else {
                 lines.push('Do NOT re-introduce the pod, the hoop, the goo, or the Fold. Do NOT ask "who are you, being?" — you already know them. Open this chat from the last known location, in media res, in the tone established previously.');
             }
@@ -5304,6 +5330,19 @@ function initializeExtension() {
 
     const npcCount = Object.keys(settings.npcs).length;
     console.log(`[Image Generator] Ready. Images: ${settings.images.length}, NPCs locked: ${npcCount}`);
+
+    // v3.2.0 — Narrative token budget. 350 tokens forces the model to cram
+    // greeting + scene + closer into one tiny burst, causing loop-greeting.
+    // Raise to 600 for narrative variety. Only bumps if currently below.
+    try {
+        if (typeof textgenerationwebui_settings !== 'undefined'
+                && typeof textgenerationwebui_settings.amount_gen === 'number'
+                && textgenerationwebui_settings.amount_gen < 600) {
+            textgenerationwebui_settings.amount_gen = 600;
+            saveSettingsDebounced();
+            console.log('[Image Generator] Token budget raised to 600 for narrative quality.');
+        }
+    } catch (_) { /* ignore if not available */ }
 }
 
 export function activate() {
