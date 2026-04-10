@@ -5319,3 +5319,41 @@ export function disable() {
 }
 
 initializeExtension();
+
+// ---------------------------------------------------------------------------
+// Game UI relay — poll sidecar for player input submitted from /game/
+//
+// When the player types in the v3.0 UI and hits Send, the sidecar:
+//   1. Runs the Sorting Hat (Ollama) to classify SAY / DO / SENSE
+//   2. Wraps the text and broadcasts a player turn via SSE
+//   3. Stores the wrapped text in _pending_player_input
+//
+// This loop consumes that slot once per second, injects the message into
+// the ST chat array, and calls Generate() so The Fortress responds.
+// ---------------------------------------------------------------------------
+let _gameUiPollActive = false;
+async function _pollGameUiInput() {
+    if (_gameUiPollActive) return;
+    _gameUiPollActive = true;
+    try {
+        const res = await fetch('/pending-player-input');
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.text) {
+                const playerName = (typeof name1 !== 'undefined' && name1) ? name1 : 'Player';
+                chat.push({
+                    name: playerName,
+                    is_user: true,
+                    is_system: false,
+                    mes: data.text,
+                    send_date: Date.now(),
+                    extra: { injected_from_game_ui: true },
+                });
+                try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
+                try { if (typeof Generate === 'function') Generate('normal'); } catch (_) { /* ignore */ }
+            }
+        }
+    } catch (_) { /* sidecar may not be running — ignore */ }
+    _gameUiPollActive = false;
+}
+setInterval(_pollGameUiInput, 1000);

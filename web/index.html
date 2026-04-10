@@ -122,15 +122,46 @@ html, body {
   to   { opacity: 1; transform: none; }
 }
 
-/* ── Bottom label bar ── */
+/* ── Input bar ── */
 #bottombar {
   flex-shrink: 0;
-  padding: 5px 16px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
   border-top: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--dim);
-  letter-spacing: 0.3px;
 }
+#player-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  line-height: 1.5;
+}
+#player-input::placeholder { color: var(--dim); }
+#player-input:focus { border-color: rgba(255,255,255,0.18); }
+#send-btn {
+  flex-shrink: 0;
+  background: rgba(100,181,246,0.12);
+  color: var(--c-player);
+  border: 1px solid rgba(100,181,246,0.25);
+  border-radius: 4px;
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#send-btn:hover { background: rgba(100,181,246,0.22); }
+#send-btn:active { background: rgba(100,181,246,0.32); }
+#send-btn:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -144,7 +175,10 @@ html, body {
     <div id="empty-msg">Waiting for The Fortress…</div>
   </div>
 
-  <div id="bottombar">remnant v3.0 — display only</div>
+  <div id="bottombar">
+    <textarea id="player-input" rows="2" placeholder="Speak, act, or perceive…"></textarea>
+    <button id="send-btn">Send</button>
+  </div>
 </div>
 
 <script>
@@ -227,6 +261,34 @@ function connect() {
 }
 
 connect();
+
+// ── Player input ──
+const inputEl  = document.getElementById('player-input');
+const sendBtn  = document.getElementById('send-btn');
+
+async function sendInput() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  inputEl.value = '';
+  sendBtn.disabled = true;
+  try {
+    await fetch('/player-input', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text}),
+    });
+  } catch (_) {}
+  sendBtn.disabled = false;
+  inputEl.focus();
+}
+
+sendBtn.addEventListener('click', sendInput);
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    sendInput();
+  }
+});
 </script>
 </body>
 </html>

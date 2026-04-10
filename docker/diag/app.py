@@ -40,6 +40,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -58,6 +59,9 @@ _narrator_turns: collections.deque = collections.deque(maxlen=200)
 _sse_clients: set = set()
 _sse_lock = threading.Lock()
 
+# Player input relay — one pending slot consumed by the extension polling loop.
+_pending_player_input: dict | None = None
+
 def _sse_broadcast(event_type: str, data: object) -> None:
     """Push one SSE event to every connected client. Drops slow/dead clients."""
     raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
@@ -68,7 +72,7 @@ def _sse_broadcast(event_type: str, data: object) -> None:
                 q.put_nowait(raw)
             except _queue.Full:
                 dead.add(q)
-        _sse_clients -= dead
+        _sse_clients.difference_update(dead)
 
 STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
 FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:5000").rstrip("/")
@@ -315,6 +319,66 @@ def _http(method: str, url: str, body: bytes | None = None, timeout: float = 5.0
         return e.code, e.read() if hasattr(e, "read") else b"", (time.monotonic() - started) * 1000.0
     except Exception as e:
         return 0, str(e).encode("utf-8"), (time.monotonic() - started) * 1000.0
+
+
+# ---------------------------------------------------------------------------
+# Sorting Hat — classify player input intent for the v3.0 game UI relay
+# ---------------------------------------------------------------------------
+
+_TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava")
+
+def _ollama_model() -> str:
+    """Return a text-generation Ollama model name, skipping vision/embed models."""
+    code, body, _ = _http("GET", f"{OLLAMA_URL}/api/tags", timeout=3.0)
+    if code == 200:
+        try:
+            models = json.loads(body).get("models", [])
+            for m in models:
+                name = m.get("name", "")
+                if not any(skip in name for skip in _TEXT_MODEL_SKIP):
+                    return name
+        except Exception:
+            pass
+    return "mistral"
+
+
+def _sorting_hat(text: str) -> str:
+    """Classify player intent as SAY, DO, or SENSE via Ollama. Falls back to heuristics."""
+    prompt = (
+        "Classify this player input as exactly one of: SAY, DO, SENSE.\n"
+        "SAY=speech or dialogue. DO=physical action or movement. SENSE=perception or observation.\n"
+        f'Input: "{text}"\n'
+        "Reply with one word only: SAY, DO, or SENSE."
+    )
+    try:
+        body = json.dumps({
+            "model": _ollama_model(),
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": 4},
+        }).encode()
+        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=body, timeout=8.0)
+        if code == 200:
+            word = json.loads(resp).get("response", "").strip().upper()
+            if word in ("SAY", "DO", "SENSE"):
+                return word
+    except Exception:
+        pass
+    # Heuristic fallback — quotes = speech, else action
+    if text.startswith(('"', '\u201c', "'")):
+        return "SAY"
+    return "DO"
+
+
+def _wrap_player_text(intent: str, text: str) -> str:
+    """Wrap player text with narrative formatting matching the intent."""
+    # Strip any outer quote/bracket/asterisk the player may have typed
+    bare = text.strip('\'"*[]""')
+    if intent == "SAY":
+        return f'"{bare}"'
+    if intent == "SENSE":
+        return f"[{bare}]"
+    return f"*{bare}*"  # DO — italics = action
 
 
 def _probe_json(url: str, timeout: float = 3.0) -> dict:
@@ -943,6 +1007,13 @@ class Handler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/pending-player-input":
+            global _pending_player_input
+            result = _pending_player_input
+            _pending_player_input = None  # consume once
+            self._send_json(200, result or {})
+            return
+
         # Per-service log tail: GET /logs/<service>
         if path.startswith("/logs/"):
             service = path[len("/logs/"):]
@@ -994,6 +1065,34 @@ class Handler(BaseHTTPRequestHandler):
                     pass  # world graph never crashes the turn pipeline
                 _sse_broadcast("turn", turn)
                 self._send_json(200, {"ok": True})
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+            return
+
+        if path == "/player-input":
+            global _pending_player_input
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+                text = payload.get("text", "").strip()
+                if not text:
+                    self._send_json(400, {"ok": False, "error": "empty text"})
+                    return
+                intent = _sorting_hat(text)
+                wrapped = _wrap_player_text(intent, text)
+                now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                turn = {
+                    "turn_id": f"player-{uuid.uuid4().hex[:8]}",
+                    "is_player": True,
+                    "raw_text": wrapped,
+                    "parsed_blocks": [{"text": wrapped, "channel": intent.lower(), "isPlayer": True}],
+                    "received_at": now,
+                }
+                _store_narrator_turn(turn)
+                _sse_broadcast("turn", turn)
+                _pending_player_input = {"text": wrapped, "intent": intent}
+                self._send_json(200, {"ok": True, "intent": intent, "wrapped": wrapped})
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
             return
