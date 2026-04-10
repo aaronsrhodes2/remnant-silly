@@ -1126,10 +1126,12 @@ function updateMessageDisplay(messageId) {
         // whether any inline markers remain — the sense bar is the new home
         // for the six sensory channels.
         try { renderSenseBar($mes, markers); } catch (err) { console.warn('[Image Generator] renderSenseBar failed', err); }
-        // Narrative text queues first (SAY/DO), then sense entries — preserves discovery cadence
-        if (message && !message.is_user) {
-            try { _parseNarratorIntoChannels(messageId, message.mes); } catch (_) { /* ignore */ }
-        }
+        // NOTE: _parseNarratorIntoChannels is NOT called here. DOM transform
+        // (updateMessageDisplay) is walkAll-safe — called on every re-render.
+        // Channel routing is called explicitly by onCharacterMessageRendered
+        // for live turns, and by _populateChannelsFromHistory for history.
+        // Calling it here caused walkAll to queue entries that
+        // _populateChannelsFromHistory then cleared, swallowing messages.
         try { syncSenseButton(messageId, markers); } catch (_) { /* ignore */ }
 
         if (transformedText === message.mes) return;
@@ -4097,6 +4099,7 @@ const _MAX_CH_ENTRIES = 100;
 const _channelHistory  = { say: [], do: [], sense: [], insights: [] };
 let   _activeDrawer    = null;   // 'say' | 'do' | 'sense' | 'insights' | null
 const _channelHydrated = new Set(); // mesids already parsed into channels
+let   _hydratedChatId  = null;   // ST chat_id when _channelHydrated was last built
 let   _pendingUserEntry = null;  // { text, channel, isPlayer:true } set in _applyModeTransform
 let   _senseMiniLast   = {};     // { type: label } — guards sense button re-render
 
@@ -4418,15 +4421,22 @@ function _parseNarratorIntoChannels(messageId, rawText, instant = false) {
  * button icons without creating duplicates.
  */
 function _populateChannelsFromHistory() {
-    // Clear any queued reveal entries that were enqueued by the walkAll pass
-    // in onChatChanged — they would re-add to the freshly-cleared history and
-    // create duplicates once this instant-load completes.
+    // Flush any queued reveal entries — they were enqueued by the live
+    // onCharacterMessageRendered path and will be re-added below via instant load.
     _clearRevealQueue();
     _channelHistory.say.length      = 0;
     _channelHistory.do.length       = 0;
     _channelHistory.sense.length    = 0;
     _channelHistory.insights.length = 0;
-    _channelHydrated.clear();
+    // Clear _channelHydrated only when the chat actually changed.
+    // Keeping it across calls within the same chat prevents walkAll
+    // re-renders from re-processing already-hydrated live messages.
+    const currentChatId = (typeof chat_id !== 'undefined' ? chat_id : null)
+        || (Array.isArray(chat) && chat[0] ? chat[0].send_date : null);
+    if (currentChatId !== _hydratedChatId) {
+        _channelHydrated.clear();
+        _hydratedChatId = currentChatId;
+    }
     _senseMiniLast = {};
 
     if (!Array.isArray(chat)) return;
@@ -4592,10 +4602,14 @@ async function onCharacterMessageRendered(messageId) {
         try { if (typeof saveChatDebounced === 'function') saveChatDebounced(); } catch (_) { /* ignore */ }
     }
 
-    // Re-render the message display: transforms markers, feeds the channel
-    // drawer, renders the sense bar. Always runs — not gated on image gen.
+    // Re-render the message display: DOM transforms, sense bar. Always runs.
     updateMessageDisplay(messageId);
     try { fixNarratorNames(); } catch (_) { /* ignore */ }
+
+    // Route narrator text into the channel drawer. Called here explicitly
+    // (not inside updateMessageDisplay) so walkAll re-renders don't queue
+    // duplicate entries that race with _populateChannelsFromHistory.
+    try { _parseNarratorIntoChannels(messageId, message.mes); } catch (_) { /* ignore */ }
 
     // v2.6.3 — Apply spoken cadence AFTER the final transform runs.
     // This is the one-shot moment at stream end; doing it here (instead
