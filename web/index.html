@@ -43,23 +43,33 @@ html, body {
   height: 100vh;
 }
 
-/* Top bar: location + connection state */
+/* Top bar: connection state only */
 #topbar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 5px 16px;
+  justify-content: flex-end;
+  padding: 4px 16px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 10px;
   color: var(--dim);
-  letter-spacing: 0.4px;
 }
-#topbar #location { color: var(--ink); opacity: 0.55; }
 #topbar #conn-status { font-size: 10px; }
 #topbar #conn-status.ok     { color: #6fa86a; }
 #topbar #conn-status.err    { color: #c46a5a; }
 #topbar #conn-status.wait   { color: #d6a85c; }
+
+/* Thinking indicator */
+.entry.thinking .entry-text {
+  color: var(--dim);
+  font-style: italic;
+  letter-spacing: 2px;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%       { opacity: 0.85; }
+}
+.entry.thinking { animation: thinking-pulse 1.2s ease-in-out infinite; }
 
 /* Narrative feed */
 #feed {
@@ -199,7 +209,6 @@ html, body {
 <body>
 <div id="app">
   <div id="topbar">
-    <span id="location">—</span>
     <span id="conn-status" class="wait">connecting…</span>
   </div>
 
@@ -216,21 +225,49 @@ html, body {
 <script>
 const feed      = document.getElementById('feed');
 const emptyMsg  = document.getElementById('empty-msg');
-const locationEl= document.getElementById('location');
 const connEl    = document.getElementById('conn-status');
+let _lastLocation = '';
+let _thinkTimer   = null;
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 }
 
+function _removeThinking() {
+  const el = document.getElementById('thinking-indicator');
+  if (el) el.remove();
+  if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
+}
+
 function renderTurn(turn, instant) {
   const blocks = turn.parsed_blocks || [];
   let added = 0;
+  const isNarratorTurn = blocks.some(b => !b.isPlayer);
+
+  // Remove thinking indicator on first narrator turn
+  if (isNarratorTurn && !instant) _removeThinking();
+
+  // Location change → feed entry (before blocks)
+  if (isNarratorTurn) {
+    const loc = (turn.context || {}).location || '';
+    if (loc && loc !== _lastLocation) {
+      _lastLocation = loc;
+      const locEl = document.createElement('div');
+      locEl.className = 'meta-event' + (instant ? '' : ' arriving');
+      locEl.innerHTML =
+        '<span class="meta-label">LOCATION</span>' +
+        '<span class="meta-text">' + esc(loc) + '</span>';
+      feed.appendChild(locEl);
+      added++;
+    }
+  }
 
   for (const b of blocks) {
     const text = (b.text || '').trim();
     if (!text) continue;
+    // Filter dangling/partial marker fragments (e.g. "[LORE(Galley): The")
+    if (/^\[[A-Z_]/.test(text) && !b.isPlayer) continue;
 
     const div = document.createElement('div');
     div.className = 'entry';
@@ -256,9 +293,6 @@ function renderTurn(turn, instant) {
   if (added) {
     emptyMsg.style.display = 'none';
     feed.scrollTop = feed.scrollHeight;
-
-    const loc = (turn.context || {}).location || '';
-    if (loc) locationEl.textContent = loc.length > 90 ? loc.substring(0, 87) + '…' : loc;
   }
 }
 
@@ -390,11 +424,27 @@ async function sendInput(overrideText) {
   _clearTimers();
   inputEl.value = '';
   try {
-    await fetch('/player-input', {
+    const res = await fetch('/player-input', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({text}),
     });
+    const data = res.ok ? await res.json() : {};
+    // Only show thinking for non-META intents (META events self-resolve)
+    if (!data.meta) {
+      _removeThinking();
+      const thinkEl = document.createElement('div');
+      thinkEl.id = 'thinking-indicator';
+      thinkEl.className = 'entry say thinking arriving';
+      thinkEl.innerHTML =
+        '<span class="entry-speaker">Narrator</span>' +
+        '<span class="entry-text">· · ·</span>';
+      feed.appendChild(thinkEl);
+      emptyMsg.style.display = 'none';
+      feed.scrollTop = feed.scrollHeight;
+      // Safety timeout — remove after 90s if no response
+      _thinkTimer = setTimeout(_removeThinking, 90000);
+    }
   } catch (_) {}
   _sending = false;
   inputEl.focus();

@@ -4388,7 +4388,7 @@ async function _postNarratorTurn(messageId, rawText, blocks) {
             ts: Date.now(),
             turn_id: String(messageId),
             raw_text: rawText.substring(0, 3000),
-            parsed_blocks: blocks.map(b => ({ channel: b.channel, text: b.text.substring(0, 300), senseType: b.senseType || null })),
+            parsed_blocks: blocks.map(b => ({ channel: b.channel, text: b.text.substring(0, 2000), senseType: b.senseType || null })),
             markers_found: markers,
             channel_counts: channelCounts,
             warnings,
