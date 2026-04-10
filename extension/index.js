@@ -4231,17 +4231,13 @@ function _renderDrawer(channel) {
     for (let i = 0; i < display.length; i++) {
         const e = display[i];
         const entryChannel = e.channel || channel;
-        let iconHtml = '';
         let cls = entryChannel;
-        if (e.senseType) {
-            cls += ` sense sense-${e.senseType.toLowerCase()}`;
-            iconHtml = `<span class="img-gen-drawer-icon">${e.icon || '•'}</span>`;
-        }
+        if (e.senseType) cls += ` sense sense-${e.senseType.toLowerCase()}`;
         if (e.isPlayer) cls += ' is-player';
         // Newest entry = last in DOM — animate arrival
         if (i === display.length - 1) cls += ' arriving';
         const speakerLabel = e.isPlayer ? 'You' : narratorName;
-        const $row = $(`<div class="img-gen-drawer-entry ${cls}">${iconHtml}<span class="img-gen-drawer-speaker"></span><span class="img-gen-drawer-text"></span></div>`);
+        const $row = $(`<div class="img-gen-drawer-entry ${cls}"><span class="img-gen-drawer-speaker"></span><span class="img-gen-drawer-text"></span></div>`);
         $row.find('.img-gen-drawer-speaker').text(speakerLabel);
         $row.find('.img-gen-drawer-text').text(e.text);
         $content.append($row);
