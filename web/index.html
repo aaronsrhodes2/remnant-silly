@@ -160,6 +160,27 @@ html, body {
   transition: color 0.3s;
 }
 #input-hint.urgent { color: rgba(196,106,90,0.8); }
+
+/* ── META canon events ── */
+.meta-event {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  color: #a07820;
+  font-style: italic;
+  opacity: 0.82;
+}
+.meta-label {
+  flex-shrink: 0;
+  width: 68px;
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  font-weight: bold;
+  font-style: normal;
+  color: #b8960c;
+}
+.meta-text { flex: 1; min-width: 0; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -228,6 +249,23 @@ function renderTurn(turn, instant) {
   }
 }
 
+function renderMetaEvent(data) {
+  const el = document.createElement('div');
+  el.className = 'meta-event';
+  if (!data.type) return;
+  const label = data.type === 'reset'          ? `RESET:${(data.level||'scene').toUpperCase()}`
+              : data.type === 'portrait'        ? 'PORTRAIT'
+              : data.type === 'portrait_saved'  ? 'FOREVER'
+              :                                   'FOREVER';
+  const text = data.text || (data.url ? data.url.split('/').pop() : '');
+  el.innerHTML =
+    '<span class="meta-label">' + esc(label) + '</span>' +
+    '<span class="meta-text">' + esc(text) + '</span>';
+  feed.appendChild(el);
+  emptyMsg.style.display = 'none';
+  feed.scrollTop = feed.scrollHeight;
+}
+
 // ── SSE connection ──
 function connect() {
   const es = new EventSource('/game/events');
@@ -242,6 +280,10 @@ function connect() {
 
   es.addEventListener('turn', e => {
     try { renderTurn(JSON.parse(e.data), false); } catch (_) {}
+  });
+
+  es.addEventListener('meta', e => {
+    try { renderMetaEvent(JSON.parse(e.data)); } catch (_) {}
   });
 
   es.onopen = () => {

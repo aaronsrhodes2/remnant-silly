@@ -62,6 +62,12 @@ _sse_lock = threading.Lock()
 # Player input relay — one pending slot consumed by the extension polling loop.
 _pending_player_input: dict | None = None
 
+# Permanence reset relay — consumed by the extension to call doNewChat().
+_pending_reset: dict | None = None
+
+# Portrait promotion relay — consumed by the extension to grab the last image.
+_pending_portrait: str | None = None
+
 def _sse_broadcast(event_type: str, data: object) -> None:
     """Push one SSE event to every connected client. Drops slow/dead clients."""
     raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
@@ -83,6 +89,7 @@ LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8700"))
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
 NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
 WORLD_STATE_LOG = STATUS_DIR / "world-state.jsonl"
+FOREVER_LOG = STATUS_DIR / "forever.jsonl"
 
 # ---------------------------------------------------------------------------
 # World Graph — persistent sensory entity model
@@ -112,6 +119,25 @@ _world: dict = {
     "entities": {},   # id → entity dict
     "turn_count": 0,
 }
+
+def _find_existing_entity(name: str) -> str | None:
+    """Fuzzy-match name against all existing entity canonical_names and aliases.
+
+    If a name appears seemingly out of context, assume it references something
+    mentioned earlier — add it as an alias rather than forking a duplicate.
+    A partial substring match (either direction, case-insensitive) is enough.
+    Returns the entity_id if found, else None.
+    """
+    low = name.lower().strip()
+    if not low:
+        return None
+    for eid, ent in _world["entities"].items():
+        existing = [ent.get("canonical_name", "").lower()]
+        existing += [a["name"].lower() for a in ent.get("aliases", [])]
+        if any(low in n or n in low for n in existing if n):
+            return eid
+    return None
+
 
 def _ensure_entity(entity_id: str, name: str, etype: str, parent_id: str | None = None) -> dict:
     if entity_id not in _world["entities"]:
@@ -239,8 +265,17 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
     for match in introduce_re.finditer(raw_text):
         npc_name = match.group(1).strip()
         npc_desc = match.group(2).strip()
-        npc_id = _loc_id(npc_name)
-        npc = _ensure_entity(npc_id, npc_name, "npc", parent_id=loc_id)
+        # Name pairing: if this name fuzzy-matches an existing entity, alias it
+        # rather than forking a duplicate. Names often appear "out of nowhere"
+        # before they are formally introduced — that IS the right entity.
+        existing_id = _find_existing_entity(npc_name)
+        if existing_id and _world["entities"][existing_id]["type"] == "npc":
+            npc_id = existing_id
+            npc = _world["entities"][npc_id]
+            _add_alias(npc, npc_name)
+        else:
+            npc_id = _loc_id(npc_name)
+            npc = _ensure_entity(npc_id, npc_name, "npc", parent_id=loc_id)
         new_layers = []
         if npc_desc and _add_sense_layer(npc, "SIGHT", npc_desc, turn_id):
             new_layers.append({"type": "SIGHT", "desc": npc_desc})
@@ -342,6 +377,42 @@ def _ollama_model() -> str:
     return "mistral"
 
 
+# ---------------------------------------------------------------------------
+# META intent keywords — player canonicalization commands (not relayed to ST)
+# ---------------------------------------------------------------------------
+
+# "Make this permanent / part of the world"
+_META_PROMOTE_KW = frozenset({
+    "forever", "always", "part of the world", "part of my world",
+    "remember this", "keep that", "canon", "canonical", "permanent",
+    "make it permanent", "make that permanent",
+})
+# "That is what X looks like" — promotes last image to portrait
+_META_PORTRAIT_KW = frozenset({
+    "looks like now", "that is what", "that's what",
+    "portrait forever", "image forever", "face forever",
+})
+# "Reset the story/scene/world"
+_META_RESET_KW = frozenset({
+    "reset the story", "reset the scene", "reset the world",
+    "new story", "new scene", "start over",
+    "forget the scene", "forget the story", "forget everything",
+})
+
+# Permanence tier map — value used for numeric comparisons in /reset
+_PERMANENCE_VALUE: dict[str, int] = {
+    "NONE":     1,
+    "EXCHANGE": 2,
+    "SCENE":    3,
+    "STORY":    4,
+    "WORLD":    5,
+    "FOREVER":  6,
+}
+
+# ---------------------------------------------------------------------------
+# Sorting Hat helpers
+# ---------------------------------------------------------------------------
+
 # Perception verbs that almost always signal SENSE intent.
 # Checked against the first verb in "I <verb>" patterns before calling Ollama,
 # so the classifier is fast and correct for the most common sense inputs.
@@ -365,14 +436,26 @@ _SAY_VERBS = frozenset({
 def _rule_based_intent(text: str) -> str | None:
     """Fast heuristic intent detection — no LLM required.
 
-    Returns "SAY", "DO", or "SENSE" if confident, else None (→ fall through to Ollama).
+    Returns "SAY", "DO", "SENSE", "META:RESET", "META:PORTRAIT", "META:PROMOTE"
+    if confident, else None (→ fall through to Ollama).
+
+    META checks run first so canonicalization commands are never relayed to ST.
     """
     stripped = text.strip()
+    lower = stripped.lower()
+
+    # META — check before speech/action so "forever" doesn't fall through
+    if any(kw in lower for kw in _META_RESET_KW):
+        return "META:RESET"
+    if any(kw in lower for kw in _META_PORTRAIT_KW):
+        return "META:PORTRAIT"
+    if any(kw in lower for kw in _META_PROMOTE_KW):
+        return "META:PROMOTE"
+
     # Outer quotes = explicit speech
     if stripped.startswith(('"', '\u201c', "'")):
         return "SAY"
     # "I <verb> …" pattern
-    lower = stripped.lower()
     m = re.match(r"^i\s+(\w+)", lower)
     if m:
         verb = m.group(1)
@@ -384,11 +467,12 @@ def _rule_based_intent(text: str) -> str | None:
 
 
 def _sorting_hat(text: str) -> str:
-    """Classify player intent as SAY, DO, or SENSE.
+    """Classify player intent as SAY, DO, SENSE, or META:*.
 
     Order:
     1. Rule-based heuristics (instant, covers >80% of cases correctly)
-    2. Ollama one-shot classification (for ambiguous inputs)
+       META:* intents are caught here and never sent to the LLM.
+    2. Ollama one-shot classification (for ambiguous SAY/DO/SENSE inputs)
     3. Final fallback: DO
     """
     rule = _rule_based_intent(text)
@@ -504,7 +588,116 @@ def _tail_service_log(service: str, n: int = 40) -> list[str]:
     return [l for l in all_lines if tag in l][-n:]
 
 
+def _auto_permanence(turn: dict) -> str:
+    """Assign a default permanence tier to a narrator turn based on its markers.
+
+    INTRODUCE → WORLD (NPCs are part of the world)
+    LORE      → STORY (lore persists through the arc)
+    Sense tags → SCENE (environment details survive scene resets)
+    Player turns → EXCHANGE (consumed immediately, not carried forward)
+    Default   → EXCHANGE
+    """
+    if turn.get("is_player"):
+        return "EXCHANGE"
+    markers = set(m.upper() for m in (turn.get("markers_found") or []))
+    if "INTRODUCE" in markers:
+        return "WORLD"
+    if "LORE" in markers:
+        return "STORY"
+    if markers & {"SIGHT", "SMELL", "SOUND", "TOUCH", "TASTE", "ENVIRONMENT"}:
+        return "SCENE"
+    return "EXCHANGE"
+
+
+def _append_forever(entry: dict) -> None:
+    """Append a canon fact to forever.jsonl. Last-write-wins per key."""
+    entry["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        STATUS_DIR.mkdir(parents=True, exist_ok=True)
+        with FOREVER_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+    except Exception:
+        pass
+
+
+def _load_forever_log() -> list[dict]:
+    """Read forever.jsonl, returning deduplicated entries (last-write-wins per key)."""
+    if not FOREVER_LOG.exists():
+        return []
+    seen: dict[str, dict] = {}
+    try:
+        for line in FOREVER_LOG.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+                key = e.get("key") or e.get("canonical_name") or line[:80]
+                seen[key] = e
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return list(seen.values())
+
+
+def _handle_meta_command(text: str, sub: str) -> dict:
+    """Handle a META:* classified player input.
+
+    META commands are NOT relayed to SillyTavern — they are sidecar-only canon
+    management commands. The response is broadcast as a "meta" SSE event so the
+    /game/ UI can render a visual confirmation.
+
+    sub: "RESET" | "PORTRAIT" | "PROMOTE"
+    """
+    global _pending_reset, _pending_portrait
+    lower = text.lower()
+
+    if sub == "RESET":
+        level = (
+            "world"  if "world"  in lower else
+            "story"  if "story"  in lower else
+            "scene"
+        )
+        threshold = _PERMANENCE_VALUE.get(level.upper(), _PERMANENCE_VALUE["SCENE"])
+        # Wipe in-memory narrator turns below threshold
+        surviving = [t for t in _narrator_turns
+                     if _PERMANENCE_VALUE.get(t.get("permanence", "EXCHANGE"), 2) >= threshold]
+        _narrator_turns.clear()
+        _narrator_turns.extend(surviving)
+        # Rewrite log
+        try:
+            with NARRATOR_TURNS_LOG.open("w", encoding="utf-8") as f:
+                for t in surviving:
+                    f.write(json.dumps(t, default=str) + "\n")
+        except Exception:
+            pass
+        # Wipe world entities below threshold
+        remove_ids = [eid for eid, ent in _world["entities"].items()
+                      if _PERMANENCE_VALUE.get(ent.get("permanence", "SCENE"), 3) < threshold]
+        for eid in remove_ids:
+            del _world["entities"][eid]
+        # Signal extension to start a new ST chat
+        _pending_reset = {"level": level}
+        _sse_broadcast("meta", {"type": "reset", "level": level, "text": text})
+        _sse_broadcast("reset", {"level": level})
+        return {"ok": True, "meta": "RESET", "level": level,
+                "turns_kept": len(surviving), "entities_removed": len(remove_ids)}
+
+    if sub == "PORTRAIT":
+        _pending_portrait = "__last__"  # extension resolves to actual last image
+        _sse_broadcast("meta", {"type": "portrait", "text": text})
+        return {"ok": True, "meta": "PORTRAIT"}
+
+    # PROMOTE — canonicalize the text as a forever fact
+    entry = {"type": "fact", "key": text[:120], "text": text, "permanence": "FOREVER"}
+    _append_forever(entry)
+    _sse_broadcast("meta", {"type": "promote", "text": text})
+    return {"ok": True, "meta": "PROMOTE", "text": text}
+
+
 def _store_narrator_turn(turn: dict) -> None:
+    turn.setdefault("permanence", _auto_permanence(turn))
     _narrator_turns.append(turn)
     try:
         with NARRATOR_TURNS_LOG.open("a", encoding="utf-8") as f:
@@ -988,6 +1181,13 @@ class Handler(BaseHTTPRequestHandler):
                     "/world-state (GET, ?type=location|npc|item|player)",
                     "/events (GET, text/event-stream — SSE for game UI)",
                     "/logs/<service> (GET, plain-text)",
+                    "/player-input (POST — SAY/DO/SENSE or META:* command)",
+                    "/pending-player-input (GET — consume-once relay for extension)",
+                    "/pending-reset (GET — consume-once reset signal for extension)",
+                    "/pending-portrait (GET — consume-once portrait signal for extension)",
+                    "/forever (GET — canon facts log)",
+                    "/forever-portrait (POST — promote image URL to forever canon)",
+                    "/reset (POST or GET ?level=scene|story|world|all)",
                 ],
             })
             return
@@ -1064,6 +1264,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, result or {})
             return
 
+        if path == "/pending-reset":
+            global _pending_reset
+            result = _pending_reset
+            _pending_reset = None  # consume once
+            self._send_json(200, result or {})
+            return
+
+        if path == "/pending-portrait":
+            global _pending_portrait
+            result = _pending_portrait
+            _pending_portrait = None  # consume once
+            self._send_json(200, {"pending": result} if result else {})
+            return
+
+        if path == "/forever":
+            self._send_json(200, {"entries": _load_forever_log()})
+            return
+
         # Per-service log tail: GET /logs/<service>
         if path.startswith("/logs/"):
             service = path[len("/logs/"):]
@@ -1130,6 +1348,14 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"ok": False, "error": "empty text"})
                     return
                 intent = _sorting_hat(text)
+
+                # META intents are sidecar-only — not relayed to SillyTavern.
+                if intent.startswith("META:"):
+                    sub = intent.split(":", 1)[1]
+                    result = _handle_meta_command(text, sub)
+                    self._send_json(200, result)
+                    return
+
                 wrapped = _wrap_player_text(intent, text)
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 turn = {
@@ -1143,6 +1369,44 @@ class Handler(BaseHTTPRequestHandler):
                 _sse_broadcast("turn", turn)
                 _pending_player_input = {"text": wrapped, "intent": intent}
                 self._send_json(200, {"ok": True, "intent": intent, "wrapped": wrapped})
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+            return
+
+        if path == "/reset":
+            qs = parse_qs(urlparse(self.path).query)
+            level = (qs.get("level", ["scene"])[0]).lower()
+            # Accept level from query string OR JSON body
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                try:
+                    body_data = json.loads(self.rfile.read(length).decode("utf-8"))
+                    level = body_data.get("level", level)
+                except Exception:
+                    pass
+            level = level if level in ("exchange", "scene", "story", "world", "all") else "scene"
+            result = _handle_meta_command(f"reset the {level}", "RESET")
+            self._send_json(200, result)
+            return
+
+        if path == "/forever-portrait":
+            global _pending_portrait
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+                url = data.get("url", "").strip()
+                if url:
+                    _append_forever({
+                        "type": "portrait",
+                        "key": "__narrator_portrait__",
+                        "url": url,
+                        "permanence": "FOREVER",
+                    })
+                    _sse_broadcast("meta", {"type": "portrait_saved", "url": url})
+                    self._send_json(200, {"ok": True, "url": url})
+                else:
+                    self._send_json(400, {"ok": False, "error": "url required"})
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
             return

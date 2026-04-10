@@ -5358,3 +5358,71 @@ async function _pollGameUiInput() {
     _gameUiPollActive = false;
 }
 setInterval(_pollGameUiInput, 1000);
+
+// ---------------------------------------------------------------------------
+// Permanence reset relay — polls /pending-reset and calls doNewChat() when
+// the player issues a "reset the scene/story/world" META command.
+// ---------------------------------------------------------------------------
+let _resetPollActive = false;
+async function _pollReset() {
+    if (_resetPollActive) return;
+    _resetPollActive = true;
+    try {
+        const res = await fetch('/pending-reset');
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.level) {
+                console.log(`[Remnant] Reset relay: level=${data.level} — starting new chat`);
+                await doNewChat({ deleteCurrentChat: false });
+            }
+        }
+    } catch (_) { /* sidecar may not be running — ignore */ }
+    _resetPollActive = false;
+}
+setInterval(_pollReset, 1000);
+
+// ---------------------------------------------------------------------------
+// Portrait promotion relay — polls /pending-portrait and POSTs the last
+// generated image URL to /forever-portrait when the player says "portrait
+// forever" or "that is what X looks like now".
+// ---------------------------------------------------------------------------
+let _portraitPollActive = false;
+async function _pollPortrait() {
+    if (_portraitPollActive) return;
+    _portraitPollActive = true;
+    try {
+        const res = await fetch('/pending-portrait');
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.pending) {
+                // Best-effort: try extension_settings.sd first, then settings.images
+                let lastImg = null;
+                try {
+                    const imgs = (typeof extension_settings !== 'undefined' &&
+                                  extension_settings.sd &&
+                                  extension_settings.sd.generatedImages) || [];
+                    if (imgs.length) lastImg = imgs[0];
+                } catch (_) {}
+                if (!lastImg) {
+                    try {
+                        lastImg = (typeof settings !== 'undefined' &&
+                                   settings.images && settings.images[0] &&
+                                   settings.images[0].url) || null;
+                    } catch (_) {}
+                }
+                if (lastImg) {
+                    await fetch('/forever-portrait', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ url: lastImg }),
+                    });
+                    console.log('[Remnant] Portrait promoted to forever:', lastImg);
+                } else {
+                    console.warn('[Remnant] Portrait relay: no last image found');
+                }
+            }
+        }
+    } catch (_) { /* sidecar may not be running — ignore */ }
+    _portraitPollActive = false;
+}
+setInterval(_pollPortrait, 2000);

@@ -106,6 +106,18 @@ def post_player_input(text: str) -> dict:
     return result or {}
 
 
+def reset_for_test(level: str = "story") -> None:
+    """Wipe narrator turns and world entities below the given permanence level.
+
+    Use in test setUpClass() for clean isolation without destroying Forever canon.
+
+    Levels: "exchange" | "scene" | "story" | "world" | "all"
+    "story" is the default — clears exchange/scene-level content (dialogue,
+    sensory details) while keeping WORLD-tier NPCs and STORY-tier lore.
+    """
+    _get_json(f"{SIDECAR_BASE}/reset?level={level}", timeout=5.0)
+
+
 # ---------------------------------------------------------------------------
 # Core: play a turn and wait for the narrator to respond
 # ---------------------------------------------------------------------------
@@ -232,6 +244,9 @@ class NarrativeTestCase(unittest.TestCase):
             raise unittest.SkipTest(
                 "sidecar not reachable on :8700 — is the native stack running?"
             )
+        # Clean slate for each test class — wipe exchange/scene content,
+        # keep WORLD-tier NPCs and above so Forever canon is preserved.
+        reset_for_test("story")
 
     def play(self, text: str, timeout: int = DEFAULT_TIMEOUT) -> tuple[dict, dict]:
         """Play one turn: post input, wait for response, auto-assert quality."""
