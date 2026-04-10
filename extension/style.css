@@ -207,6 +207,30 @@
     margin-top: 2px;
 }
 
+/* Inline sense chips — shown in the chat message body when the narrator
+   emits SIGHT/SMELL/SOUND/TASTE/TOUCH/ENVIRONMENT markers. Complements
+   the channel drawer; the chip shows the sense inline so the raw output
+   is visible without hunting through the drawer. */
+.narrator-sense-chip {
+    display: inline-block;
+    font-size: 0.82em;
+    padding: 1px 6px 1px 4px;
+    margin: 0 2px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    opacity: 0.80;
+    vertical-align: middle;
+    cursor: help;
+    white-space: nowrap;
+}
+.narrator-sense-chip.sense-sight        { border-color: rgba(100, 181, 246, 0.4); }
+.narrator-sense-chip.sense-sound        { border-color: rgba(129, 212, 250, 0.4); }
+.narrator-sense-chip.sense-smell        { border-color: rgba(165, 214, 167, 0.4); }
+.narrator-sense-chip.sense-taste        { border-color: rgba(255, 204, 128, 0.4); }
+.narrator-sense-chip.sense-touch        { border-color: rgba(240, 98,  146, 0.4); }
+.narrator-sense-chip.sense-environment  { border-color: rgba(38,  198, 218, 0.4); }
+
 /* Orphaned marker fragment — shown when the LLM truncated mid-marker.
    A small ellipsis with a title-tip, discreet and unobtrusive. */
 .sense-orphan {

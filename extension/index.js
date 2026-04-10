@@ -751,6 +751,16 @@ function transformMessageText(messageText) {
         // Also kill an unterminated trailing fence (```mermaid\n...EOF).
         messageText = messageText.replace(/```[\s\S]*$/, '');
     }
+
+    // Strip [SAY]/[DO] channel-wrapper tags from the chat display.
+    // Their inner text IS the narration and should be visible; the wrapper
+    // brackets are an internal routing signal consumed by the drawer.
+    // [/SAY] and [/DO] closing tags are handled by the same pass.
+    messageText = messageText.replace(/\[SAY\]([\s\S]*?)\[\/SAY\]/gi, '$1');
+    messageText = messageText.replace(/\[DO\]([\s\S]*?)\[\/DO\]/gi, (_, inner) => `*${inner.trim()}*`);
+    // Orphaned openers/closers (truncated response or missing pair)
+    messageText = messageText.replace(/\[\/?(SAY|DO)\]/gi, '');
+
     const markers = detectSenseMarkers(messageText);
     let result = messageText;
     // Replace in reverse order so earlier indices stay valid.
@@ -760,11 +770,17 @@ function transformMessageText(messageText) {
         if (idx === -1) continue;
 
         let replacement;
-        // Icon-bar senses and GENERATE_IMAGE are pulled out of prose.
-        // The sense bar (rendered by updateMessageDisplay) holds the
-        // description; the gallery holds the image.
-        if (SENSE_STRIP_TYPES.has(m.type)) {
+        // Sense types: show as compact inline chips in the chat so the
+        // narrator's output is visible. GENERATE_IMAGE is a pure trigger
+        // (no prose value) so it stays hidden. All sense types ALSO go to
+        // the channel drawer via _translateToBlocks — the chip is bonus
+        // visibility, not a substitute.
+        if (m.type === 'GENERATE_IMAGE') {
             replacement = '';
+        } else if (SENSE_STRIP_TYPES.has(m.type)) {
+            const icon = SENSE_ICONS[m.type] || '•';
+            const shortDesc = m.description ? escapeHtml(m.description.substring(0, 100)) : '';
+            replacement = `<span class="narrator-sense-chip sense-${m.type.toLowerCase()}" title="${shortDesc}">${icon}${shortDesc ? ' ' + shortDesc : ''}</span>`;
         } else if (m.type === 'RESET_STORY' || m.type === 'RESET_RUN') {
             const flavor = escapeHtml(m.description || 'the run ends');
             replacement = `<div class="sense-reset">⟲ ${flavor}</div>`;
@@ -4085,8 +4101,8 @@ function _senseChannelFor(type) {
 function addChannelEntry(channel, entry) {
     const arr = _channelHistory[channel];
     if (!arr) return;
-    // Hard guard: bracket markers must never bleed into narrative channels
-    if ((channel === 'say' || channel === 'do') && /^\[[A-Z_]+(?:\([^)]*\))?\s*:/.test(entry.text || '')) return;
+    // No filtering — every entry that reaches here goes into its drawer.
+    // Sorting (which drawer) is done upstream in _translateToBlocks.
     entry.ts = Date.now();
     arr.push(entry);
     if (arr.length > _MAX_CH_ENTRIES) arr.splice(0, arr.length - _MAX_CH_ENTRIES);
@@ -4270,6 +4286,14 @@ function _translateToBlocks(rawText) {
     if (lastIdx < safe.length) {
         const prose = _stripMarkers(safe.slice(lastIdx));
         if (prose.length > 8) result.push({ channel: 'say', text: prose });
+    }
+
+    // Fallback: if the tokenizer produced zero blocks for a non-empty
+    // response, the narrator used an unrecognized format. Route the full
+    // stripped text to say so nothing is silently dropped.
+    if (result.length === 0) {
+        const fallback = _stripMarkers(safe).replace(/\[\/?(SAY|DO)\]/gi, '').replace(/\s{2,}/g, ' ').trim();
+        if (fallback.length > 4) result.push({ channel: 'say', text: fallback });
     }
 
     return result;
