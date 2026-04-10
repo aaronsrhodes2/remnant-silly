@@ -342,11 +342,64 @@ def _ollama_model() -> str:
     return "mistral"
 
 
+# Perception verbs that almost always signal SENSE intent.
+# Checked against the first verb in "I <verb>" patterns before calling Ollama,
+# so the classifier is fast and correct for the most common sense inputs.
+_SENSE_VERBS = frozenset({
+    "smell", "sniff", "inhale", "breathe",
+    "hear", "listen", "notice",
+    "taste", "lick",
+    "feel", "touch", "run", "trace",   # "run my hand along", "trace my fingers"
+    "sense", "perceive",
+    "observe", "study", "examine", "inspect", "scrutinize",
+    "watch", "gaze", "peer", "squint", "stare",
+})
+
+# Speech-framing verbs — strong SAY indicators even without outer quotes.
+_SAY_VERBS = frozenset({
+    "say", "shout", "whisper", "call", "ask", "tell", "speak",
+    "announce", "declare", "mutter", "murmur", "cry",
+})
+
+
+def _rule_based_intent(text: str) -> str | None:
+    """Fast heuristic intent detection — no LLM required.
+
+    Returns "SAY", "DO", or "SENSE" if confident, else None (→ fall through to Ollama).
+    """
+    stripped = text.strip()
+    # Outer quotes = explicit speech
+    if stripped.startswith(('"', '\u201c', "'")):
+        return "SAY"
+    # "I <verb> …" pattern
+    lower = stripped.lower()
+    m = re.match(r"^i\s+(\w+)", lower)
+    if m:
+        verb = m.group(1)
+        if verb in _SENSE_VERBS:
+            return "SENSE"
+        if verb in _SAY_VERBS:
+            return "SAY"
+    return None
+
+
 def _sorting_hat(text: str) -> str:
-    """Classify player intent as SAY, DO, or SENSE via Ollama. Falls back to heuristics."""
+    """Classify player intent as SAY, DO, or SENSE.
+
+    Order:
+    1. Rule-based heuristics (instant, covers >80% of cases correctly)
+    2. Ollama one-shot classification (for ambiguous inputs)
+    3. Final fallback: DO
+    """
+    rule = _rule_based_intent(text)
+    if rule:
+        return rule
+
     prompt = (
-        "Classify this player input as exactly one of: SAY, DO, SENSE.\n"
-        "SAY=speech or dialogue. DO=physical action or movement. SENSE=perception or observation.\n"
+        "Classify this player game input as exactly one of: SAY, DO, SENSE.\n"
+        "SAY = spoken words or dialogue.\n"
+        "DO  = physical action or movement.\n"
+        "SENSE = perception, observation, using one of the five senses.\n"
         f'Input: "{text}"\n'
         "Reply with one word only: SAY, DO, or SENSE."
     )
@@ -364,9 +417,6 @@ def _sorting_hat(text: str) -> str:
                 return word
     except Exception:
         pass
-    # Heuristic fallback — quotes = speech, else action
-    if text.startswith(('"', '\u201c', "'")):
-        return "SAY"
     return "DO"
 
 
