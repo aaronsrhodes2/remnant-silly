@@ -4105,7 +4105,8 @@ function installModeBar() {
 const _MAX_CH_ENTRIES = 100;
 const _channelHistory  = { say: [], do: [], sense: [], insights: [] };
 let   _activeDrawer    = null;   // 'say' | 'do' | 'sense' | 'insights' | null
-const _channelHydrated = new Set(); // mesids already parsed into channels
+const _channelHydrated = new Set(); // mesids already routed to channel drawers
+const _sidecarPosted   = new Set(); // mesids already POSTed to /narrator-turn
 let   _hydratedChatId  = null;   // ST chat_id when _channelHydrated was last built
 let   _pendingUserEntry = null;  // { text, channel, isPlayer:true } set in _applyModeTransform
 let   _senseMiniLast   = {};     // { type: label } — guards sense button re-render
@@ -4417,14 +4418,25 @@ async function _postNarratorTurn(messageId, rawText, blocks) {
 }
 
 function _parseNarratorIntoChannels(messageId, rawText, instant = false) {
-    if (_channelHydrated.has(messageId)) return;
-    _channelHydrated.add(messageId);
-    const blocks = _translateToBlocks(rawText);
-    const push = instant ? addChannelEntry : _queueChannelEntry;
-    for (const b of blocks) {
-        push(b.channel, { text: b.text, senseType: b.senseType, icon: b.icon });
+    // Channel drawer routing — once only, prevents duplicate entries.
+    if (!_channelHydrated.has(messageId)) {
+        _channelHydrated.add(messageId);
+        const blocks = _translateToBlocks(rawText);
+        const push = instant ? addChannelEntry : _queueChannelEntry;
+        for (const b of blocks) {
+            push(b.channel, { text: b.text, senseType: b.senseType, icon: b.icon });
+        }
     }
-    if (!instant) _postNarratorTurn(messageId, rawText, blocks).catch(() => {});
+    // Sidecar relay — live calls always post, even if the message was previously
+    // processed as instant=true by _populateChannelsFromHistory. Without this
+    // split, a CHAT_CHANGED that runs while ST is still streaming the response
+    // (inserting it into chat[] before CHARACTER_MESSAGE_RENDERED fires) would
+    // mark the mesid as hydrated-instant, silently suppressing the narrator-turn POST.
+    if (!instant && !_sidecarPosted.has(messageId)) {
+        _sidecarPosted.add(messageId);
+        const blocks = _translateToBlocks(rawText);
+        _postNarratorTurn(messageId, rawText, blocks).catch(() => {});
+    }
 }
 
 /**
@@ -4450,6 +4462,7 @@ function _populateChannelsFromHistory() {
         || (Array.isArray(chat) && chat[0] ? chat[0].send_date : null);
     if (currentChatId !== _hydratedChatId) {
         _channelHydrated.clear();
+        _sidecarPosted.clear();
         _hydratedChatId = currentChatId;
     }
     _senseMiniLast = {};

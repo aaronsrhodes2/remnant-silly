@@ -228,6 +228,18 @@ const emptyMsg  = document.getElementById('empty-msg');
 const connEl    = document.getElementById('conn-status');
 let _lastLocation = '';
 let _thinkTimer   = null;
+const _pendingPlayerTexts = new Set(); // optimistic-render dedup for SSE echo
+
+// Pre-wrap text locally (mirrors sidecar _wrap_player_text logic) so the
+// optimistic render shows the same text the SSE echo will carry.
+function _localWrap(text) {
+  const t = text.trim();
+  if (t.startsWith('"'))  return { channel: 'say', wrapped: t.endsWith('"') ? t : t + '"' };
+  if (t.startsWith("'"))  return { channel: 'say', wrapped: t };
+  if (t.startsWith('*'))  return { channel: 'do',  wrapped: t.endsWith('*') ? t : t + '*' };
+  if (t.startsWith('['))  return { channel: 'sense', wrapped: t };
+  return { channel: 'do', wrapped: '*' + t + '*' };
+}
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g,
@@ -358,7 +370,21 @@ function connect() {
   });
 
   es.addEventListener('turn', e => {
-    try { renderTurn(JSON.parse(e.data), false); } catch (_) {}
+    try {
+      const turn = JSON.parse(e.data);
+      // Skip player turns we already rendered optimistically
+      const isPlayerTurn = (turn.parsed_blocks || []).some(b => b.isPlayer);
+      if (isPlayerTurn) {
+        const rawText = (turn.raw_text || '').trim();
+        for (const pending of _pendingPlayerTexts) {
+          if (rawText === pending || rawText.includes(pending) || pending.includes(rawText)) {
+            _pendingPlayerTexts.delete(pending);
+            return; // already shown
+          }
+        }
+      }
+      renderTurn(turn, false);
+    } catch (_) {}
   });
 
   es.addEventListener('meta', e => {
@@ -423,6 +449,19 @@ async function sendInput(overrideText) {
   _sending = true;
   _clearTimers();
   inputEl.value = '';
+
+  // ── Optimistic render — show player turn immediately, no server round-trip ──
+  const { channel, wrapped } = _localWrap(text);
+  const optimEl = document.createElement('div');
+  optimEl.className = 'entry ' + channel + ' is-player arriving';
+  optimEl.innerHTML =
+    '<span class="entry-speaker">You</span>' +
+    '<span class="entry-text">' + esc(wrapped) + '</span>';
+  feed.appendChild(optimEl);
+  emptyMsg.style.display = 'none';
+  feed.scrollTop = feed.scrollHeight;
+  _pendingPlayerTexts.add(wrapped); // register for SSE echo dedup
+
   try {
     const res = await fetch('/player-input', {
       method: 'POST',
@@ -430,8 +469,21 @@ async function sendInput(overrideText) {
       body: JSON.stringify({text}),
     });
     const data = res.ok ? await res.json() : {};
-    // Only show thinking for non-META intents (META events self-resolve)
-    if (!data.meta) {
+
+    if (data.meta) {
+      // META intents: no SSE player turn — remove the optimistic render
+      optimEl.remove();
+      _pendingPlayerTexts.delete(wrapped);
+    } else {
+      // Reconcile: if server wrapped differently, update text in-place (no flicker)
+      if (data.wrapped && data.wrapped !== wrapped) {
+        const ch = (data.intent || channel).toLowerCase();
+        optimEl.className = 'entry ' + ch + ' is-player';
+        optimEl.querySelector('.entry-text').textContent = data.wrapped;
+        _pendingPlayerTexts.delete(wrapped);
+        _pendingPlayerTexts.add(data.wrapped);
+      }
+      // Show thinking indicator
       _removeThinking();
       const thinkEl = document.createElement('div');
       thinkEl.id = 'thinking-indicator';
@@ -440,12 +492,10 @@ async function sendInput(overrideText) {
         '<span class="entry-speaker">Narrator</span>' +
         '<span class="entry-text">· · ·</span>';
       feed.appendChild(thinkEl);
-      emptyMsg.style.display = 'none';
       feed.scrollTop = feed.scrollHeight;
-      // Safety timeout — remove after 90s if no response
       _thinkTimer = setTimeout(_removeThinking, 90000);
     }
-  } catch (_) {}
+  } catch (_) { /* optimistic render stays — player can see their message */ }
   _sending = false;
   inputEl.focus();
 }
