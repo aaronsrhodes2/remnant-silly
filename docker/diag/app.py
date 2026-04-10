@@ -33,6 +33,7 @@ from __future__ import annotations
 import collections
 import json
 import os
+import re
 import time
 import traceback
 import urllib.error
@@ -59,6 +60,219 @@ LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8700"))
 
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
 NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
+WORLD_STATE_LOG = STATUS_DIR / "world-state.jsonl"
+
+# ---------------------------------------------------------------------------
+# World Graph — persistent sensory entity model
+#
+# Entities start as "location" (auto-created from context.location) or
+# "npc" (created from INTRODUCE markers). Every sense tag the narrator
+# emits ([SIGHT], [SMELL], [SOUND], [TASTE], [TOUCH], [ENVIRONMENT]) is
+# stored as a sense_layer on the entity — it never expires.
+#
+# Data is in-memory (fast reads) and append-logged to world-state.jsonl
+# (survives restarts). The log is replayed on boot if the file exists.
+# ---------------------------------------------------------------------------
+
+def _loc_id(name: str) -> str:
+    """Stable entity ID from a location name: lowercase, spaces→underscore."""
+    return re.sub(r"[^a-z0-9_]", "", name.lower().replace(" ", "_"))[:64] or "unknown"
+
+def _similar_sense(existing: list[dict], sense_type: str, desc: str) -> bool:
+    """True if a sense_layer with this type+desc already exists (rough dedup)."""
+    desc_low = desc.lower().strip()
+    for s in existing:
+        if s.get("type") == sense_type and s.get("desc", "").lower().strip() == desc_low:
+            return True
+    return False
+
+_world: dict = {
+    "entities": {},   # id → entity dict
+    "turn_count": 0,
+}
+
+def _ensure_entity(entity_id: str, name: str, etype: str, parent_id: str | None = None) -> dict:
+    if entity_id not in _world["entities"]:
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _world["entities"][entity_id] = {
+            "id": entity_id,
+            "type": etype,
+            "canonical_name": name,
+            "aliases": [{"name": name, "weight": 1, "first_turn": str(_world["turn_count"])}],
+            "parent_id": parent_id,
+            "sense_layers": [],
+            "promoted_at": None,
+            "first_seen": now,
+            "last_referenced": now,
+        }
+    else:
+        _world["entities"][entity_id]["last_referenced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return _world["entities"][entity_id]
+
+def _add_alias(entity: dict, alias: str) -> None:
+    for a in entity["aliases"]:
+        if a["name"].lower() == alias.lower():
+            a["weight"] += 1
+            return
+    entity["aliases"].append({"name": alias, "weight": 1, "first_turn": str(_world["turn_count"])})
+
+def _add_sense_layer(entity: dict, sense_type: str, desc: str, turn_id: str) -> bool:
+    """Append a sense layer; return True if it was new (not a duplicate)."""
+    if _similar_sense(entity["sense_layers"], sense_type, desc):
+        return False
+    entity["sense_layers"].append({
+        "type": sense_type,
+        "desc": desc,
+        "turn_id": turn_id,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
+    return True
+
+def _write_world_event(event: dict) -> None:
+    try:
+        with WORLD_STATE_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, default=str) + "\n")
+    except Exception:
+        pass
+
+def _replay_world_log() -> None:
+    """Rebuild _world from world-state.jsonl on boot."""
+    if not WORLD_STATE_LOG.exists():
+        return
+    try:
+        for line in WORLD_STATE_LOG.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                ev = json.loads(line)
+                eid = ev.get("entity_id")
+                if not eid:
+                    continue
+                etype = ev.get("entity_type", "location")
+                name = ev.get("canonical_name", eid)
+                parent = ev.get("parent_id")
+                entity = _ensure_entity(eid, name, etype, parent)
+                for alias in ev.get("new_aliases", []):
+                    _add_alias(entity, alias)
+                for sl in ev.get("new_sense_layers", []):
+                    _add_sense_layer(entity, sl["type"], sl["desc"], sl.get("turn_id", "?"))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+def _ingest_narrator_turn_into_world(turn: dict) -> None:
+    """Extract world-state changes from a narrator turn and persist them."""
+    _world["turn_count"] += 1
+    turn_id = turn.get("turn_id", str(_world["turn_count"]))
+    ctx = turn.get("context") or {}
+    location_name = (ctx.get("location") or "").strip()
+    raw_text = turn.get("raw_text", "")
+    parsed_blocks = turn.get("parsed_blocks") or []
+    markers_found = turn.get("markers_found") or []
+
+    # ── Location entity ────────────────────────────────────────────────
+    loc_id = _loc_id(location_name) if location_name else None
+    loc_entity = None
+    new_sense_layers = []
+    if loc_id:
+        loc_entity = _ensure_entity(loc_id, location_name, "location")
+
+        # Sense blocks from parsed narrator output → permanent layers on the location.
+        # (senseType tags like [SIGHT][/SIGHT] arrive pre-parsed from the extension.)
+        for block in parsed_blocks:
+            if block.get("senseType") and block.get("text"):
+                if _add_sense_layer(loc_entity, block["senseType"], block["text"], turn_id):
+                    new_sense_layers.append({"type": block["senseType"], "desc": block["text"]})
+
+        # Catch-all: any [TAG_TYPE: "text"] or [TAG_TYPE(ctx): "text"] colon-format marker
+        # not handled by the structured extractors below → also layer onto location.
+        # This makes the world graph agnostic: the narrator can invent [MOOD], [TENSION],
+        # [HISTORY] etc. and they accumulate the same way sense tags do.
+        _STRUCTURED_TAGS = {"INTRODUCE", "PLAYER_TRAIT", "ITEM"}
+        _catchall_re = re.compile(
+            r'\[([A-Z_]{2,32})(?:\([^)]*\))?\s*:\s*"?([^"\]\n]{3,200})"?\]', re.IGNORECASE
+        )
+        for m in _catchall_re.finditer(raw_text):
+            tag_type = m.group(1).upper()
+            tag_text = m.group(2).strip()
+            if tag_type not in _STRUCTURED_TAGS and tag_text:
+                if _add_sense_layer(loc_entity, tag_type, tag_text, turn_id):
+                    new_sense_layers.append({"type": tag_type, "desc": tag_text})
+
+        if new_sense_layers:
+            _write_world_event({
+                "event": "sense_layers_added",
+                "entity_id": loc_id,
+                "entity_type": "location",
+                "canonical_name": location_name,
+                "new_sense_layers": new_sense_layers,
+                "turn_id": turn_id,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            })
+
+    # ── NPC entities from INTRODUCE markers ───────────────────────────
+    # Raw text: [INTRODUCE(Name): "description"]
+    introduce_re = re.compile(r'\[INTRODUCE\(([^)]+)\)\s*:\s*"?([^"\]]+)"?\]', re.IGNORECASE)
+    for match in introduce_re.finditer(raw_text):
+        npc_name = match.group(1).strip()
+        npc_desc = match.group(2).strip()
+        npc_id = _loc_id(npc_name)
+        npc = _ensure_entity(npc_id, npc_name, "npc", parent_id=loc_id)
+        new_layers = []
+        if npc_desc and _add_sense_layer(npc, "SIGHT", npc_desc, turn_id):
+            new_layers.append({"type": "SIGHT", "desc": npc_desc})
+        _write_world_event({
+            "event": "npc_introduced",
+            "entity_id": npc_id,
+            "entity_type": "npc",
+            "canonical_name": npc_name,
+            "parent_id": loc_id,
+            "new_sense_layers": new_layers,
+            "turn_id": turn_id,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })
+
+    # ── Player trait / name alias tracking ────────────────────────────
+    # [PLAYER_TRAIT(name): "Frank Rizzo"] — update the player entity
+    trait_re = re.compile(r'\[PLAYER_TRAIT\(name\)\s*:\s*"?([^"\]]+)"?\]', re.IGNORECASE)
+    for match in trait_re.finditer(raw_text):
+        player_name = match.group(1).strip()
+        player_entity = _ensure_entity("__player__", player_name, "player")
+        if not any(a["name"] == player_name for a in player_entity["aliases"]):
+            _add_alias(player_entity, player_name)
+            player_entity["canonical_name"] = player_name
+            _write_world_event({
+                "event": "player_named",
+                "entity_id": "__player__",
+                "entity_type": "player",
+                "canonical_name": player_name,
+                "new_aliases": [player_name],
+                "turn_id": turn_id,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            })
+
+    # ── Item codex entries ─────────────────────────────────────────────
+    item_re = re.compile(r'\[ITEM\(([^)]+)\)\s*(?::\s*"?([^"\]]*)"?)?\]', re.IGNORECASE)
+    for match in item_re.finditer(raw_text):
+        item_name = match.group(1).strip()
+        item_desc = (match.group(2) or "").strip()
+        item_id = _loc_id(item_name)
+        item = _ensure_entity(item_id, item_name, "item", parent_id=loc_id)
+        new_layers = []
+        if item_desc and _add_sense_layer(item, "SIGHT", item_desc, turn_id):
+            new_layers.append({"type": "SIGHT", "desc": item_desc})
+        if new_layers:
+            _write_world_event({
+                "event": "item_discovered",
+                "entity_id": item_id,
+                "entity_type": "item",
+                "canonical_name": item_name,
+                "parent_id": loc_id,
+                "new_sense_layers": new_layers,
+                "turn_id": turn_id,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            })
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +853,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/browser-health (POST)",
                     "/narrator-turn (POST)",
                     "/narrator-turns (GET, ?n=50)",
+                    "/world-state (GET, ?type=location|npc|item|player)",
                     "/logs/<service> (GET, plain-text)",
                 ],
             })
@@ -658,6 +873,19 @@ class Handler(BaseHTTPRequestHandler):
             n = max(1, min(n, 200))
             turns = list(_narrator_turns)[-n:]
             self._send_json(200, {"turns": turns, "count": len(turns), "total_seen": len(_narrator_turns)})
+            return
+
+        if path == "/world-state":
+            qs = parse_qs(urlparse(self.path).query)
+            etype = qs.get("type", [None])[0]
+            entities = list(_world["entities"].values())
+            if etype:
+                entities = [e for e in entities if e.get("type") == etype]
+            self._send_json(200, {
+                "turn_count": _world["turn_count"],
+                "entity_count": len(_world["entities"]),
+                "entities": entities,
+            })
             return
 
         # Per-service log tail: GET /logs/<service>
@@ -705,6 +933,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("body must be a JSON object")
                 turn.setdefault("received_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
                 _store_narrator_turn(turn)
+                try:
+                    _ingest_narrator_turn_into_world(turn)
+                except Exception:
+                    pass  # world graph never crashes the turn pipeline
                 self._send_json(200, {"ok": True})
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
@@ -728,6 +960,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    _replay_world_log()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:

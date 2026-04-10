@@ -77,6 +77,26 @@
   .turn-raw.open { display: block; }
   #no-turns { color: var(--dim); font-size: 12px; padding: 20px 0; }
   .turns-badge { color: var(--err); margin-left: 4px; }
+  /* World graph */
+  .world-summary { color: var(--dim); font-size: 11px; margin-bottom: 10px; }
+  .world-group { margin-bottom: 14px; }
+  .world-group-title { font-size: 11px; color: var(--accent); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .entity-card {
+    background: var(--panel); border: 1px solid #2a241d;
+    border-left: 3px solid var(--dim);
+    padding: 8px 12px; margin-bottom: 6px;
+  }
+  .entity-card.type-location { border-left-color: #4a8a9a; }
+  .entity-card.type-npc      { border-left-color: #8a6aaa; }
+  .entity-card.type-item     { border-left-color: #7a9a5a; }
+  .entity-card.type-player   { border-left-color: var(--accent); }
+  .entity-name { font-size: 12px; color: var(--ink); font-weight: bold; }
+  .entity-meta { font-size: 10px; color: var(--dim); margin-top: 2px; }
+  .entity-layers { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .layer-row { display: flex; gap: 8px; font-size: 11px; }
+  .layer-type { color: var(--accent); min-width: 80px; flex-shrink: 0; font-size: 10px; letter-spacing: 0.5px; }
+  .layer-text { color: var(--ink); opacity: 0.85; }
+  #no-world { color: var(--dim); font-size: 12px; padding: 20px 0; }
   .footer { color: var(--dim); margin-top: 16px; font-size: 11px; }
   a { color: var(--accent); }
 </style>
@@ -88,6 +108,7 @@
   <div class="tab-bar">
     <button class="tab-btn active" id="tab-services" onclick="showTab('services')">Services</button>
     <button class="tab-btn" id="tab-turns" onclick="showTab('turns')">Narrator turns<span class="turns-badge" id="turns-badge" style="display:none">●</span></button>
+    <button class="tab-btn" id="tab-world" onclick="showTab('world')">World</button>
   </div>
 
   <div id="section-services">
@@ -106,6 +127,12 @@
   <div id="section-turns" style="display:none">
     <div id="no-turns" style="display:none">(no narrator turns yet — waiting for first generation)</div>
     <div class="turn-feed" id="turn-feed"></div>
+  </div>
+
+  <div id="section-world" style="display:none">
+    <div class="world-summary" id="world-summary">loading…</div>
+    <div id="no-world" style="display:none">(no world entities yet — play a few turns)</div>
+    <div id="world-feed"></div>
   </div>
 
   <div class="footer">
@@ -128,9 +155,12 @@ function showTab(tab) {
   currentTab = tab;
   document.getElementById('section-services').style.display = tab === 'services' ? '' : 'none';
   document.getElementById('section-turns').style.display   = tab === 'turns'    ? '' : 'none';
+  document.getElementById('section-world').style.display   = tab === 'world'    ? '' : 'none';
   document.getElementById('tab-services').classList.toggle('active', tab === 'services');
   document.getElementById('tab-turns').classList.toggle('active', tab === 'turns');
+  document.getElementById('tab-world').classList.toggle('active', tab === 'world');
   if (tab === 'turns') document.getElementById('turns-badge').style.display = 'none';
+  if (tab === 'world') tickWorld();
 }
 
 async function fetchJson(url) {
@@ -259,6 +289,62 @@ function toggleRaw(id) {
   if (el) el.classList.toggle('open');
 }
 
+const _ENTITY_TYPE_ORDER = ['location', 'npc', 'item', 'player'];
+
+function renderWorld(data) {
+  const sumEl  = document.getElementById('world-summary');
+  const noEl   = document.getElementById('no-world');
+  const feedEl = document.getElementById('world-feed');
+  if (data.__error) {
+    sumEl.textContent = 'error: ' + data.__error;
+    return;
+  }
+  const entities = data.entities || [];
+  sumEl.textContent = data.turn_count + ' turn(s) · ' + data.entity_count + ' entit' + (data.entity_count === 1 ? 'y' : 'ies');
+  if (!entities.length) { noEl.style.display = ''; feedEl.innerHTML = ''; return; }
+  noEl.style.display = 'none';
+
+  // Group by type
+  const groups = {};
+  for (const e of entities) {
+    const t = e.type || 'unknown';
+    if (!groups[t]) groups[t] = [];
+    groups[t].push(e);
+  }
+
+  const typeOrder = [..._ENTITY_TYPE_ORDER, ...Object.keys(groups).filter(t => !_ENTITY_TYPE_ORDER.includes(t))];
+  let html = '';
+  for (const type of typeOrder) {
+    if (!groups[type]) continue;
+    html += '<div class="world-group"><div class="world-group-title">' + esc(type) + 's</div>';
+    for (const e of groups[type]) {
+      const aliases = (e.aliases || []).filter(a => a.name !== e.canonical_name).map(a => esc(a.name)).join(', ');
+      const parent = e.parent_id ? ' · parent: ' + esc(e.parent_id) : '';
+      const layers = (e.sense_layers || []);
+      let layerHtml = '';
+      for (const l of layers) {
+        layerHtml += '<div class="layer-row"><span class="layer-type">' + esc(l.type) + '</span>'
+          + '<span class="layer-text">' + esc((l.desc || '').substring(0, 200)) + '</span></div>';
+      }
+      html += '<div class="entity-card type-' + esc(type) + '">'
+        + '<div class="entity-name">' + esc(e.canonical_name) + '</div>'
+        + '<div class="entity-meta">' + esc(e.id) + parent
+          + (aliases ? ' · aka: ' + aliases : '')
+          + ' · ' + layers.length + ' layer(s)'
+          + '</div>'
+        + (layerHtml ? '<div class="entity-layers">' + layerHtml + '</div>' : '')
+        + '</div>';
+    }
+    html += '</div>';
+  }
+  feedEl.innerHTML = html;
+}
+
+async function tickWorld() {
+  const data = await fetchJson('/diagnostics/world-state');
+  if (!data.__error) renderWorld(data);
+}
+
 async function tickServices() {
   const [gw, fsd, oll, st, fsdH, ollT, log] = await Promise.all([
     fetchJson('/health'),
@@ -297,7 +383,9 @@ async function tickTurns() {
 
 async function tick() {
   document.getElementById('poll-time').textContent = new Date().toLocaleTimeString();
-  await Promise.all([tickServices(), tickTurns()]);
+  const jobs = [tickServices(), tickTurns()];
+  if (currentTab === 'world') jobs.push(tickWorld());
+  await Promise.all(jobs);
 }
 
 tick();
