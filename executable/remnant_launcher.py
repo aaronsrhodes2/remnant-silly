@@ -12,12 +12,12 @@ Manages all native services without requiring Docker:
   nginx       :1582  reverse proxy (the only exposed port)
 
 Usage:
-    python launcher/remnant_launcher.py          # normal start
-    python launcher/remnant_launcher.py --setup  # first-run setup only
-    python launcher/remnant_launcher.py --status # show status and exit
+    python executable/remnant_launcher.py          # normal start
+    python executable/remnant_launcher.py --setup  # first-run setup only
+    python executable/remnant_launcher.py --status # show status and exit
 
 Packaged into Remnant.exe via:
-    python launcher/build.py
+    python executable/build.py
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -42,16 +41,17 @@ from typing import Optional
 def _find_repo_root() -> Path:
     """Return the repo root. Works whether running from source or packaged exe."""
     if getattr(sys, "frozen", False):
-        # PyInstaller: exe is in the repo root (or app dir)
+        # PyInstaller: exe is in the same directory as Remnant.exe
         return Path(sys.executable).parent
-    # Running from source: launcher/remnant_launcher.py → repo root
+    # Running from source: executable/remnant_launcher.py → repo root
     return Path(__file__).parent.parent.resolve()
 
-REPO_ROOT    = _find_repo_root()
-APP_DIR      = Path(os.environ.get("LOCALAPPDATA", REPO_ROOT)) / "Remnant"
-STATUS_DIR   = REPO_ROOT / "scripts" / "splash" / "status"
-RUN_DIR      = STATUS_DIR / ".native-run"
-BIN_DIR      = APP_DIR / "bin"
+REPO_ROOT  = _find_repo_root()
+APP_DIR    = Path(os.environ.get("LOCALAPPDATA", REPO_ROOT)) / "Remnant"
+# All runtime artifacts live flat under REPO_ROOT (gitignored: /status/, /logs/, /bin/)
+STATUS_DIR = REPO_ROOT / "status"
+RUN_DIR    = REPO_ROOT / "logs" / "native-run"
+BIN_DIR    = REPO_ROOT / "bin"
 
 # Port assignments (canonical — matches port-layout golden rule)
 PORTS = {
@@ -94,23 +94,27 @@ def log(msg: str, level: str = "info"):
 # ── Hardware detection (thin wrapper around hardware.py) ──────────────────────
 
 def _load_hardware_module():
-    """Import hardware.py from launcher/ — works in source and packaged mode."""
+    """Import hardware.py from executable/ — works in source and packaged mode."""
     try:
         import importlib.util
         hw_path = Path(__file__).parent / "hardware.py"
         spec = importlib.util.spec_from_file_location("hardware", hw_path)
         mod = importlib.util.module_from_spec(spec)
+        # Must register in sys.modules before exec_module so @dataclass can
+        # resolve annotation types via sys.modules[cls.__module__] (Python 3.12+).
+        sys.modules["hardware"] = mod
         spec.loader.exec_module(mod)
         return mod
-    except Exception:
+    except Exception as e:
+        log(f"hardware.py load failed: {e}", "warn")
         return None
 
 
 def detect_and_show_hardware() -> dict:
     """Detect hardware, print summary, write hardware-profile.json. Returns status dict."""
+    STATUS_DIR.mkdir(parents=True, exist_ok=True)   # ensure dir exists regardless of hw detection
     hw_mod = _load_hardware_module()
     if hw_mod is None:
-        log("hardware.py not found — skipping detection", "warn")
         return {}
 
     hw = hw_mod.detect()
@@ -217,9 +221,27 @@ def _find_st_dir() -> Optional[Path]:
     return None
 
 
-def _find_python() -> Path:
-    """Return python executable (prefer current interpreter)."""
-    return Path(sys.executable)
+def _find_python() -> Optional[Path]:
+    """Return a Python interpreter suitable for running Flask service scripts.
+
+    In source mode: the current interpreter is already Python, so use it.
+    In frozen mode (Remnant.exe): sys.executable IS the exe, not a Python
+    interpreter. We must find a real python in PATH or the bundled winget
+    install location instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return Path(sys.executable)
+    # Frozen: find a real Python on PATH
+    for name in ["python", "python3", "py"]:
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    # Last resort: winget default Python location
+    winget_py = (Path(os.environ.get("LOCALAPPDATA", "")) /
+                 "Microsoft" / "WindowsApps" / "python3.exe")
+    if winget_py.exists():
+        return winget_py
+    return None
 
 
 # ── First-run setup ────────────────────────────────────────────────────────────
@@ -273,6 +295,46 @@ def _extract_zip(src: Path, dest: Path):
         z.extractall(dest)
 
 
+def _ensure_cache_junctions():
+    """Junction system tool default dirs → local-cache/ so everything writes there.
+
+    This makes bare `ollama pull` and `huggingface-cli download` (run outside the
+    launcher) land in local-cache automatically, without needing env vars.
+    Docker uses bind-mounts to the same local-cache/ subdirs.
+
+    Junctions are only created when the target path doesn't exist yet.
+    If the user already has data there (real directory), we leave it alone
+    and rely on env vars set at launch time instead.
+    """
+    LOCAL_CACHE = REPO_ROOT / "local-cache"
+    user = Path(os.environ.get("USERPROFILE", ""))
+    junctions = [
+        # (link_path,                                      target)
+        (user / ".ollama",                                LOCAL_CACHE / "ollama-data"),
+        (user / ".cache" / "huggingface",                 LOCAL_CACHE / "hf-cache"),
+    ]
+    for link, target in junctions:
+        target.mkdir(parents=True, exist_ok=True)
+        # Already a junction pointing to target — nothing to do
+        if link.is_symlink() or (link.exists() and link.is_junction() if hasattr(link, "is_junction") else False):
+            log(f"  cache junction already exists: {link.name}", "ok")
+            continue
+        # Real directory with content — don't touch it, env vars handle redirection
+        if link.exists():
+            log(f"  {link.name} is a real directory — using env vars for redirection", "warn")
+            continue
+        # Doesn't exist — create junction
+        link.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run([
+            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            f"New-Item -ItemType Junction -Path '{link}' -Target '{target}' | Out-Null"
+        ], capture_output=True)
+        if result.returncode == 0:
+            log(f"  junction created: {link} → {target}", "ok")
+        else:
+            log(f"  junction creation failed for {link.name} — env vars active", "warn")
+
+
 def run_setup(args) -> bool:
     """First-run setup: install missing prerequisites. Returns True if ready."""
     print()
@@ -280,6 +342,11 @@ def run_setup(args) -> bool:
     print()
 
     ok = True
+
+    # 0. Wire local-cache via junctions (idempotent)
+    log("wiring local-cache junctions...", "head")
+    _ensure_cache_junctions()
+    print()
 
     # 1. Ollama
     ollama = _find_ollama()
@@ -491,7 +558,7 @@ class ServiceManager:
             "{{DIAG_HTML_DIR}}":      _p(REPO_ROOT / "docker" / "nginx"),
             "{{GAME_HTML_DIR}}":      _p(REPO_ROOT / "web"),
             "{{STATUS_DIR}}":         _p(STATUS_DIR),
-            "{{CACHE_DIR}}":          _p(REPO_ROOT / "dev-cache" / "nginx-cache"),
+            "{{CACHE_DIR}}":          _p(REPO_ROOT / "local-cache" / "nginx-cache"),
             "{{MIME_TYPES}}":         mime,
             "{{NGINX_PID_FILE}}":     _p(RUN_DIR / "nginx.pid"),
             "{{NGINX_ERROR_LOG}}":    _p(RUN_DIR / "nginx-error.log"),
@@ -514,6 +581,7 @@ class ServiceManager:
         st_dir = _find_st_dir()
 
         missing = []
+        if not python:  missing.append("Python 3.10+ (run: winget install Python.Python.3.12)")
         if not ollama:  missing.append("ollama (run: winget install Ollama.Ollama)")
         if not node:    missing.append("Node.js (run: winget install OpenJS.NodeJS.LTS)")
         if not nginx:   missing.append("nginx (run: winget install nginxinc.nginx)")
@@ -533,15 +601,30 @@ class ServiceManager:
 
         STATUS_DIR.mkdir(parents=True, exist_ok=True)
         RUN_DIR.mkdir(parents=True, exist_ok=True)
-        (REPO_ROOT / "dev-cache" / "nginx-cache").mkdir(parents=True, exist_ok=True)
+        (REPO_ROOT / "local-cache" / "nginx-cache").mkdir(parents=True, exist_ok=True)
 
-        env_base = dict(os.environ)
+        # Shared local cache — same directory used by docker bind-mounts and
+        # native mode, so models are downloaded once and reused across all runners.
+        LOCAL_CACHE = REPO_ROOT / "local-cache"
+        LOCAL_CACHE.mkdir(parents=True, exist_ok=True)
+        (LOCAL_CACHE / "ollama-data").mkdir(exist_ok=True)
+        (LOCAL_CACHE / "hf-cache").mkdir(exist_ok=True)
+
+        env_base = {
+            **dict(os.environ),
+            # HuggingFace model cache (flask-sd, flask-music)
+            "HF_HOME":             str(LOCAL_CACHE / "hf-cache"),
+            "TRANSFORMERS_CACHE":  str(LOCAL_CACHE / "hf-cache"),
+            "HF_HUB_CACHE":        str(LOCAL_CACHE / "hf-cache"),
+        }
 
         # ── ollama ──────────────────────────────────────────────────────────
         if not port_open(PORTS["ollama"]):
             log("starting ollama...", "head")
             p = ManagedProcess("ollama", [str(ollama), "serve"],
-                env={**env_base, "OLLAMA_HOST": f"127.0.0.1:{PORTS['ollama']}"},
+                env={**env_base,
+                     "OLLAMA_HOST":   f"127.0.0.1:{PORTS['ollama']}",
+                     "OLLAMA_MODELS": str(LOCAL_CACHE / "ollama-data" / "models")},
                 log_file=RUN_DIR / "ollama.log")
             p.start()
             self._procs.append(p)
@@ -729,6 +812,51 @@ def print_banner():
     print()
 
 
+# ── Browser / window helpers ──────────────────────────────────────────────────
+
+def _run_webview(url: str, sm: "ServiceManager"):
+    """Open a frameless WebView2 window. Blocks on the main thread until closed."""
+    import webview  # pywebview — requires WebView2 (pre-installed on Win10/11)
+
+    win = webview.create_window(
+        "The Remnant",
+        url,
+        frameless=True,
+        easy_drag=True,
+        resizable=True,
+        min_size=(1024, 768),
+    )
+
+    def on_closed():
+        sm.stop_all()
+
+    win.events.closed += on_closed
+    webview.start()  # blocks until the window is closed
+    sys.exit(0)
+
+
+def _wait_loop(sm: "ServiceManager"):
+    """Console keep-alive for --no-browser / headless mode. Ctrl+C stops all."""
+    def _shutdown(sig, frame):
+        print()
+        log("shutting down...", "head")
+        sm.stop_all()
+        log("all services stopped", "ok")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT,  _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    print(dim("  Press Ctrl+C to stop all services."))
+    try:
+        while True:
+            time.sleep(10)
+            if sm._nginx_proc and not sm._nginx_proc.alive():
+                log("nginx exited unexpectedly — check logs/native-run/nginx-error.log", "error")
+    except KeyboardInterrupt:
+        _shutdown(None, None)
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -791,14 +919,8 @@ def main():
     _stamp_status("flask-sd.json", "ready" if port_open(PORTS["flask-sd"]) else "pending")
     _stamp_status("ollama.json",   "ready" if port_open(PORTS["ollama"])   else "pending")
 
-    # Open browser — start at splash so user sees the loading screen
-    url = f"http://localhost:{PORTS['nginx']}/splash.html"
-    if not args.no_browser:
-        log(f"opening {url}...", "head")
-        time.sleep(1)
-        webbrowser.open(url)
-
     # Service status summary
+    url = f"http://localhost:{PORTS['nginx']}/splash.html"
     print()
     print(bold("  ── Services ──────────────────────────────────────────────────"))
     for s in sm.status():
@@ -806,40 +928,28 @@ def main():
         note = "" if s["up"] else dim("  (will be available once models load)")
         print(f"  {icon}  {s['service']:<14} :{s['port']}{note}")
     print()
-    print(bold(f"  {green('►')} Open in browser: {cyan(url)}"))
 
     # Performance reminder
     if hw_profile.get("perf_tier"):
         tier = hw_profile["perf_tier"]
-        print()
-        print(f"  {dim('Expected response time:')} {bold(tier['min_s'])}–{bold(tier['max_s'])} s  "
+        print(f"  {dim('Expected response time:')} {bold(tier['min_s'])}-{bold(tier['max_s'])} s  "
               f"{dim('(' + tier['label'] + ')')}")
-
-    print()
-    print(dim("  Press Ctrl+C to stop all services."))
-    print()
-
-    # ── Graceful shutdown on Ctrl+C ─────────────────────────────────────────
-    def _shutdown(sig, frame):
         print()
-        log("shutting down...", "head")
-        sm.stop_all()
-        log("all services stopped", "ok")
-        sys.exit(0)
 
-    signal.signal(signal.SIGINT,  _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    # ── Open game window ────────────────────────────────────────────────────
+    if args.no_browser:
+        log(f"services up — access at {cyan(url)}", "ok")
+        _wait_loop(sm)
+        return 0
 
-    # Keep alive: periodically check service health
+    log(f"opening game window: {cyan(url)}", "head")
     try:
-        while True:
-            time.sleep(10)
-            # Revive any processes that died unexpectedly (nginx is the critical one)
-            if sm._nginx_proc and not sm._nginx_proc.alive():
-                log("nginx exited unexpectedly — check logs/nginx-error.log", "error")
-    except KeyboardInterrupt:
-        _shutdown(None, None)
-
+        _run_webview(url, sm)   # blocks on main thread; exits when window closes
+    except ImportError:
+        import webbrowser
+        log("pywebview not installed — falling back to system browser", "warn")
+        webbrowser.open(url)
+        _wait_loop(sm)
     return 0
 
 

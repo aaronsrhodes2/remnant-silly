@@ -1,8 +1,9 @@
 # docker-compose.dev.yml — dev-only override.
 #
 # Redirects the three frozen-world cache volumes (hf-cache, nginx-cache,
-# ollama-data) to host bind mounts under dev-cache/ so iteration on the
-# docker stack doesn't re-download from the internet on every clean test.
+# ollama-data) to host bind mounts under local-cache/ so models are shared
+# across docker, native dev, and the packaged Remnant.exe — download once,
+# use everywhere.
 #
 # HOW IT WORKS
 # ------------
@@ -60,7 +61,7 @@ volumes:
     driver: local
     driver_opts:
       type: none
-      device: ${PWD}/dev-cache/hf-cache
+      device: ${PWD}/local-cache/hf-cache
       o: bind
   # nginx upstream proxy_cache — used by the /pypi/, /pytorch/,
   # /ollama-dl/ location blocks (forward-compat for slimming work;
@@ -69,7 +70,7 @@ volumes:
     driver: local
     driver_opts:
       type: none
-      device: ${PWD}/dev-cache/nginx-cache
+      device: ${PWD}/local-cache/nginx-cache
       o: bind
   # Ollama model store — hybrid exception (ollama registry protocol
   # isn't proxyable through nginx, so bootstrap-ollama keeps its own
@@ -78,5 +79,5 @@ volumes:
     driver: local
     driver_opts:
       type: none
-      device: ${PWD}/dev-cache/ollama-data
+      device: ${PWD}/local-cache/ollama-data
       o: bind

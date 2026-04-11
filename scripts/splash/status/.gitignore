@@ -3,4 +3,5 @@
 # runtime inside the remnant-status docker volume (or here, in the
 # native dev test loop).
 *.json
+*.jsonl
 !.gitignore

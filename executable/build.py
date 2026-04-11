@@ -2,10 +2,10 @@
 """Build Remnant.exe via PyInstaller.
 
 Usage:
-    pip install pyinstaller psutil
-    python launcher/build.py
+    pip install pyinstaller psutil pywebview
+    python executable/build.py
 
-Produces: dist/Remnant.exe  (~15-25 MB)
+Produces: dist/Remnant.exe  (~25-40 MB)
 """
 
 import subprocess
@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 ROOT     = Path(__file__).parent.parent.resolve()
-LAUNCHER = ROOT / "launcher" / "remnant_launcher.py"
-HARDWARE = ROOT / "launcher" / "hardware.py"
+LAUNCHER = ROOT / "executable" / "remnant_launcher.py"
+HARDWARE = ROOT / "executable" / "hardware.py"
 DIST     = ROOT / "dist"
 
 cmd = [
@@ -22,10 +22,11 @@ cmd = [
     "--onefile",
     "--name", "Remnant",
     "--console",                               # keep console window (log output)
-    "--add-data", f"{HARDWARE};launcher",      # hardware.py alongside exe (Windows: ;)
+    "--add-data", f"{HARDWARE};.",             # hardware.py at root of _MEIPASS (Windows: ;)
     "--hidden-import", "psutil",
     "--hidden-import", "psutil._pswindows",
     "--hidden-import", "psutil._psutil_windows",
+    "--collect-all", "pywebview",              # WebView2 backend + all submodules
     "--distpath", str(DIST),
     "--workpath", str(ROOT / "build" / "pyinstaller"),
     "--specpath", str(ROOT / "build"),

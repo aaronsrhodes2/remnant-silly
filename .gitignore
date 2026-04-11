@@ -117,20 +117,33 @@ huggingface/
 models/
 !docker/**/models/
 
-# Dev cache — bind-mount target for docker-compose.dev.yml. Holds
-# nginx's upstream proxy cache (HuggingFace weights, pip wheels,
-# ollama.com static files — everything nginx librarians) plus the
-# ollama model store (the hybrid-exception upstream). The nested
-# dev-cache/.gitignore is the primary guard; this is belt-and-
-# suspenders.
+# Local model cache — shared across docker (bind-mount in docker-compose.dev.yml),
+# native dev, and the packaged exe. The nested local-cache/.gitignore is the
+# primary guard; these rules are belt-and-suspenders.
+local-cache/hf-cache/**
+local-cache/nginx-cache/**
+local-cache/ollama-data/**
+!local-cache/hf-cache/.gitkeep
+!local-cache/nginx-cache/.gitkeep
+!local-cache/ollama-data/.gitkeep
+# Legacy name (pre-v3.4) — keep ignored in case old clones have data here.
 dev-cache/hf-cache/**
 dev-cache/nginx-cache/**
 dev-cache/ollama-data/**
-!dev-cache/hf-cache/.gitkeep
-!dev-cache/nginx-cache/.gitkeep
-!dev-cache/ollama-data/.gitkeep
 
-# Native dev runtime staging — PID files, logs, etc. written by
-# scripts/native-up.sh. The status/*.json files in the same dir are
-# tracked (they're the native mirror of the remnant-status volume).
+# Test/run results — generated output, never committed.
+/results/
+
+# Native dev runtime — all written at runtime, never committed.
+# Flat layout under repo root (REPO_ROOT/status/, /logs/, /bin/, /SillyTavern/).
+/status/
+/logs/
+/bin/
+/SillyTavern/
+# Legacy staging dir (pre-v3.4 layout — keep ignoring in case old clones linger)
 scripts/splash/status/.native-run/
+
+# PyInstaller build output
+/dist/
+/build/pyinstaller/
+*.spec

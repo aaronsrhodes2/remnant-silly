@@ -61,12 +61,12 @@ NGINX_PORT="${NGINX_PORT:-1580}"    # egress
 # but pinning it here avoids surprises on systems with many models installed.
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:14b}"
 
-# Status dir — mirrors the remnant-status named volume in docker.
-NATIVE_STATUS_DIR="$REPO_ROOT/scripts/splash/status"
+# Status dir — flat under repo root (gitignored: /status/).
+NATIVE_STATUS_DIR="$REPO_ROOT/status"
 mkdir -p "$NATIVE_STATUS_DIR"
 
-# PID + log staging directory (gitignored under scripts/splash/status/).
-NATIVE_RUN_DIR="$NATIVE_STATUS_DIR/.native-run"
+# PID + log staging directory (gitignored: /logs/).
+NATIVE_RUN_DIR="$REPO_ROOT/logs/native-run"
 mkdir -p "$NATIVE_RUN_DIR"
 
 ST_PID_FILE="$NATIVE_RUN_DIR/sillytavern.pid"
@@ -480,12 +480,12 @@ SPLASH_ROOT="$(cygpath -m "$REPO_ROOT/scripts/splash")"
 DIAG_HTML_DIR="$(cygpath -m "$REPO_ROOT/docker/nginx")"
 GAME_HTML_DIR="$(cygpath -m "$REPO_ROOT/web")"
 STATUS_DIR="$(cygpath -m "$NATIVE_STATUS_DIR")"
-CACHE_DIR_PATH="$(cygpath -m "$REPO_ROOT/dev-cache/nginx-cache")"
+CACHE_DIR_PATH="$(cygpath -m "$REPO_ROOT/local-cache/nginx-cache")"
 NGINX_PID_WIN="$(cygpath -m "$NGINX_PID_FILE")"
 NGINX_ERROR_LOG="$(cygpath -m "$NATIVE_RUN_DIR/nginx-error.log")"
 NGINX_ACCESS_LOG="$(cygpath -m "$NATIVE_RUN_DIR/nginx-access.log")"
 
-mkdir -p "$REPO_ROOT/dev-cache/nginx-cache"
+mkdir -p "$REPO_ROOT/local-cache/nginx-cache"
 
 sed \
     -e "s|{{NGINX_PORT}}|${NGINX_PORT}|g" \

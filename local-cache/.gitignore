@@ -1,0 +1,20 @@
+# local-cache/ holds multi-GB model assets shared across all run modes:
+# docker, native dev, and the packaged Remnant.exe. Includes HuggingFace
+# model weights, nginx upstream proxy cache, and the ollama model store.
+#
+# Nothing in here should ever reach git. Rule: ignore everything
+# except this file and the .gitkeep placeholders that let subdirs
+# exist before first download.
+
+*
+!.gitignore
+!README.md
+!hf-cache/
+!nginx-cache/
+!ollama-data/
+hf-cache/*
+nginx-cache/*
+ollama-data/*
+!hf-cache/.gitkeep
+!nginx-cache/.gitkeep
+!ollama-data/.gitkeep
