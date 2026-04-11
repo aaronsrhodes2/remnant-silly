@@ -52,16 +52,57 @@ html, body {
   background: transparent;
 }
 
-/* ── Topbar — Star Trek console lights ── */
+/* ── Topbar — always-visible header strip ── */
 #topbar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 0 10px;
-  height: 40px;
-  gap: 8px;
+  height: 32px;
+  gap: 10px;
   border-bottom: 1px solid var(--border);
+}
+
+/* "The Fortress" shelf toggle button */
+#shelf-btn {
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 3px;
+  transition: color 0.2s, background 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 5px;
+}
+#shelf-btn:hover { color: var(--ink); background: rgba(255,255,255,0.05); }
+#shelf-btn .shelf-arrow { font-size: 7px; transition: transform 0.25s; display: inline-block; }
+#lights-shelf.open ~ * #shelf-btn .shelf-arrow,
+#shelf-btn.open .shelf-arrow { transform: rotate(90deg); }
+
+/* ── Collapsible lights shelf ── */
+#lights-shelf {
+  flex-shrink: 0;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.25s ease, border-bottom-width 0.25s;
+  border-bottom: 0px solid var(--border);
+}
+#lights-shelf.open {
+  max-height: 44px;
+  border-bottom: 1px solid var(--border);
+}
+#lights-shelf .light-cluster {
+  padding: 0 12px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .light-cluster { display: flex; gap: 7px; align-items: center; }
@@ -444,44 +485,38 @@ html, body {
 #player-input[data-vad-state="processing"] { border-color: rgba(255,136,68,0.30); }
 #player-input[data-vad-state="ready"]      { border-color: rgba(68,187,204,0.55); }
 
-/* ── Dev / Player mode ── */
-body.player-mode #topbar   { display: none; }
-body.dev-mode    #topbar   { display: flex; }
-body.player-mode #thinking-bar { display: flex; }
-body.dev-mode    #thinking-bar { display: none; }
+/* ── Sense toggles — always clickable in the shelf ── */
+.light-wrap.toggleable { cursor: pointer; transition: opacity 0.3s; }
+.light-wrap.toggleable:hover { opacity: 0.82; }
+.light-wrap.toggleable.sense-off { opacity: 0.22; }
+.light-wrap.toggleable.sense-off .light-dot { animation: none !important; }
 
-/* Clickable sense toggles — only interactive in dev mode */
-body.dev-mode .light-wrap.toggleable { cursor: pointer; transition: opacity 0.3s; }
-body.dev-mode .light-wrap.toggleable:hover { opacity: 0.85; }
-body.dev-mode .light-wrap.toggleable.sense-off { opacity: 0.22; }
-body.dev-mode .light-wrap.toggleable.sense-off .light-dot { animation: none !important; }
-
-/* ── Thinking bar (player mode only) ── */
+/* ── Thinking bar — lives in topbar, shown when AI is busy ── */
 #thinking-bar {
-  display: none;
-  flex-shrink: 0;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  height: 40px;
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  margin-left: auto;  /* push to right side of topbar */
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
 }
+#thinking-bar.active { opacity: 1; }
 #thinking-dot {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 6px; height: 6px; border-radius: 50%;
   background: #d4a84b;
   flex-shrink: 0;
-  display: none;
+  --lc: #d4a84b;
 }
 #thinking-bar.active #thinking-dot {
-  display: block;
   animation: light-pulse 1.4s ease-in-out infinite;
 }
-#thinking-bar.active { --lc: #d4a84b; }
 #thinking-text {
-  font-size: 11px;
-  color: var(--dim);
+  font-size: 9px;
+  color: rgba(212,168,75,0.6);
   font-style: italic;
   letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
 /* ── Mood text entries (shown when muted instead of generating music) ── */
@@ -541,14 +576,24 @@ body.dev-mode .light-wrap.toggleable.sense-off .light-dot { animation: none !imp
 <body>
 <div id="app">
 
-  <!-- ── Topbar: console lights ── -->
+  <!-- ── Topbar: "The Fortress" toggle + thinking indicator ── -->
   <div id="topbar">
+    <button id="shelf-btn" title="Show / hide diagnostic panel" aria-label="Toggle diagnostic shelf">
+      <span class="shelf-arrow">▶</span>The Fortress
+    </button>
     <div id="activity-label"></div>
+    <div id="thinking-bar">
+      <span id="thinking-dot"></span>
+      <span id="thinking-text"></span>
+    </div>
+  </div>
 
+  <!-- ── Collapsible lights shelf (hidden by default) ── -->
+  <div id="lights-shelf">
     <div class="light-cluster" id="all-lights">
       <div class="light-wrap" id="light-story" data-tip="Story — Ollama, SillyTavern, all text processing">
         <div class="light-dot"></div><span class="light-label">story</span></div>
-      <div class="light-wrap toggleable" id="light-image" data-tip="Image — Stable Diffusion scenes &amp; portraits · click to toggle">
+      <div class="light-wrap toggleable" id="light-image" data-tip="Image — SD scenes &amp; portraits · click to toggle">
         <div class="light-dot"></div><span class="light-label">image</span></div>
       <div class="light-wrap toggleable" id="light-audio" data-tip="Audio — MusicGen, TTS, STT · click to toggle">
         <div class="light-dot"></div><span class="light-label">audio</span></div>
@@ -564,12 +609,6 @@ body.dev-mode .light-wrap.toggleable.sense-off .light-dot { animation: none !imp
         <div class="light-dot"></div><span class="light-label">conn</span></div>
       <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
     </div>
-  </div>
-
-  <!-- ── Thinking bar (player mode only — replaces star trek panel) ── -->
-  <div id="thinking-bar">
-    <span id="thinking-dot"></span>
-    <span id="thinking-text"></span>
   </div>
 
   <!-- ── Main area: narrative feed + image gallery ── -->
@@ -1063,29 +1102,39 @@ function connect() {
   };
 }
 
-// ── Sense toggles (dev mode) ──
+// ── Sense toggles ──
 const _sense = { audio: true, image: true };
 
-// ── Dev / Player mode ──
-let _devMode = localStorage.getItem('remnant-dev') === '1';
+// ── Lights shelf toggle ──
+let _shelfOpen = localStorage.getItem('remnant-shelf') === '1';
 
-function _setDevMode(on) {
-  _devMode = on;
-  localStorage.setItem('remnant-dev', on ? '1' : '0');
-  document.body.classList.toggle('dev-mode',    on);
-  document.body.classList.toggle('player-mode', !on);
+function _toggleShelf() {
+  _shelfOpen = !_shelfOpen;
+  localStorage.setItem('remnant-shelf', _shelfOpen ? '1' : '0');
+  const shelf = document.getElementById('lights-shelf');
+  const btn   = document.getElementById('shelf-btn');
+  if (shelf) shelf.classList.toggle('open', _shelfOpen);
+  if (btn)   btn.classList.toggle('open',  _shelfOpen);
+  const arrow = btn && btn.querySelector('.shelf-arrow');
+  if (arrow) arrow.style.transform = _shelfOpen ? 'rotate(90deg)' : '';
 }
 
-document.addEventListener('keydown', e => {
-  if (e.key === '`' && !e.ctrlKey && !e.metaKey) _setDevMode(!_devMode);
-});
-
 function _initLightToggles() {
+  // Apply initial shelf state
+  const shelf = document.getElementById('lights-shelf');
+  const btn   = document.getElementById('shelf-btn');
+  if (_shelfOpen && shelf) shelf.classList.add('open');
+  if (_shelfOpen && btn)   btn.classList.add('open');
+  const arrow = btn && btn.querySelector('.shelf-arrow');
+  if (arrow && _shelfOpen) arrow.style.transform = 'rotate(90deg)';
+
+  // Shelf toggle button
+  if (btn) btn.addEventListener('click', _toggleShelf);
+
   function _toggleSense(id, key) {
     const el = document.getElementById('light-' + id);
     if (!el) return;
     el.addEventListener('click', () => {
-      if (!_devMode) return;
       _sense[key] = !_sense[key];
       el.classList.toggle('sense-off', !_sense[key]);
       if (key === 'audio' && !_sense.audio) {
@@ -1470,7 +1519,6 @@ async function _initVAD() {
 }
 
 // ── Initialise on load ──
-_setDevMode(_devMode);
 _initLightToggles();
 _initVAD();
 </script>
