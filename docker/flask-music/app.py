@@ -1,7 +1,7 @@
-"""flask-music — MusicGen wrapper for Remnant ambient music generation.
+"""flask-music — MusicGen wrapper for Remnant ambient music + SFX generation.
 
-Generates short ambient music clips from a text prompt using Meta's MusicGen
-(via HuggingFace transformers). Returns base64-encoded WAV audio.
+Generates ambient music clips and short sound effects from text prompts using
+Meta's MusicGen (via HuggingFace transformers). Returns base64-encoded WAV.
 
 Environment:
   LISTEN_PORT     default 1596
@@ -10,10 +10,11 @@ Environment:
 
 Endpoints:
   GET  /health          — service health check
-  POST /api/generate    — generate music from prompt
-    Request:  {"prompt": "...", "duration": 30}
-    Response: {"audio": "<base64 WAV>", "sample_rate": 32000,
-               "prompt": "...", "duration": 30, "elapsed_s": ...}
+  POST /api/generate    — generate ambient music (looping, 8-30s)
+    Request:  {"prompt": "...", "duration": 8}
+    Response: {"audio": "<base64 WAV>", "sample_rate": 32000, ...}
+  POST /api/sfx         — generate a short sound effect (3-6s, fire-and-forget)
+  POST /sfx             — same (Docker nginx strips /api/music/ prefix)
 """
 
 from __future__ import annotations
@@ -126,6 +127,82 @@ def generate():
     except Exception:
         traceback.print_exc()
         return jsonify({"error": "generation failed"}), 500
+
+
+@app.route("/sfx", methods=["POST"])
+@app.route("/api/sfx", methods=["POST"])
+def generate_sfx():
+    """Generate a short sound effect using MusicGen.
+
+    Uses the same model as music generation but with shorter clips (3-6s) and
+    a sound-design prompt prefix that steers MusicGen away from music toward
+    ambient/environmental audio textures.
+
+    The JSON response includes a "loops" boolean: True when the source
+    description implies a sustained/looping sound (engine, fan, motor, etc.).
+    The client should loop the audio only when this flag is set.
+    """
+    data     = request.get_json(force=True, silent=True) or {}
+    prompt   = str(data.get("prompt", "ambient sound")).strip()[:500]
+    duration = min(int(data.get("duration", 4)), 10)
+
+    if not prompt:
+        return jsonify({"error": "prompt required"}), 400
+
+    # Detect looping nature from the description (continuous, sustained sounds)
+    _LOOP_KEYWORDS = ("engine", "motor", "fan", "hum", "drone", "buzz", "whirr",
+                      "rumble", "running", "spinning", "rotating", "continuous",
+                      "constant", "loop", "idling", "ventilation", "vent",
+                      "machinery", "generator", "turbine", "air", "wind",
+                      "robotic arm", "fabricator")
+    should_loop = any(kw in prompt.lower() for kw in _LOOP_KEYWORDS)
+
+    # Steer MusicGen toward sound design, not melodic music
+    sfx_prompt = (
+        f"sound effect, {prompt}, "
+        f"no melody, no beat, no chords, no music, "
+        f"ambient audio texture, field recording, sound design"
+    )
+
+    try:
+        import torch
+        import soundfile as sf
+
+        model, processor = _get_model()
+
+        inputs = processor(
+            text=[sfx_prompt],
+            padding=True,
+            return_tensors="pt",
+        ).to(_device)
+
+        max_new_tokens = duration * _FRAME_RATE
+
+        t0 = time.monotonic()
+        with torch.no_grad():
+            audio_values = model.generate(**inputs, max_new_tokens=max_new_tokens)
+        elapsed = time.monotonic() - t0
+        print(f"[flask-music] SFX {duration}s in {elapsed:.1f}s loops={should_loop} — {prompt!r}")
+
+        audio_np = audio_values[0, 0].cpu().float().numpy()
+
+        buf = io.BytesIO()
+        sf.write(buf, audio_np, _sample_rate, format="WAV", subtype="PCM_16")
+        buf.seek(0)
+        audio_b64 = base64.b64encode(buf.read()).decode("ascii")
+
+        return jsonify({
+            "audio":       audio_b64,
+            "sample_rate": _sample_rate,
+            "prompt":      prompt,
+            "duration":    duration,
+            "elapsed_s":   round(elapsed, 2),
+            "loops":       should_loop,
+        })
+
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "sfx generation failed"}), 500
 
 
 if __name__ == "__main__":

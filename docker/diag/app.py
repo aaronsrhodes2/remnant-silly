@@ -1286,7 +1286,8 @@ def _generate_narrator_turn() -> None:
         _unload_ollama_vram()
         # Kick off concurrent post-processing (non-blocking)
         _enqueue_image_generation(full_text)
-        _broadcast_narrator_mood(full_text)   # extract [MOOD: "..."] tags → mood SSE events
+        _broadcast_narrator_mood(full_text)    # [MOOD: "..."] → mood SSE → music
+        _broadcast_narrator_sound(full_text)   # [SOUND: "..."] → sfx SSE → sound effects
         _schedule_sense_enrichment(full_text)  # Ollama-enriches any missing sense channels
         _check_dressed_transition(full_text)
 
@@ -1445,6 +1446,22 @@ def _broadcast_narrator_mood(narrator_text: str) -> None:
         prompt = m.group(1).strip()
         if prompt:
             _sse_broadcast("mood", {"text": prompt})
+
+
+_SOUND_TAG_RE = re.compile(r'\[SOUND\s*:\s*"?([^"\]\n]{3,400})"?\]', re.IGNORECASE)
+
+
+def _broadcast_narrator_sound(narrator_text: str) -> None:
+    """Extract [SOUND: "..."] tags and fire sfx SSE events.
+
+    The client receives each sfx event and requests a short sound effect
+    from /api/music/sfx. Sound effects play once (or loop if the description
+    implies a continuous sound like machinery/fans/engines).
+    """
+    for m in _SOUND_TAG_RE.finditer(narrator_text):
+        description = m.group(1).strip()
+        if description:
+            _sse_broadcast("sfx", {"text": description})
 
 
 _SENSE_CHANNELS = ["MOOD", "SIGHT", "SOUND", "SMELL", "TOUCH", "ENVIRONMENT"]
