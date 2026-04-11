@@ -200,7 +200,7 @@ services:
   # Game integration (mic → text input) is deferred; the service is
   # reachable now so the feature can be wired in without a stack restart.
   stt:
-    image: onerahmet/openai-whisper-asr-webservice:latest-cpu
+    image: onerahmet/openai-whisper-asr-webservice:latest
     container_name: remnant-stt
     restart: unless-stopped
     expose:

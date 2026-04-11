@@ -23,18 +23,18 @@ ENV GIT_COMMIT_ENV=${GIT_COMMIT}
 
 WORKDIR /app
 
-# Copy the diag service
-COPY docker/diag/app.py /app/app.py
-
 # Copy all content + logic files that /signature fingerprints.
+# The main app.py is placed at its "correct" repo-relative path
+# (/app/docker/diag/app.py) so that Path(__file__).parent.parent.parent
+# resolves to /app — the same math that works natively in the repo.
 # Mirrors _SIGNATURE_FILES in app.py exactly.
 COPY docker/diag/app.py                                              /app/docker/diag/app.py
 COPY web/index.html                                                  /app/web/index.html
 COPY extension/index.js                                              /app/extension/index.js
 COPY docker/sillytavern/content/characters/fortress_system_prompt.txt /app/docker/sillytavern/content/characters/fortress_system_prompt.txt
 COPY docker/sillytavern/content/characters/fortress_first_mes.txt    /app/docker/sillytavern/content/characters/fortress_first_mes.txt
-COPY "docker/sillytavern/content/worlds/Nullspace Nexus.json"        "/app/docker/sillytavern/content/worlds/Nullspace Nexus.json"
-COPY "docker/sillytavern/content/chats/The Remnant/Opening.jsonl"    "/app/docker/sillytavern/content/chats/The Remnant/Opening.jsonl"
+COPY ["docker/sillytavern/content/worlds/Nullspace Nexus.json", "/app/docker/sillytavern/content/worlds/Nullspace Nexus.json"]
+COPY ["docker/sillytavern/content/chats/The Remnant/Opening.jsonl",  "/app/docker/sillytavern/content/chats/The Remnant/Opening.jsonl"]
 COPY docker/sillytavern/content/settings.json                        /app/docker/sillytavern/content/settings.json
 COPY docker/sillytavern/config.yaml                                  /app/docker/sillytavern/config.yaml
 
@@ -42,4 +42,4 @@ COPY docker/sillytavern/config.yaml                                  /app/docker
 RUN echo "${GIT_COMMIT}" > /app/GIT_COMMIT
 
 EXPOSE 1591
-CMD ["python", "-u", "/app/app.py"]
+CMD ["python", "-u", "/app/docker/diag/app.py"]
