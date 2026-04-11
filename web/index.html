@@ -116,30 +116,28 @@ html, body {
 
 /* Per-light brand colors */
 #light-story    { --lc: #4488ff; }
-#light-narrator { --lc: #44cccc; }
-
-/* Turn counter badge next to narrator light */
-.light-turn-count {
-  font-size: 7px;
-  letter-spacing: 0.3px;
-  font-variant-numeric: tabular-nums;
-  color: rgba(68,204,204,0.55);
-  min-width: 18px;
-  text-align: center;
-  padding: 0 2px;
-  transition: color 0.4s;
-  align-self: center;
-  margin-left: -4px;
-}
 #light-image    { --lc: #cc44cc; }
-#light-tts      { --lc: #ff8844; }
-#light-stt      { --lc: #44cc88; }
-#light-music    { --lc: #8844ff; }
+#light-audio    { --lc: #ff8844; }
 #light-gpu      { --lc: #ff4444; }
 #light-vram     { --lc: #ff7744; }
 #light-cpu      { --lc: #ffcc44; }
 #light-ram      { --lc: #44bbcc; }
 #light-conn     { --lc: #6fa86a; }
+
+/* Turn counter — sits right of the light cluster, clearly readable */
+.light-turn-count {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(68, 160, 255, 0.80);
+  min-width: 36px;
+  text-align: right;
+  padding: 0 4px;
+  transition: color 0.4s;
+  align-self: center;
+  font-family: 'Courier New', monospace;
+}
 
 #activity-label {
   flex: 1;
@@ -526,16 +524,12 @@ html, body {
     <div id="activity-label"></div>
 
     <div class="light-cluster" id="all-lights">
-      <div class="light-wrap" id="light-story" data-tip="Ollama — language model">
+      <div class="light-wrap" id="light-story" data-tip="Story — Ollama, SillyTavern, all text processing">
         <div class="light-dot"></div><span class="light-label">story</span></div>
-      <div class="light-wrap" id="light-image" data-tip="Stable Diffusion — scene images">
+      <div class="light-wrap" id="light-image" data-tip="Image — Stable Diffusion scenes &amp; portraits">
         <div class="light-dot"></div><span class="light-label">image</span></div>
-      <div class="light-wrap off" id="light-tts"  data-tip="Kokoro — text to speech">
-        <div class="light-dot"></div><span class="light-label">tts</span></div>
-      <div class="light-wrap off" id="light-stt"  data-tip="Whisper — speech to text">
-        <div class="light-dot"></div><span class="light-label">stt</span></div>
-      <div class="light-wrap" id="light-music" data-tip="Music — MusicGen (mood-driven)">
-        <div class="light-dot"></div><span class="light-label">music</span></div>
+      <div class="light-wrap" id="light-audio" data-tip="Audio — MusicGen, TTS, STT">
+        <div class="light-dot"></div><span class="light-label">audio</span></div>
       <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
         <div class="light-dot"></div><span class="light-label">gpu</span></div>
       <div class="light-wrap" id="light-vram" data-tip="VRAM usage">
@@ -546,8 +540,6 @@ html, body {
         <div class="light-dot"></div><span class="light-label">ram</span></div>
       <div class="light-wrap" id="light-conn" data-tip="SSE connection">
         <div class="light-dot"></div><span class="light-label">conn</span></div>
-      <div class="light-wrap" id="light-narrator" data-tip="The Fortress — Ollama conversation engine">
-        <div class="light-dot"></div><span class="light-label">fortress</span></div>
       <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
     </div>
   </div>
@@ -713,7 +705,7 @@ function _removeThinking() {
   const el = document.getElementById('thinking-indicator');
   if (el) el.remove();
   if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
-  _setLight('narrator', 'idle');
+  _setLight('story', 'idle');
 }
 
 function renderTurn(turn, instant) {
@@ -895,17 +887,20 @@ async function _pollServiceStatus() {
     const st     = _svcState('sillytavern');
     const sd     = _svcState('flask-sd');
 
-    _setLight('story',    ollama.reachable ? 'idle' : 'off',
-              `${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
-    // Narrator light = Ollama reachable (diag owns the conversation loop now, not ST)
-    _setLight('narrator', ollama.reachable ? 'idle' : 'off',
-              `narrator · ${ollama.reachable ? 'ready' : 'down'}`);
-    _setLight('image',    sd.reachable ? 'idle' : 'off',
-              `SD · ${sd.phase}` + (sd.lat ? ` · ${Math.round(sd.lat)}ms` : ''));
-    ['tts','stt'].forEach(id => _setLight(id, svcs[id] ? 'idle' : 'off'));
+    // story = any text processing service reachable (Ollama, SillyTavern)
+    _setLight('story', ollama.reachable ? 'idle' : 'off',
+              `Story · ${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
+    _setLight('image', sd.reachable ? 'idle' : 'off',
+              `Image · SD · ${sd.phase}` + (sd.lat ? ` · ${Math.round(sd.lat)}ms` : ''));
+    // audio = tts + stt + music consolidated
     const music = _svcState('flask-music');
-    if (!_muted) _setLight('music', music.reachable ? 'idle' : 'off',
-              `MusicGen · ${music.reachable ? 'ready' : 'down'}` + (music.lat ? ` · ${Math.round(music.lat)}ms` : ''));
+    const audioUp = svcs['tts'] || svcs['stt'] || music.reachable;
+    const audioTip = [
+      svcs['tts']      ? 'TTS'           : null,
+      svcs['stt']      ? 'STT'           : null,
+      music.reachable  ? 'MusicGen'      : null,
+    ].filter(Boolean).join(', ') || 'none';
+    _setLight('audio', audioUp ? 'idle' : 'off', `Audio · ${audioTip}`);
   } catch(_) {}
 }
 
@@ -998,17 +993,21 @@ function connect() {
       const text = data.text || '';
       document.getElementById('activity-label').textContent = text;
       const lc = text.toLowerCase();
-      if (lc.includes('image') || lc.includes('render') || lc.includes('scene')) {
+      if (lc.includes('image') || lc.includes('render') || lc.includes('scene') ||
+          lc.includes('portrait') || lc.includes('sketch') || lc.includes('paint') || lc.includes('repaint')) {
         _setLight('image', text ? 'busy' : 'idle');
         galleryStatus.textContent = text || '';
-      } else if (lc.includes('thinking') || lc.includes('narrator') || lc.includes('continuing')) {
-        _setLight('narrator', text ? 'busy' : 'idle');
-      } else if (lc.includes('portrait') || lc.includes('sketch') || lc.includes('paint') || lc.includes('repaint')) {
-        _setLight('image', text ? 'busy' : 'idle');
+      } else if (lc.includes('thinking') || lc.includes('narrator') || lc.includes('continuing') ||
+                 lc.includes('music') || lc.includes('mood') || lc.includes('tts') || lc.includes('speech')) {
+        _setLight('story', text ? 'busy' : 'idle');
+        if (lc.includes('music') || lc.includes('mood') || lc.includes('tts') || lc.includes('speech')) {
+          _setLight('audio', text ? 'busy' : 'idle');
+        }
       }
       if (!text) {
         _setLight('image', 'idle');
-        _setLight('narrator', 'idle');
+        _setLight('story', 'idle');
+        _setLight('audio', 'idle');
         galleryStatus.textContent = '';
       }
     } catch (_) {}
@@ -1100,14 +1099,14 @@ function _setMute(on) {
       setTimeout(() => { try { old.stop(); } catch (_) {} }, 1500);
       _musicSource = null; _musicGain = null;
     }
-    _setLight('music', 'off');
+    _setLight('audio', 'off');
   } else {
     btn.classList.remove('muted');
     if (iconOn)  iconOn.style.display  = '';
     if (iconOff) iconOff.style.display = 'none';
     // Resume AudioContext on unmute — user gesture makes this safe
     if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
-    _setLight('music', 'idle');
+    _setLight('audio', 'idle');
   }
 }
 
@@ -1127,7 +1126,7 @@ async function _onMoodEvent(moodText) {
     _renderMoodAsText(moodText);
     return;
   }
-  _setLight('music', 'busy');
+  _setLight('audio', 'busy');
   try {
     const res = await fetch('/api/music/generate', {
       method: 'POST',
@@ -1141,10 +1140,10 @@ async function _onMoodEvent(moodText) {
     const ctx = _ensureAudioCtx();
     const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
     await _playMusicBuffer(audioBuffer);
-    _setLight('music', 'idle');
+    _setLight('audio', 'idle');
   } catch (e) {
     console.warn('[music]', e);
-    _setLight('music', 'off');
+    _setLight('audio', 'off');
   }
 }
 
@@ -1235,7 +1234,7 @@ async function sendInput(overrideText) {
       feed.appendChild(thinkEl);
       feed.scrollTop = feed.scrollHeight;
       _thinkTimer = setTimeout(_removeThinking, 90000);
-      _setLight('narrator', 'busy');  // narrator light pulses while thinking
+      _setLight('story', 'busy');  // story light pulses while thinking
     }
   } catch (_) {}
   _sending = false;
