@@ -893,15 +893,20 @@ def _run_webview(url: str, sm: "ServiceManager"):
     import webview  # pywebview — requires WebView2 (pre-installed on Win10/11)
 
     ico = REPO_ROOT / "web" / "assets" / "favicon.ico"
-    win = webview.create_window(
-        "The Remnant",
-        url,
+    _win_kwargs = dict(
         frameless=True,
         easy_drag=True,
         resizable=True,
         min_size=(1024, 768),
-        icon=str(ico) if ico.exists() else None,
     )
+    if ico.exists():
+        _win_kwargs["icon"] = str(ico)
+    try:
+        win = webview.create_window("The Remnant", url, **_win_kwargs)
+    except TypeError:
+        # Older pywebview versions don't support icon= — fall back silently
+        _win_kwargs.pop("icon", None)
+        win = webview.create_window("The Remnant", url, **_win_kwargs)
 
     def on_closed():
         sm.stop_all()
