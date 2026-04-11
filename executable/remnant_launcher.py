@@ -58,7 +58,6 @@ BIN_DIR    = REPO_ROOT / "bin"
 # Port assignments (canonical — matches port-layout golden rule)
 PORTS = {
     "nginx":       1582,
-    "sillytavern": 1590,
     "diag":        1591,
     "flask-sd":    1592,
     "ollama":      1593,
@@ -569,7 +568,7 @@ class ServiceManager:
         conf_text = template.read_text(encoding="utf-8")
         replacements = {
             "{{NGINX_PORT}}":         str(PORTS["nginx"]),
-            "{{ST_UPSTREAM}}":        f"127.0.0.1:{PORTS['sillytavern']}",
+            "{{ST_UPSTREAM}}":        "127.0.0.1:1590",   # removed — nginx returns 404 for these routes
             "{{FLASK_SD_UPSTREAM}}":  f"127.0.0.1:{PORTS['flask-sd']}",
             "{{OLLAMA_UPSTREAM}}":    f"127.0.0.1:{PORTS['ollama']}",
             "{{DIAG_UPSTREAM}}":      f"127.0.0.1:{PORTS['diag']}",
@@ -655,33 +654,10 @@ class ServiceManager:
         else:
             log(f"ollama already on :{PORTS['ollama']}", "ok")
 
-        # ── extension junction (must precede ST startup) ─────────────────────
-        _ensure_extension_junction(st_dir)
-
-        # ── SillyTavern ─────────────────────────────────────────────────────
-        if not port_open(PORTS["sillytavern"]):
-            log("starting SillyTavern...", "head")
-            p = ManagedProcess(
-                "sillytavern",
-                [str(node), "server.js", "--port", str(PORTS["sillytavern"])],
-                cwd=st_dir,
-                log_file=RUN_DIR / "sillytavern.log",
-            )
-            p.start()
-            self._procs.append(p)
-        else:
-            log(f"SillyTavern already on :{PORTS['sillytavern']}", "ok")
-
         # ── diag ────────────────────────────────────────────────────────────
         if not port_open(PORTS["diag"]):
             log("starting diag sidecar...", "head")
-            # Determine native card dir: prefer the live SillyTavern characters folder.
-            _native_st_chars = Path(os.environ.get("LOCALAPPDATA", "")) / ".." / ".." / \
-                               "SillyTavern" / "data" / "default-user" / "characters"
-            _native_st_chars = Path(r"C:\Users") / os.environ.get("USERNAME", "aaron") / \
-                               "SillyTavern" / "data" / "default-user" / "characters"
-            fortress_card_dir = str(_native_st_chars) if _native_st_chars.exists() else \
-                                str(REPO_ROOT / "docker" / "sillytavern" / "content" / "characters")
+            fortress_card_dir = str(REPO_ROOT / "docker" / "sillytavern" / "content" / "characters")
             p = ManagedProcess(
                 "diag",
                 [str(python), "-u", str(REPO_ROOT / "docker" / "diag" / "app.py")],
@@ -691,7 +667,6 @@ class ServiceManager:
                     "FLASK_SD_URL":        f"http://127.0.0.1:{PORTS['flask-sd']}",
                     "OLLAMA_URL":          f"http://127.0.0.1:{PORTS['ollama']}",
                     "FLASK_MUSIC_URL":     f"http://127.0.0.1:{PORTS['flask-music']}",
-                    "SILLYTAVERN_URL":     f"http://127.0.0.1:{PORTS['sillytavern']}",
                     "OLLAMA_MODEL":        ollama_model,
                     "LISTEN_PORT":         str(PORTS["diag"]),
                     "FORTRESS_CARD_DIR":   fortress_card_dir,
@@ -1160,7 +1135,7 @@ def main():
 
     # Wait for critical services
     log("waiting for services to be ready...", "head")
-    for name, port in [("diag", PORTS["diag"]), ("sillytavern", PORTS["sillytavern"])]:
+    for name, port in [("diag", PORTS["diag"])]:
         _wait_for_port(port, name, timeout=60)
 
     # Stamp flask-sd / flask-tts / flask-stt / ollama status

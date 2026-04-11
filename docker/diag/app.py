@@ -112,14 +112,14 @@ STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
 FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:1592").rstrip("/")
 FLASK_MUSIC_URL = os.environ.get("FLASK_MUSIC_URL", "http://localhost:1596").rstrip("/")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:1593").rstrip("/")
-SILLYTAVERN_URL = os.environ.get("SILLYTAVERN_URL", "http://sillytavern:1590").rstrip("/")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "1591"))
 
 # Directory containing fortress_system_prompt.txt / fortress_first_mes.txt
 # (exported by update_fortress_card.py alongside the PNG).
+# Default: repo-relative path works in both Docker and native modes.
 FORTRESS_CARD_DIR = Path(os.environ.get(
     "FORTRESS_CARD_DIR",
-    r"C:/Users/aaron/SillyTavern/data/default-user/characters",
+    Path(__file__).parent.parent / "sillytavern" / "content" / "characters",
 ))
 
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
@@ -2078,20 +2078,9 @@ def _build_signature() -> dict:
 def _build_ai_snapshot() -> dict:
     flask_sd_status = _read_status_file("flask-sd")
     ollama_status = _read_status_file("ollama")
-    sillytavern_status = _read_status_file("sillytavern")
 
     flask_sd_probe = _probe_json(f"{FLASK_SD_URL}/api/health")
     ollama_probe = _probe_json(f"{OLLAMA_URL}/api/tags")
-    # SillyTavern root returns HTML, not JSON — reachable check only.
-    code, body, latency = _http("GET", f"{SILLYTAVERN_URL}/", timeout=3.0)
-    st_probe = {
-        "url": f"{SILLYTAVERN_URL}/",
-        "reachable": 200 <= code < 400,
-        "status_code": code,
-        "latency_ms": round(latency, 1),
-        "body": None,
-        "error": None if 200 <= code < 400 else body.decode("utf-8", errors="replace")[:400],
-    }
     fm_code, _, fm_lat = _http("GET", f"{FLASK_MUSIC_URL}/health", timeout=2.0)
     fm_probe = {
         "reachable": fm_code == 200,
@@ -2101,7 +2090,6 @@ def _build_ai_snapshot() -> dict:
     services = {
         "flask-sd": {"status_file": flask_sd_status, "probe": flask_sd_probe},
         "ollama": {"status_file": ollama_status, "probe": ollama_probe},
-        "sillytavern": {"status_file": sillytavern_status, "probe": st_probe},
         "flask-music": {"probe": fm_probe},
     }
 

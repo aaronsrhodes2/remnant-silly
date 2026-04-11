@@ -142,7 +142,7 @@ def main():
     if isinstance(snap, dict):
         svcs = snap.get("services", {})
         r.check("services key present", bool(svcs), "missing 'services'")
-        for svc in ["flask-sd", "ollama", "sillytavern"]:
+        for svc in ["flask-sd", "ollama"]:
             if svc in svcs:
                 reachable = svcs[svc].get("probe", {}).get("reachable", False)
                 r.check(f"  {svc} reachable", reachable, "unreachable", critical=False, warn_only=not reachable)
