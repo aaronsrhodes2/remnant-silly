@@ -80,6 +80,43 @@ _VRAM_TIERS: list[tuple[float, PerfTier]] = [
     )),
 ]
 
+# Recommended model selections per performance tier.
+# Keys are env var names read by each service. Values are HuggingFace/Ollama
+# model IDs. Lower tiers prioritise speed; higher tiers prioritise quality.
+# User-set env vars always override these recommendations.
+_MODEL_PROFILES: dict[str, dict[str, str]] = {
+    "Excellent": {       # 24+ GB VRAM
+        "OLLAMA_MODEL":   "qwen2.5:32b",
+        "WHISPER_MODEL":  "large-v3",
+        "MUSICGEN_MODEL": "facebook/musicgen-large",
+    },
+    "Great": {           # 16+ GB VRAM
+        "OLLAMA_MODEL":   "qwen2.5:14b",
+        "WHISPER_MODEL":  "medium.en",
+        "MUSICGEN_MODEL": "facebook/musicgen-medium",
+    },
+    "Good": {            # 12+ GB VRAM
+        "OLLAMA_MODEL":   "qwen2.5:14b",
+        "WHISPER_MODEL":  "small.en",
+        "MUSICGEN_MODEL": "facebook/musicgen-medium",
+    },
+    "Moderate": {        # 8+ GB VRAM
+        "OLLAMA_MODEL":   "qwen2.5:7b",
+        "WHISPER_MODEL":  "base.en",
+        "MUSICGEN_MODEL": "facebook/musicgen-small",
+    },
+    "Slow": {            # 6+ GB VRAM
+        "OLLAMA_MODEL":   "qwen2.5:3b",
+        "WHISPER_MODEL":  "base.en",
+        "MUSICGEN_MODEL": "facebook/musicgen-small",
+    },
+    "CPU-only": {        # <6 GB VRAM
+        "OLLAMA_MODEL":   "qwen2.5:3b",
+        "WHISPER_MODEL":  "tiny.en",
+        "MUSICGEN_MODEL": "facebook/musicgen-small",
+    },
+}
+
 
 @dataclass
 class HardwareProfile:
@@ -100,6 +137,16 @@ class HardwareProfile:
     @property
     def has_gpu(self) -> bool:
         return self.gpu_vram_gb > 0.0
+
+    def recommended_models(self) -> dict[str, str]:
+        """Return recommended model env vars for this hardware tier.
+
+        Respects explicit user overrides — if an env var is already set in the
+        environment, that value is kept instead of the auto-selected one.
+        """
+        import os  # noqa: PLC0415
+        base = _MODEL_PROFILES.get(self.perf_tier.label, _MODEL_PROFILES["CPU-only"])
+        return {k: os.environ.get(k, v) for k, v in base.items()}
 
 
 # ---------------------------------------------------------------------------

@@ -145,6 +145,21 @@ def _free_port(reason: str) -> bool:
 
 
 # ── dev: native launcher ──────────────────────────────────────────────────────
+def _detect_model_env() -> dict:
+    """Detect hardware and return hardware-adaptive model env vars."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "executable"))
+        import hardware as _hw_mod
+        hw = _hw_mod.detect()
+        models = hw.recommended_models()
+        print(f"  {_dim('hardware:')} {hw.perf_tier.label} tier → "
+              f"LLM={models['OLLAMA_MODEL']}, STT={models['WHISPER_MODEL']}")
+        return models
+    except Exception:
+        return {}
+
+
 def cmd_dev(args) -> int:
     """Start native dev launcher in --no-browser mode."""
     print(_bold("\n[dev] Starting native dev launcher…"))
@@ -154,7 +169,8 @@ def cmd_dev(args) -> int:
     if not _free_port("dev"):
         return 2
 
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    model_env = _detect_model_env()
+    env = {**os.environ, **model_env, "PYTHONIOENCODING": "utf-8"}
     print(f"  {_dim('cmd:')} python -X utf8 {LAUNCHER.name} --no-browser\n")
     proc = subprocess.Popen(
         [sys.executable, "-X", "utf8", str(LAUNCHER), "--no-browser"],
@@ -185,7 +201,8 @@ def cmd_docker(args) -> int:
     if not _free_port("docker"):
         return 2
 
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    model_env = _detect_model_env()
+    env = {**os.environ, **model_env, "PYTHONIOENCODING": "utf-8"}
     print(f"  {_dim('cmd:')} docker compose up -d\n")
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=ROOT, env=env)
     if result.returncode != 0:

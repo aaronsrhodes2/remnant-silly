@@ -114,14 +114,20 @@ def _load_hardware_module():
         return None
 
 
-def detect_and_show_hardware() -> dict:
-    """Detect hardware, print summary, write hardware-profile.json. Returns status dict."""
-    STATUS_DIR.mkdir(parents=True, exist_ok=True)   # ensure dir exists regardless of hw detection
+def detect_and_show_hardware() -> tuple[dict, dict]:
+    """Detect hardware, print summary, write hardware-profile.json.
+
+    Returns (status_dict, model_env) where model_env maps env var names to
+    recommended model IDs for this hardware tier (user env vars take priority).
+    """
+    STATUS_DIR.mkdir(parents=True, exist_ok=True)
     hw_mod = _load_hardware_module()
     if hw_mod is None:
-        return {}
+        return {}, {}
 
     hw = hw_mod.detect()
+    models = hw.recommended_models()
+
     print()
     print(bold("  ┌─ Hardware Profile ──────────────────────────────────────────┐"))
     for line in hw_mod.format_summary(hw).splitlines():
@@ -129,11 +135,21 @@ def detect_and_show_hardware() -> dict:
     print(bold("  └─────────────────────────────────────────────────────────────┘"))
     print()
 
+    # Model profile — show what was auto-selected and why
+    tier_label = hw.perf_tier.label
+    print(bold("  ┌─ Model Profile ─────────────────────────────────────────────┐"))
+    print(f"  │  Auto-selected for {bold(tier_label)} tier:")
+    print(f"  │    LLM   : {cyan(models['OLLAMA_MODEL'])}")
+    print(f"  │    STT   : {cyan(models['WHISPER_MODEL'])}")
+    print(f"  │    Music : {cyan(models['MUSICGEN_MODEL'])}")
+    print(bold("  └─────────────────────────────────────────────────────────────┘"))
+    print()
+
     # Write to status dir so the splash can read it
     STATUS_DIR.mkdir(parents=True, exist_ok=True)
     profile_path = STATUS_DIR / "hardware-profile.json"
     _atomic_write(profile_path, json.dumps(hw_mod.to_status_dict(hw), indent=2))
-    return hw_mod.to_status_dict(hw)
+    return hw_mod.to_status_dict(hw), models
 
 
 def _atomic_write(path: Path, content: str):
@@ -578,7 +594,7 @@ class ServiceManager:
         conf_path.write_text(conf_text, encoding="utf-8")
         return conf_path
 
-    def start_all(self) -> bool:
+    def start_all(self, model_env: dict = None) -> bool:
         """Start all services. Returns True if nginx comes up."""
         python = _find_python()
         ollama = _find_ollama()
@@ -618,11 +634,13 @@ class ServiceManager:
 
         env_base = {
             **dict(os.environ),
+            **(model_env or {}),           # hardware-adaptive model selection
             # HuggingFace model cache (flask-sd, flask-music)
             "HF_HOME":             str(LOCAL_CACHE / "hf-cache"),
             "TRANSFORMERS_CACHE":  str(LOCAL_CACHE / "hf-cache"),
             "HF_HUB_CACHE":        str(LOCAL_CACHE / "hf-cache"),
         }
+        ollama_model = env_base.get("OLLAMA_MODEL", OLLAMA_MODEL)
 
         # ── ollama ──────────────────────────────────────────────────────────
         if not port_open(PORTS["ollama"]):
@@ -667,7 +685,7 @@ class ServiceManager:
                     "OLLAMA_URL":       f"http://127.0.0.1:{PORTS['ollama']}",
                     "FLASK_MUSIC_URL":  f"http://127.0.0.1:{PORTS['flask-music']}",
                     "SILLYTAVERN_URL":  f"http://127.0.0.1:{PORTS['sillytavern']}",
-                    "OLLAMA_MODEL":     OLLAMA_MODEL,
+                    "OLLAMA_MODEL":     ollama_model,
                     "LISTEN_PORT":      str(PORTS["diag"]),
                 },
             )
@@ -709,6 +727,7 @@ class ServiceManager:
                         **env_base,
                         "LISTEN_PORT":     str(PORTS["flask-music"]),
                         "HF_HUB_OFFLINE":  "0",
+                        "MUSICGEN_MODEL":  env_base.get("MUSICGEN_MODEL", "facebook/musicgen-small"),
                     },
                 )
                 p.start()
@@ -756,7 +775,8 @@ class ServiceManager:
                     [str(python), str(flask_stt_app)],
                     env={
                         **env_base,
-                        "LISTEN_PORT": str(PORTS["flask-stt"]),
+                        "LISTEN_PORT":    str(PORTS["flask-stt"]),
+                        "WHISPER_MODEL":  env_base.get("WHISPER_MODEL", "base.en"),
                     },
                 )
                 p.start()
@@ -1013,12 +1033,12 @@ def main():
 
     # ── Setup mode ──────────────────────────────────────────────────────────
     if args.setup:
-        detect_and_show_hardware()
+        _, _ = detect_and_show_hardware()
         ok = run_setup(args)
         return 0 if ok else 1
 
     # ── Normal launch ───────────────────────────────────────────────────────
-    hw_profile = detect_and_show_hardware()
+    hw_profile, model_env = detect_and_show_hardware()
 
     log("starting services...", "head")
     sm = ServiceManager()
@@ -1027,7 +1047,7 @@ def main():
     for svc in ["flask-sd", "flask-tts", "flask-stt", "ollama"]:
         _stamp_status(f"{svc}.json", "pending", "starting…")
 
-    ok = sm.start_all()
+    ok = sm.start_all(model_env=model_env)
     if not ok:
         sm.stop_all()
         return 1

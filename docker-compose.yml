@@ -170,7 +170,7 @@ services:
       - remnant-status:/remnant-status
     environment:
       - LISTEN_PORT=1596
-      - MUSICGEN_MODEL=facebook/musicgen-small
+      - MUSICGEN_MODEL=${MUSICGEN_MODEL:-facebook/musicgen-small}
       - HF_HOME=/root/.cache/huggingface
       - HF_HUB_OFFLINE=1
       - TRANSFORMERS_OFFLINE=1
@@ -206,7 +206,7 @@ services:
     expose:
       - "9000"
     environment:
-      - ASR_MODEL=base.en
+      - ASR_MODEL=${WHISPER_MODEL:-base.en}
     networks:
       - play-net
 
