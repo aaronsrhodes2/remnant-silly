@@ -153,6 +153,33 @@ services:
     networks:
       - play-net
 
+  # ── Flask-Music (MusicGen) ───────────────────────────────────────────
+  # CPU-only MusicGen-small service. Generates short ambient WAV clips from
+  # a mood prompt. CPU avoids VRAM conflict with Ollama. Sentinel-gated so
+  # it won't try to load the model before bootstrap has downloaded it.
+  flask-music:
+    build:
+      context: .
+      dockerfile: docker/flask-music/Dockerfile
+    container_name: remnant-flask-music
+    restart: unless-stopped
+    expose:
+      - "1596"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - remnant-status:/remnant-status
+    environment:
+      - LISTEN_PORT=1596
+      - MUSICGEN_MODEL=facebook/musicgen-small
+      - HF_HOME=/root/.cache/huggingface
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - STATUS_DIR=/remnant-status
+      - WAIT_FOR_SENTINEL=/remnant-status/flask-music-ready
+      - WAIT_TIMEOUT_SECONDS=1800
+    networks:
+      - play-net
+
   # ── TTS (Kokoro) ──────────────────────────────────────────────────────
   # High-quality neural TTS via Kokoro FastAPI. CPU-only image so it runs
   # without a GPU. Exposed to the stack via nginx /api/tts/ route.
@@ -203,6 +230,7 @@ services:
       - FLASK_SD_URL=http://flask-sd:1592
       - OLLAMA_URL=http://ollama:1593
       - SILLYTAVERN_URL=http://sillytavern:1590
+      - FLASK_MUSIC_URL=http://flask-music:1596
       - LISTEN_PORT=1591
     networks:
       - play-net
@@ -251,6 +279,32 @@ services:
       # HuggingFace traffic goes through nginx on play-net, preserving
       # the "nginx is the only service that ever touches the internet"
       # invariant.
+      - play-net
+    restart: "no"
+
+  bootstrap-flask-music:
+    profiles: ["bootstrap"]
+    build:
+      context: .
+      dockerfile: docker/flask-music/Dockerfile
+    container_name: remnant-bootstrap-flask-music
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        python /app/download_flask_music.py
+        touch /remnant-status/flask-music-ready
+        echo "[bootstrap-flask-music] done, sentinel written"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - remnant-status:/remnant-status
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - HF_ENDPOINT=http://nginx/hf
+      - STATUS_DIR=/remnant-status
+    networks:
       - play-net
     restart: "no"
 

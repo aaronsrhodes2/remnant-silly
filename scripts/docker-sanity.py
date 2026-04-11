@@ -201,8 +201,24 @@ def main():
     except Exception as e:
         r.check("SSE stream opens", False, str(e)[:80])
 
-    # ── 8. Music proxy reachable ──────────────────────────────────────────────
-    print(_bold("\n8. Flask-Music proxy"))
+    # ── 8. Bootstrap manifest ─────────────────────────────────────────────────
+    print(_bold("\n8. Bootstrap manifest (/bootstrap-manifest)"))
+    code, manifest = _get(f"{diag}/bootstrap-manifest", timeout=5.0)
+    r.check("/bootstrap-manifest responds 200", code == 200, f"HTTP {code}")
+    if isinstance(manifest, dict):
+        all_ready = manifest.get("all_ready", False)
+        components = manifest.get("components", [])
+        r.check("all bootstrap components ready", all_ready,
+                "run: docker compose --profile bootstrap up", warn_only=not all_ready)
+        for comp in components:
+            sentinel_ok = comp.get("sentinel_present", False)
+            label = comp.get("label", comp.get("id", "?"))[:50]
+            phase = comp.get("status_phase") or "unknown"
+            r.check(f"  {label}", sentinel_ok,
+                    f"sentinel missing — phase={phase}", critical=False, warn_only=True)
+
+    # ── 9. Music proxy reachable ──────────────────────────────────────────────
+    print(_bold("\n9. Flask-Music proxy"))
     code, music = _get(f"{base}/api/music/health", timeout=5.0)
     r.check("/api/music/health reachable", code == 200,
             f"HTTP {code}" + (" (music service may not be in docker stack)" if code != 200 else ""),

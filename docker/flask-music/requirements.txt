@@ -1,0 +1,8 @@
+# flask-music dependencies — CPU-only torch to avoid VRAM conflict with Ollama.
+# MusicGen is accessed via HuggingFace transformers, not the audiocraft package.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.2+cpu
+transformers>=4.40.0
+soundfile>=0.12.1
+flask>=3.0.0
+huggingface_hub>=0.20.0

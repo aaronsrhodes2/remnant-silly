@@ -1842,6 +1842,100 @@ _SIGNATURE_FILES = [
 _REPO_ROOT = Path(__file__).parent.parent.parent  # docker/diag/app.py → docker/diag → docker → repo root
 
 
+def _build_bootstrap_manifest() -> dict:
+    """Return the list of large bootstrapped model files and their sentinel status.
+
+    Each entry describes one bootstrap component: which models it downloads,
+    the sentinel file that marks it complete, and whether that sentinel exists.
+    This lets /bootstrap-manifest serve as a definitive answer to
+    "did all the big downloads complete?"
+    """
+    status_dir = Path(STATUS_DIR)
+
+    components = [
+        {
+            "id": "flask-sd",
+            "label": "Image backend (Stable Diffusion v1.5 + IP-Adapter)",
+            "sentinel": "flask-sd-ready",
+            "models": [
+                {
+                    "key": "sd15",
+                    "repo": "runwayml/stable-diffusion-v1-5",
+                    "description": "Stable Diffusion v1.5 fp16 weights",
+                    "size_estimate_mb": 4000,
+                    "license": "CreativeML Open RAIL-M",
+                },
+                {
+                    "key": "ip-adapter",
+                    "repo": "h94/IP-Adapter",
+                    "description": "IP-Adapter Plus for SD 1.5",
+                    "size_estimate_mb": 800,
+                    "license": "Apache 2.0",
+                },
+            ],
+        },
+        {
+            "id": "flask-music",
+            "label": "Audio backend (MusicGen Small)",
+            "sentinel": "flask-music-ready",
+            "models": [
+                {
+                    "key": "musicgen-small",
+                    "repo": "facebook/musicgen-small",
+                    "description": "MusicGen Small — ambient music generation",
+                    "size_estimate_mb": 1200,
+                    "license": "CC-BY-NC 4.0",
+                },
+            ],
+        },
+        {
+            "id": "ollama",
+            "label": "Language backend (Ollama model)",
+            "sentinel": "ollama-ready",
+            "models": [
+                {
+                    "key": "ollama-model",
+                    "repo": f"ollama/{_ollama_model()}",
+                    "description": f"{_ollama_model()} via Ollama registry",
+                    "size_estimate_mb": 9000,
+                    "license": "varies by model",
+                },
+            ],
+        },
+    ]
+
+    out = []
+    all_ready = True
+    for comp in components:
+        sentinel_path = status_dir / comp["sentinel"]
+        ready = sentinel_path.exists()
+        if not ready:
+            all_ready = False
+        # Read the matching status JSON if present
+        status_json = None
+        sj_path = status_dir / f"{comp['id']}.json"
+        if sj_path.exists():
+            try:
+                status_json = json.loads(sj_path.read_text())
+            except Exception:
+                pass
+        out.append({
+            "id": comp["id"],
+            "label": comp["label"],
+            "sentinel": comp["sentinel"],
+            "sentinel_present": ready,
+            "status_phase": (status_json or {}).get("phase"),
+            "models": comp["models"],
+        })
+
+    return {
+        "all_ready": all_ready,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "components": out,
+        "note": "Run 'docker compose --profile bootstrap up' to download missing models.",
+    }
+
+
 def _build_signature() -> dict:
     """Return a composite fingerprint of every content + logic file.
 
@@ -2095,6 +2189,7 @@ class Handler(BaseHTTPRequestHandler):
                 "endpoints": [
                     "/ai.json",
                     "/signature (GET — composite SHA256 fingerprint of all content + logic files)",
+                    "/bootstrap-manifest (GET — list of large bootstrapped models + sentinel status)",
                     "/actions",
                     "/actions/<id> (POST)",
                     "/browser-health (POST)",
@@ -2125,6 +2220,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/signature":
             try:
                 self._send_json(200, _build_signature())
+            except Exception as e:
+                self._send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
+            return
+        if path == "/bootstrap-manifest":
+            try:
+                self._send_json(200, _build_bootstrap_manifest())
             except Exception as e:
                 self._send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
             return
