@@ -47,11 +47,10 @@ python -X utf8 scripts/dev.py status
 | Port | Service |
 |---|---|
 | 1582 | nginx gateway (all builds) |
-| 1590 | SillyTavern |
 | 1591 | diag sidecar |
 | 1592 | flask-sd |
 | 1593 | ollama |
-| 1594 | tts (optional) |
+| 1594 | tts (Kokoro) |
 | 1595 | stt (optional) |
 | 1596 | flask-music |
 
@@ -77,9 +76,25 @@ When any build is running on :1582, Claude can interact via:
 - `GET  http://localhost:1582/game/events` — SSE stream of all game events
 
 MCP tools also available when stack is running:
-- `mcp__sillytavern__*` → character cards, world info, recent chat
 - `mcp__flask-sd__*` → image generation
 - `mcp__ollama__*` → direct LLM access (note: may use default port 11434, not 1593)
+
+## Permanent world assets — dev pipeline
+
+**Golden rule:** When the user says "permanent world asset" with any content, Claude:
+1. Identifies type: NPC / location / lore / 3D mesh / music
+2. Edits `docker/diag/seed/world.json` with the content
+3. For images: checks `C:/Users/aaron/Downloads/` or asks for the path; reads the file and writes it to `web/assets/characters/` (NPCs) or `web/assets/locations/` (backgrounds) or `web/assets/characters/NAME-mesh.png` (3D references)
+4. Commits both the JSON and any image files
+
+**Asset directories (all tracked in git via `!web/assets/**`):**
+- `web/assets/characters/` — NPC portraits + mesh reference sheets
+- `web/assets/locations/` — location background art
+- `web/assets/music/` — future static music samples
+
+**Seed file:** `docker/diag/seed/world.json` — edit this to add/modify permanent locations, NPCs, and lore. Loaded at startup and after every Reset World. Restart diag to pick up changes (no Docker rebuild needed).
+
+**3D mesh assets** — store as reference PNGs in `web/assets/characters/NAME-mesh.png`. The `physical_spec` and `sd_prompt` fields in the seed JSON lock the appearance for Stable Diffusion generation. Future: 3D awareness will be added to world entities as they are interacted with.
 
 ## Release verification sequence
 
