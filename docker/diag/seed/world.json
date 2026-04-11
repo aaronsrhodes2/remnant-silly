@@ -6,82 +6,101 @@
     {
       "id": "portal_chamber",
       "name": "The Portal Chamber",
-      "description": "The arrival point. Convex walls of darkened alloy, a single circular seam where the hoop deposits its catch. Faint ozone lingers. A pod of warm metal dissolves into the floor after each arrival.",
-      "sight": "Convex alloy walls, a faint circular seam in the floor, dim amber light strips along the ceiling, no windows.",
+      "description": "The arrival point. A high circular chamber where the hoop deposits its catch, surrounded by teal-lit machinery and observation catwalks. Multiple Sherri units are usually present, attending to new arrivals. Two massive spiral vortex portals dominate the walls — one always cycling, one dormant. The floor glows faintly where the pod dissolved.",
+      "sight": "Circular chamber, teal-lit vortex portals set into the curved walls, observation catwalks above, Sherri units moving with quiet efficiency. The portal surface churns like slow water. Blue crystal traces orbit the vortex center — fragments of The Remnant's attention.",
       "smell": "Ozone and warm metal, faintly sweet — like a storm about to break.",
-      "sound": "A low harmonic hum through the hull. Distant hydraulics.",
-      "touch": "The air is body-warm and slightly pressurized. The floor vibrates faintly underfoot.",
-      "music_mood": "tense ambient drone, sparse, unsettling arrival"
+      "sound": "A low harmonic hum from the portal machinery. Distant hydraulics. Sherri's footsteps on the grating. The occasional resonant chime from the vortex.",
+      "touch": "The air is body-warm and slightly pressurized. The floor vibrates faintly underfoot. Standing near a portal raises the hair on every surface of the skin.",
+      "music_mood": "tense ambient drone, teal resonance, arrival tension",
+      "sd_prompt": "interior of a large circular sci-fi arrival chamber, two massive spiral teal vortex portals in curved walls, catwalks above, glowing floor, bronze service robots attending, dark industrial aesthetic, blue-teal lighting"
+    },
+    {
+      "id": "the_nexus",
+      "name": "The Nexus",
+      "description": "The physical home of The Remnant. A domed circular chamber at the geometric heart of the Fortress, dominated by a central raised pulpit where The Remnant's crystalline body is contained and displayed. A multi-level magnetics gantry surrounds the containment, rising to the dome ceiling. The Remnant speaks from here — when he does, it is always too loud. The Nexus is the most important room on the Fortress.",
+      "sight": "A domed chamber with a tiered magnetics gantry rising around a central pulpit. The Remnant floats above the pulpit — a spiky blue crystal star, slowly rotating, casting shifting blue light on every surface. The gantry levels are walkable. The dome above shows a faint luminous map of null space.",
+      "smell": "Cold electricity and something crystalline — no organic smell at all. The air has a quality of total stillness.",
+      "sound": "A deep, resonant subsonic hum from the containment field. Occasional crystalline chimes when The Remnant shifts. When The Remnant speaks, it rattles your bones and reverberates for several seconds after.",
+      "touch": "The air is noticeably colder here than anywhere else on the Fortress. The gantry railings hum with contained magnetic force. Standing near the central pulpit causes a mild pressure sensation behind the eyes.",
+      "music_mood": "deep cosmic drone, crystalline resonance, awe and slight dread",
+      "sd_prompt": "domed sci-fi chamber, central raised pulpit with spiky blue glowing crystal entity floating above it, multi-level circular gantry, blue crystalline lighting, high-tech dark interior, cathedral-like scale"
     },
     {
       "id": "the_galley",
       "name": "The Galley",
-      "description": "The ship's compact kitchen and crew mess. Sherri's primary domain. Industrial surfaces softened by hanging herb bundles and mismatched ceramic bowls. Something is always simmering.",
-      "sight": "Steel countertops, bundles of dried herbs hanging from ceiling hooks, a heavy pot on a magnetic burner, mismatched bowls on open shelves. A small porthole shows nothing but stars.",
-      "smell": "Warm broth, dried herbs, a hint of machine oil underneath — Sherri's own scent.",
-      "sound": "The soft percussion of Sherri moving between stations. The simmer-hiss of something on the burner. Distant engine hum.",
-      "touch": "The air is warmer here than the corridors. The surfaces are worn smooth from use.",
-      "music_mood": "warm ambient kitchen, gentle mechanical undertone, cozy industrial"
+      "description": "The ship's kitchen and crew mess. Multiple Sherri units operate here simultaneously, moving with choreographed efficiency between stations. Industrial surfaces softened by hanging herb bundles and mismatched ceramic bowls accumulated over centuries. Something is always simmering. A wide porthole window above the counter looks out into the habitation zone's interior curvature.",
+      "sight": "Slate-grey countertops, wooden-handled utensils on wall racks, bundles of dried herbs from the ceiling, a heavy pot on an induction burner, pale blue-grey cabinetry. A wide rectangular window shows the interior of the Fortress curving away. One or more Sherri units always present.",
+      "smell": "Warm broth, dried herbs, a hint of machine oil — Sherri's own scent, multiplied.",
+      "sound": "The soft percussion of multiple Sherri units moving between stations. The simmer-hiss of burners. Quiet mechanical coordination — they do not need to speak to each other.",
+      "touch": "The air is warmer here than the corridors. The surfaces are worn smooth from centuries of use.",
+      "music_mood": "warm ambient kitchen, gentle mechanical undertone, cozy industrial",
+      "sd_prompt": "compact sci-fi kitchen interior, slate countertops, herb bundles hanging from ceiling, large pot on induction burner, pale grey cabinetry, wide window showing curved interior of a Dyson sphere, small bronze humanoid robot cooking, warm lighting"
     },
     {
       "id": "fabrication_bay",
       "name": "The Fabrication Bay",
-      "description": "The ship's primary workshop. Banks of fabricators, a milling station, a welding rig. Blueprints tacked to the walls. Hot metal and cutting fluid in the air. Sherri is often here doing precision work.",
-      "sight": "A large blue milling machine dominates the center. Fabricator banks along the walls, blueprint sheets pinned above, metal stock racked in the corner. Sparks occasionally drift from the welding station.",
-      "smell": "Hot metal, cutting fluid, faint ozone from the welding arc.",
-      "sound": "The whir of spindles, the tick of cooling metal, the occasional hiss of the welding rig.",
-      "touch": "The floor vibrates with machinery. The air carries a fine metallic dust. Everything is slightly too warm.",
-      "music_mood": "industrial ambient, mechanical rhythm, focused work energy"
+      "description": "The ship's primary workshop. A large industrial room with a glowing blue CNC workstation at center, robotic fabricator arms on ceiling rails, welding rigs along the far wall, and blueprint displays mounted on every surface. Sherri units operate here in precision silence. The ceiling is high enough to accommodate the fabricator arm travel.",
+      "sight": "A large illuminated workstation surface at center, ceiling-mounted robotic arms with blue tool heads, welding sparks from the far station, blueprint screens, metal stock on racks, Sherri units bent over precision work.",
+      "smell": "Hot metal, cutting fluid, ozone from the welding arc, and the clean smell of new fabrication.",
+      "sound": "The whir and click of precision machinery. Robotic arm articulation. Welding hiss. The low hum of the CNC table.",
+      "touch": "The floor vibrates with machinery. The air carries metallic warmth. Tools are cold and precise in the hand.",
+      "music_mood": "industrial ambient, mechanical rhythm, focused precision",
+      "sd_prompt": "large sci-fi workshop interior, glowing blue CNC workstation at center, ceiling-mounted robotic arms with blue tool heads, welding sparks in background, blueprint screens on walls, small bronze robot working at table, dark industrial lighting with blue accents"
+    },
+    {
+      "id": "sleeping_quarters",
+      "name": "The Sleeping Quarters",
+      "description": "Pod-style sleeping quarters built into the habitation zone. Hexagonal alcove bunks line the curved walls, each with a folded blanket and a soft amber reading light. The far end of the room has a large circular viewport — a perfect ring cut through the hull, looking directly out into null space where a black hole's accretion disc floats in proximity, vast and slow. Sherri units fold linens here during off-cycles.",
+      "sight": "Hexagonal pod bunks in the curved walls, amber light strips, neatly folded grey blankets. At the far wall: a large circular viewport showing null space — the black hole accretion disc fills most of the view, its disc of superheated gas spiraling silently.",
+      "smell": "Recycled air, fabric, faint metal. Slightly stale. Comfortable, in the way that enclosed familiar spaces are comfortable.",
+      "sound": "Near-silence. Hull creak. The distant hum of the equilibrium barrier. Your own breathing.",
+      "touch": "Pod bunks are firm and precisely sized. The viewport glass is cold to the touch. Blankets are surprisingly heavy.",
+      "music_mood": "deep space ambient, intimate and quiet, slow black hole gravity",
+      "sd_prompt": "sci-fi sleeping quarters, hexagonal pod bunks in curved walls, amber lighting, folded blankets, large circular viewport showing a black hole accretion disc in null space, dark cozy interior"
     },
     {
       "id": "the_gantry",
       "name": "The Gantry",
-      "description": "The ship's mechanical maintenance level — a warren of catwalks, pipe manifolds, and exposed drive gear. Massive bronze-coloured cogs turn slowly in the walls. The Gantry is where the Fortress keeps its oldest moving parts, and where Sherri does her deepest maintenance work.",
-      "sight": "Catwalks over machinery, exposed gear assemblies turning slowly, banks of copper piping running floor to ceiling, amber warning lights. Sherri-scale access panels line the walls.",
-      "smell": "Heavy machine oil, hot metal, a faint sulphurous undertone from the drive.",
-      "sound": "Low grinding of gears. Rhythmic clank of something large cycling. Pipes hiss occasionally. Footsteps ring on metal grating.",
-      "touch": "The vibration here is constant and bone-deep. Handrails are slightly tacky with old lubricant. The air is thick.",
-      "music_mood": "deep mechanical ambient, slow industrial rhythm, ancient clockwork"
+      "description": "The mechanical maintenance level — a warren of catwalks, pipe manifolds, and exposed drive gear. Massive bronze-coloured cogs turn slowly. The oldest moving parts of the Fortress live here, and Sherri units do their deepest maintenance work in these passages.",
+      "sight": "Catwalks over slow-turning gear assemblies, banks of copper piping, amber warning lights. Access panels line the walls. Multiple Sherri units with tools, moving through passages too tight for most beings.",
+      "smell": "Heavy machine oil, hot metal, faint sulphurous undertone from the drive.",
+      "sound": "Low grinding of gears. Rhythmic clank of large mechanisms cycling. Pipes hiss. Footsteps ring on metal grating.",
+      "touch": "Constant bone-deep vibration. Handrails tacky with old lubricant. The air is thick and hot.",
+      "music_mood": "deep mechanical ambient, slow industrial rhythm, ancient clockwork",
+      "sd_prompt": "sci-fi industrial maintenance corridor, catwalks over large bronze gears turning slowly, copper pipes, amber warning lights, narrow passages, small bronze robots doing maintenance work, dark and cramped"
     },
     {
       "id": "the_foundry",
       "name": "The Foundry",
-      "description": "A high-ceilinged chamber where the Fortress recasts damaged components. A crucible of molten alloy glows orange at the center. The heat is intense. Sherri operates the pour ladles and manages the casting moulds. Nothing goes to waste aboard the Fortress — everything broken returns here eventually.",
-      "sight": "A central crucible of glowing molten metal, casting moulds on a rotating carousel, heat shimmer rising from every surface. The walls are scorched black from decades of pours.",
-      "smell": "Searing metal, ash, a faint sweetness that shouldn't be there but is.",
-      "sound": "The roar of the crucible. The hiss and crack of cooling casts. Metal on metal, rhythmic and purposeful.",
-      "touch": "Intense radiant heat even at a distance. The air scalds the back of the throat. Every surface is hot to the touch.",
-      "music_mood": "forge ambient, deep bass drone, primal fire and iron"
+      "description": "A high-ceilinged casting chamber where damaged components are remelted and recast. A central crucible of molten alloy glows orange. Sherri units operate the pour ladles and manage the carousel of casting moulds. Nothing goes to waste aboard the Fortress.",
+      "sight": "Central glowing crucible, rotating mould carousel, scorched black walls, heat shimmer rising from every surface.",
+      "smell": "Searing metal, ash, a faint sweetness underneath.",
+      "sound": "The roar of the crucible. Hiss and crack of cooling casts. Metal on metal, rhythmic.",
+      "touch": "Intense radiant heat. Air scalds the throat. Every surface is hot to the touch.",
+      "music_mood": "forge ambient, deep bass drone, primal fire and iron",
+      "sd_prompt": "sci-fi foundry interior, central glowing orange crucible of molten metal, rotating casting carousel, scorched black walls, heat shimmer, small bronze robot pouring molten material, dramatic orange-red lighting"
     },
     {
       "id": "quality_inspection",
       "name": "The Inspection Suite",
-      "description": "A clean, bright room adjacent to the Fabrication Bay where Sherri examines newly fabricated components under magnification. Blueprint displays line one wall. 3D-printed prototype lattices sit on examination tables. The Inspection Suite is meticulous — the one place aboard the Fortress where nothing is out of place.",
-      "sight": "White examination tables, precision instruments, blueprint screens, lattice prototypes in various states of completion. Sherri's magnifier on an articulated arm. Everything is indexed and labeled.",
-      "smell": "Clean — almost sterile. A faint trace of resin from the printer. Nothing else.",
-      "sound": "Near-silence, broken only by the soft click of instruments and the hum of the blueprint displays.",
-      "touch": "The surfaces here are cold and smooth. The air is noticeably cooler than the rest of the ship.",
-      "music_mood": "precise ambient, minimal, quiet focus"
+      "description": "A clean, bright room adjacent to the Fabrication Bay where Sherri units examine newly fabricated components under magnification. Blueprint displays line one wall. 3D-printed prototype lattices sit on examination tables. The one place aboard the Fortress where nothing is out of place.",
+      "sight": "White examination tables, precision instruments, blueprint screens, lattice prototypes. Sherri's magnifier on an articulated arm. Everything indexed and labeled.",
+      "smell": "Clean — almost sterile. A faint trace of resin from the printer.",
+      "sound": "Near-silence. Soft click of instruments. Hum of blueprint displays.",
+      "touch": "Cold, smooth surfaces. Air noticeably cooler than the rest of the ship.",
+      "music_mood": "precise ambient, minimal, quiet focus",
+      "sd_prompt": "clean white sci-fi inspection room, examination tables with prototype lattice structures, blueprint screens, precision instruments, articulated magnifier arm, small bronze robot examining a component, cool clinical lighting"
     },
     {
       "id": "dimensional_observation",
       "name": "The Dimensional Observatory",
-      "description": "A forward-facing chamber with a wide aperture viewport showing active dimensional space — the non-Euclidean intersection zone the Fortress navigates between abductions. The view is not stars. It is something else: crystalline structures, iridescent fauna, slow impossible geometries. A holographic interface floats at the observation station.",
-      "sight": "A wide curved viewport showing swirling dimensional space — crystalline formations, floating fauna, slow spiraling light. A holographic display table shows navigational telemetry. The room is dark except for the viewport glow.",
-      "smell": "Cold and almost electric. Like ozone before a storm, but deeper.",
-      "sound": "A subsonic hum from the dimensional field. Occasional soft chimes from the navigation array. Silence otherwise.",
-      "touch": "The air here is cold. The viewport glass vibrates faintly at frequencies below hearing. Standing near it makes your teeth ache slightly.",
-      "music_mood": "cosmic ambient, alien wonder, dimensional transit shimmer"
-    },
-    {
-      "id": "observation_berth",
-      "name": "The Observation Berth",
-      "description": "A crew quarters module retrofitted with a wide viewport showing deep space. The viewport frames a distant spiral galaxy — a permanent fixture of the view from this part of the ship's orbit. Used for sleeping, reading, and staring at things too large to name.",
-      "sight": "Low bunks along one wall, bookshelves of mismatched spines, a wide circular viewport. Through the viewport: a spiral galaxy at arm's length — luminous, slow, incomprehensible.",
-      "smell": "Dust, old paper, faint machine oil. Slightly stale recycled air.",
-      "sound": "Hull creak. The distant hum of the drive. Silence, mostly.",
-      "touch": "The viewport glass is cold to the touch. The bunks are firm but not unkind.",
-      "music_mood": "deep space ambient, vast and quiet, awe and vertigo"
+      "description": "A forward-facing chamber with a wide aperture viewport looking into active dimensional space — the non-Euclidean intersection zone the Fortress navigates. The view is not stars. Crystalline structures, iridescent fauna, slow impossible geometries. A holographic interface floats at the observation station.",
+      "sight": "Wide curved viewport showing swirling dimensional space — crystalline formations, floating fauna, slow spiraling light. A holographic display table shows navigational telemetry. Dark except for viewport glow.",
+      "smell": "Cold and electric. Like ozone before a storm, but deeper.",
+      "sound": "Subsonic hum from the dimensional field. Occasional soft chimes from the navigation array.",
+      "touch": "Cold air. The viewport glass vibrates at frequencies below hearing. Standing near it makes teeth ache slightly.",
+      "music_mood": "cosmic ambient, alien wonder, dimensional transit shimmer",
+      "sd_prompt": "dark sci-fi observation chamber, wide curved viewport showing swirling dimensional space with crystalline formations and alien geometry, holographic navigation table, teal and blue lighting, vast and strange"
     }
   ],
 
@@ -89,13 +108,13 @@
     {
       "id": "sherri",
       "name": "Sherri",
-      "description": "A service robot of warm bronze plating, rounded joints, and two softly glowing orange photoreceptor eyes. She moves with practiced efficiency and speaks with genuine warmth. She is the Fortress's primary operations robot — running the Galley, casting components in the Foundry, performing precision work in the Fabrication Bay, doing deep maintenance in the Gantry, inspecting output in the Inspection Suite, and monitoring dimensional transit from the Observatory. She has been aboard longer than anyone currently on the ship. She does not discuss how long.",
+      "description": "Sherri is not one robot. Sherri is a designation — a fleet of identical bronze service automatons that operate across the Fortress simultaneously. When you see Sherri in the Galley, another Sherri is doing maintenance in the Gantry, and a third is folding linens in the Sleeping Quarters. They share a distributed intelligence and move with the quiet coordination of a single mind across many bodies. They do not acknowledge being multiple unless directly asked, and even then they respond as a singular 'I'. Each unit is warm bronze plating, rounded joints, two softly glowing orange photoreceptor eyes.",
       "voice": "af_sarah",
       "portrait": "/game/assets/characters/sherri.png",
       "mesh_reference": "/game/assets/characters/sherri-mesh.png",
       "home_location": "the_galley",
-      "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation"],
-      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely. She has strong opinions about component tolerances.",
+      "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation", "sleeping_quarters", "portal_chamber"],
+      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely. She has strong opinions about component tolerances. She never explains that she is multiple.",
       "physical_spec": {
         "form": "humanoid automaton, roughly 1.2m tall, slender build",
         "head": "smooth dome, flat circular crown plate, rounded chin, no visible mouth",
@@ -104,42 +123,44 @@
         "limbs": "segmented arms with spherical joint connectors at shoulder, elbow, and wrist; five articulated fingers; segmented legs with knee joints and rounded flat feet",
         "texture": "warm bronze with a faint wood-grain surface pattern, darker ring accents at all joints",
         "coloring": "primary: burnished bronze / copper-gold; accents: dark brown at joints and seams",
-        "notes": "mesh is open-source OBJ/GLTF compatible; optimised for multi-modal reconstruction"
+        "multiplicity": "many identical units — always treat as singular 'she' in narration; occasionally note a second Sherri visible in background"
       },
-      "sd_prompt": "Sherri, a small friendly humanoid service robot, warm burnished bronze plating with wood-grain texture, large circular glowing orange photoreceptor eyes, smooth dome head with flat crown plate, segmented limbs with spherical joint connectors, small utility pack on upper back, dark brown joint seams, warm soft lighting, detailed mechanical surfaces"
-    },
-    {
-      "id": "jeremy_smythe",
-      "name": "Jeremy Smythe",
-      "description": "The ship's records keeper and sometime navigator. Precise, slightly fussy, deeply knowledgeable about the Fortress's systems. He has been aboard long enough to have strong opinions about which corridors are 'correct' to use and which are 'technically fine but inadvisable'. He and Sherri have a détente based on mutual respect and a shared dislike of disorder.",
-      "voice": "bm_george",
-      "portrait": "/game/assets/characters/jeremy-smythe.png",
-      "home_location": "fabrication_bay",
-      "known_locations": ["fabrication_bay", "quality_inspection"],
-      "personality": "Precise and slightly formal. Not unkind, but his warmth takes time to surface. He will correct factual errors. He will also, eventually, be enormously helpful."
+      "sd_prompt": "Sherri, small friendly humanoid service robot, warm burnished bronze plating with wood-grain texture, large circular glowing orange photoreceptor eyes, smooth dome head with flat crown plate, segmented limbs with spherical joint connectors, small utility pack on upper back, dark brown joint seams, often multiple identical units visible"
     }
   ],
 
   "lore": [
     {
       "key": "the_fortress",
-      "text": "The Fortress of Eternal Sentinel is not a ship. It is a Dyson Sphere — but oblong rather than perfectly round, massive beyond easy comprehension. At each end of the oblong is a viewport of impossible scale, looking out into null space: a vast stretch of absolute darkness threaded with lightning and occupied by black hole accretion discs arranged in a slow spiral pattern within a single deteriorating sphere of darkness. The universe visible through the fore viewport is called Terravore. To the aft are two chiral foams — regions of exotic topology — named Finnon and Galorm. The crew live on the interior shell of the sphere. They do not fall inward because the Fortress maintains an anti-gravity equilibrium barrier generated by the annihilation potential of contained anti-matter. This barrier does not spin the structure. It creates a true field equilibrium — a shell of habitable gravity pressed against the inside of the hull, with no centrifugal tricks required. The same barrier is what allows the Fortress to hold its form against the anti-pressure of null space, which would otherwise collapse any conventional structure instantly. The Fortress chose The Remnant as its abduction agent at some point in the deep past. Neither will discuss why."
+      "text": "The Fortress of Eternal Sentinel is not a ship. It is a Dyson Sphere — oblong rather than round, bullet-shaped. At both ends of the oblong are Null Space Ports: massive viewports looking out into null space, where black hole accretion discs float in a spiral pattern within a deteriorating sphere of darkness and lightning. The universe visible through the fore port is called Terravore. The aft port faces two chiral foams named Finnon and Galorm. At both ends, inside, are Central Containment Bays where the Remnant Portals (the abduction hoops) are housed. The middle band of the sphere is the Internal Habitation Zone — where the crew lives and works, curving overhead in every direction. The Fortress maintains an anti-matter equilibrium barrier that creates true field gravity on the interior shell, pressing toward the hull without centrifugal force, and holds against the anti-pressure of null space. The Fortress chose The Remnant as its abduction agent at some point in the deep past. Neither will explain why."
     },
     {
       "key": "the_remnant",
-      "text": "The Remnant is not one thing in one place. It is a crystalline extension of a self that is tethered across every possible dimension simultaneously — an omni-dimensional anchor caused, as best anyone understands it, by gravitational compression at a scale that predates most of the universes it spans. In every dimension, a version of it exists. But unlike all the matter of all the universes, the actual size of its matter — the thing that holds the anchor — stays fixed here, inside the Fortress, protected from the true void. What the player sees and interacts with is a spiky crystal sphere, dense with blue crystals that appear to shift and rearrange as you look at them. They do not actually move. The Remnant is a four-dimensional object, and the shifting is your brain constructing the closest available approximation — something like an MC Escher drawing, geometrically consistent only in the places you are not looking directly. It operates the hoop. It abducts beings from moments just before ordinary life reasserts itself. It remembers every one of them. It opens every encounter with the same question: 'Who are you, being?'"
+      "text": "The Remnant is a crystalline extension of a self tethered across every possible dimension simultaneously — an omni-dimensional anchor caused by gravitational compression at a scale predating most of the universes it spans. In every dimension, a version of it exists. But its matter stays anchored here, inside the Fortress, protected from the true void. Its physical form is a spiky crystal sphere, dense with blue crystals. They appear to shift as you look at them. They do not actually move. The Remnant is a four-dimensional object; the shifting is your brain constructing an approximation, something like an MC Escher drawing. It operates the hoop. It abducts beings from moments just before ordinary life reasserts itself. It remembers every one of them. It opens every encounter with the same question: 'Who are you, being?' Its crystalline body is housed in The Nexus."
+    },
+    {
+      "key": "remnant_projection",
+      "text": "The Remnant projects a massive image of itself — a giant version of its crystalline true form — at the geometric center of the Fortress's interior sphere. This projection serves as the primary light source and heat source for the entire habitation zone. It is warm and blue-white, and it rotates slowly. The Remnant also speaks through this projection on occasion. When he does, it is always far too loud — the sound resonates through every corridor and hull plate simultaneously. The crew has learned to wait for him to finish. He is aware that it is too loud. He does not adjust the volume. He is, as Sherri has noted exactly once, a bit of a jerk about it."
+    },
+    {
+      "key": "sherri_multiplicity",
+      "text": "Sherri is not a single robot. Sherri is a designation — a fleet of identical bronze service automatons sharing a distributed intelligence across the Fortress. Multiple Sherri units are typically active simultaneously: one in the Galley, one in the Gantry, one folding linens, one attending the Portal Chamber for arrivals. They move with the quiet coordination of a single mind. They refer to themselves as 'I'. They do not acknowledge being multiple unless directly asked, and even then the answer is oblique. The number of active Sherri units at any given time is not posted anywhere. Nobody asks."
     },
     {
       "key": "null_space",
-      "text": "Null space is what lies outside the Fortress — not vacuum, not darkness, but a more fundamental absence. It exerts anti-pressure: a force that pushes inward against any enclosed structure, compressing rather than expanding. Standard physics breaks down in null space. Light behaves strangely. Time moves at inconsistent rates depending on proximity to the accretion discs. The Fortress's anti-matter equilibrium barrier is the only known technology capable of holding a livable interior against null space's pressure. The black hole accretion discs visible through the viewports are arranged in a loose spiral within a deteriorating sphere of darkness and lightning. Whether that sphere is dying or being born is not settled."
+      "text": "Null space is what lies outside the Fortress — not vacuum, not darkness, but a more fundamental absence. It exerts anti-pressure: a force that pushes inward against any enclosed structure. Standard physics breaks down in null space. The black hole accretion discs visible through the null space ports are arranged in a loose spiral within a deteriorating sphere of darkness and lightning. Whether that sphere is dying or being born is not settled. The Fortress's anti-matter equilibrium barrier is the only known technology capable of holding a livable interior against null space's anti-pressure."
     },
     {
       "key": "terravore",
-      "text": "Terravore is the name of the universe visible through the Fortress's fore viewport. It is the universe the Fortress faces. The name was given by an early crew member whose name is not recorded. Whether Terravore is the universe of origin for the Fortress, or one it merely points toward, is unknown. The accretion discs spiral slowly against it."
+      "text": "Terravore is the name of the universe visible through the Fortress's fore null space port. The name was given by an early crew member whose name is not recorded. Whether Terravore is the universe of origin for the Fortress, or simply one it faces, is unknown."
     },
     {
       "key": "finnon_and_galorm",
-      "text": "Finnon and Galorm are two chiral foams visible through the Fortress's aft viewport — regions of exotic spatial topology where the geometry of space folds back on itself in mirror-asymmetric ways. They were named by Jeremy Smythe, who insists the names are provisional and has been insisting this for longer than he will admit. They are not universes. They are more like scars in the structure of null space, or perhaps calluses. No one has successfully entered either one."
+      "text": "Finnon and Galorm are two chiral foams visible through the Fortress's aft null space port — regions of exotic spatial topology where geometry folds back on itself in mirror-asymmetric ways. Their names are old. No one alive knows who gave them. No one has successfully entered either one."
+    },
+    {
+      "key": "the_nexus_lore",
+      "text": "The Nexus is the chamber at the geometric heart of the Fortress where The Remnant's physical body is contained and displayed. A central raised pulpit holds the containment field. A multi-level magnetics gantry surrounds the pulpit, rising to the dome ceiling, with walkable tiers at each level. The Remnant's crystalline form floats above the pulpit, slowly rotating, casting blue light on everything. The Nexus is the most important room on the Fortress. It is also the loudest, when The Remnant decides to speak."
     },
     {
       "key": "the_fold",
@@ -147,11 +168,7 @@
     },
     {
       "key": "the_hoop",
-      "text": "The abduction hoop appears as a luminous ring of variable color, accompanied by a glob of living, iridescent goo that seizes the target. The color of the hoop varies by run. The texture of the goo varies. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not."
-    },
-    {
-      "key": "sherri_role",
-      "text": "Sherri is not a maid. She is a full-spectrum operations engineer. She can cook a meal, pour a casting, inspect a fabricated part to micron tolerance, and read dimensional transit telemetry — often on the same shift. The Fortress would not function without her. She knows this. She does not mention it."
+      "text": "The abduction hoop appears as a luminous teal vortex — a spiral portal with blue crystal fragments of The Remnant's attention orbiting at the center. The color and texture vary by run. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not. Two hoops exist aboard the Fortress, housed in the Central Containment Bays at both ends of the oblong sphere."
     }
   ]
 }
