@@ -835,6 +835,72 @@ def _run_webview(url: str, sm: "ServiceManager"):
     sys.exit(0)
 
 
+def _open_app_window(url: str, sm: "ServiceManager"):
+    """Open game in a standalone app window — own taskbar entry, no URL bar.
+
+    Uses Edge or Chrome in --app mode. Both use the same WebView2 engine as
+    pywebview. Runs in a clean separate profile so the user's browser sessions
+    are unaffected. Falls back to system browser only as last resort.
+    """
+    import shutil
+
+    # Isolated profile dir so the game window is always separate
+    profile_dir = REPO_ROOT / "local-cache" / "edge-game-profile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    app_args_edge = [
+        f"--app={url}",
+        f"--user-data-dir={profile_dir}",
+        "--window-size=1280,800",
+        "--no-first-run",
+        "--disable-extensions",
+    ]
+
+    # Edge (msedge) — pre-installed on all Win10/11
+    lappdata = Path(os.environ.get("LOCALAPPDATA", ""))
+    progfiles   = Path(os.environ.get("PROGRAMFILES",       "C:/Program Files"))
+    progfiles86 = Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)"))
+    edge_candidates = [
+        lappdata   / "Microsoft/Edge/Application/msedge.exe",
+        progfiles86 / "Microsoft/Edge/Application/msedge.exe",
+        progfiles   / "Microsoft/Edge/Application/msedge.exe",
+    ]
+    edge_which = shutil.which("msedge")
+    if edge_which:
+        edge_candidates.insert(0, Path(edge_which))
+
+    for edge_path in edge_candidates:
+        if edge_path.exists():
+            log(f"opening standalone window via Edge app mode", "head")
+            subprocess.Popen([str(edge_path)] + app_args_edge)
+            _wait_loop(sm)
+            return
+
+    # Chrome app mode fallback
+    chrome_candidates = [
+        progfiles   / "Google/Chrome/Application/chrome.exe",
+        progfiles86 / "Google/Chrome/Application/chrome.exe",
+        lappdata    / "Google/Chrome/Application/chrome.exe",
+    ]
+    chrome_which = shutil.which("chrome")
+    if chrome_which:
+        chrome_candidates.insert(0, Path(chrome_which))
+
+    for chrome_path in chrome_candidates:
+        if chrome_path.exists():
+            log(f"opening standalone window via Chrome app mode", "head")
+            subprocess.Popen([str(chrome_path), f"--app={url}",
+                              f"--user-data-dir={profile_dir}"])
+            _wait_loop(sm)
+            return
+
+    # Last resort: system browser (opens in existing browser — dev/docker only)
+    import webbrowser
+    log("no standalone browser found — opening in system browser", "warn")
+    webbrowser.open(url)
+    _wait_loop(sm)
+
+
 def _wait_loop(sm: "ServiceManager"):
     """Console keep-alive for --no-browser / headless mode. Ctrl+C stops all."""
     def _shutdown(sig, frame):
@@ -944,12 +1010,9 @@ def main():
 
     log(f"opening game window: {cyan(url)}", "head")
     try:
-        _run_webview(url, sm)   # blocks on main thread; exits when window closes
+        _run_webview(url, sm)   # pywebview: frameless, own taskbar entry (preferred)
     except ImportError:
-        import webbrowser
-        log("pywebview not installed — falling back to system browser", "warn")
-        webbrowser.open(url)
-        _wait_loop(sm)
+        _open_app_window(url, sm)  # Edge/Chrome --app: own taskbar entry, no URL bar
     return 0
 
 
