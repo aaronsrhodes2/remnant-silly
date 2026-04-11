@@ -41,6 +41,20 @@ def _get_model():
     return MODEL
 
 
+def _swap_to_cpu() -> None:
+    """Permanently replace the active model with a CPU/int8 instance.
+
+    faster-whisper segments are lazy generators — CUDA errors surface during
+    iteration (not at WhisperModel() construction time).  When that happens we
+    discard the broken GPU model and reload on CPU so subsequent requests work.
+    """
+    global MODEL, DEVICE, COMPUTE
+    MODEL   = None
+    DEVICE  = "cpu"
+    COMPUTE = "int8"
+    log.warning("CUDA unavailable — switching to CPU/int8 for all future requests")
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok", "model": MODEL_NAME})
@@ -60,8 +74,17 @@ def transcribe():
 
     try:
         model = _get_model()
-        segments, _ = model.transcribe(tmp_path, language="en")
-        text = " ".join(s.text for s in segments).strip()
+        try:
+            segments, _ = model.transcribe(tmp_path, language="en")
+            # Segments are a lazy generator — CUDA errors surface here, not above.
+            text = " ".join(s.text for s in segments).strip()
+        except RuntimeError as cuda_exc:
+            log.warning("GPU inference failed (%s) — retrying on CPU/int8", cuda_exc)
+            _swap_to_cpu()
+            model = _get_model()
+            segments, _ = model.transcribe(tmp_path, language="en")
+            text = " ".join(s.text for s in segments).strip()
+        log.info("transcribed %d chars", len(text))
     except Exception as exc:
         log.exception("transcription failed: %s", exc)
         return jsonify({"error": str(exc)}), 500

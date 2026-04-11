@@ -451,6 +451,47 @@ def apply_remnant_voice(sp):
     return sp + section
 
 
+MOOD_HEADING = "===== MOOD MUSIC DIRECTION ====="
+
+MOOD_SECTION = """\
+===== MOOD MUSIC DIRECTION =====
+
+At the start of EVERY response, after [GENERATE_IMAGE: "..."] (if present) and before
+the prose, emit a single [MOOD: "..."] tag that describes the emotional atmosphere for
+background music. Keep it under 20 words — tempo, instruments, feel. No lyrics. No vocals.
+
+Examples:
+  [MOOD: "slow ambient electronic, deep bass drone, metallic resonance, suspenseful"]
+  [MOOD: "warm acoustic strings, gentle pulse, hopeful, bittersweet"]
+  [MOOD: "tense percussion, distant industrial hiss, rising unease"]
+  [MOOD: "bright synthesizer arpeggio, light and curious, sense of wonder"]
+
+Match the mood to the narrative moment. A combat scene is not the same as a quiet reunion.
+If the scene shifts dramatically mid-response, you may emit a second [MOOD: "..."] at the
+point of shift, but no more than two per response.
+
+The [MOOD] tag is silent to the player — they hear music, not words.
+"""
+
+
+def apply_mood_music(sp):
+    """Insert MOOD MUSIC DIRECTION section before SELF-CHECK, if not already present."""
+    if MOOD_HEADING in sp:
+        print("  [skip] MOOD MUSIC DIRECTION already present.")
+        return sp
+
+    if SELF_CHECK_HEADING not in sp:
+        raise ValueError("Cannot find SELF-CHECK heading in system_prompt.")
+
+    crlf = "\r\n" if "\r\n" in sp else "\n"
+    section = MOOD_SECTION.replace("\n", crlf) + crlf
+
+    insert_at = sp.index(SELF_CHECK_HEADING)
+    updated = sp[:insert_at] + section + crlf + sp[insert_at:]
+    print("  [done] Inserted MOOD MUSIC DIRECTION section.")
+    return updated
+
+
 MODIFICATIONS = [
     apply_player_boundary,
     reorder_self_check,
@@ -459,6 +500,7 @@ MODIFICATIONS = [
     apply_awakening_scenario,
     apply_character_tag_rule,
     apply_remnant_voice,
+    apply_mood_music,
 ]
 
 

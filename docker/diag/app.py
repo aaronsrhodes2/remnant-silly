@@ -88,6 +88,7 @@ _player_appearance_desc: str = ""   # prose captured from the dressing narrator 
 # Conversation engine — Ollama direct generation (replaces ST extension relay).
 _conversation_lock = threading.Lock()   # guards _generating flag (check-and-set only)
 _generating: bool = False               # True while Ollama is streaming a response
+_narrator_queued: bool = False          # True when a player input arrived during generation
 _system_prompt: str = ""               # Loaded from fortress_system_prompt.txt at startup
 _first_mes: str = ""                   # Loaded from fortress_first_mes.txt at startup
 
@@ -1226,14 +1227,18 @@ def _generate_player_avatar(appearance_prose: str) -> None:
 def _generate_narrator_turn() -> None:
     """Generate a narrator turn via Ollama and broadcast via SSE.
 
-    Thread-safe: only one generation runs at a time. Supports up to 3
-    auto-continue passes when the model truncates its response.
+    Thread-safe: only one generation runs at a time. If player input arrives
+    during generation, _narrator_queued is set so a follow-up turn fires
+    automatically when the current one completes. This acts as a 1-deep queue
+    — the narrator catches up on all accumulated player turns in context.
     """
-    global _generating
+    global _generating, _narrator_queued
     with _conversation_lock:
         if _generating:
+            _narrator_queued = True   # remember to re-run after current finishes
             return
         _generating = True
+        _narrator_queued = False
     try:
         _sse_broadcast("activity", {"text": "🔮 thinking…"})
         messages = _build_messages()
@@ -1276,17 +1281,28 @@ def _generate_narrator_turn() -> None:
         except Exception:
             pass
         _sse_broadcast("turn", turn)
+        # Free Ollama's VRAM so image/music generation can use the GPU.
+        # Quick call (~0.5s) — does not block the turn broadcast delivery.
+        _unload_ollama_vram()
         # Kick off concurrent post-processing (non-blocking)
         _enqueue_image_generation(full_text)
-        _schedule_sense_enrichment(full_text)
+        _broadcast_narrator_mood(full_text)   # extract [MOOD: "..."] tags → mood SSE events
+        _schedule_sense_enrichment(full_text)  # Ollama-enriches any missing sense channels
         _check_dressed_transition(full_text)
 
     except Exception as e:
         print(f"[diag] _generate_narrator_turn crashed: {e}")
         _sse_broadcast("activity", {"text": f"⚠ narrator error: {e}"})
     finally:
-        _generating = False
         _sse_broadcast("activity", {"text": ""})
+        with _conversation_lock:
+            _generating = False
+            queued = _narrator_queued
+            _narrator_queued = False
+        # Drain the 1-deep queue: player submitted while we were busy
+        if queued:
+            threading.Thread(target=_generate_narrator_turn,
+                             daemon=True, name="narrator-queued").start()
 
 
 # ---------------------------------------------------------------------------
@@ -1395,6 +1411,41 @@ def _prettify_caption(description: str, kind: str) -> None:
 # ---------------------------------------------------------------------------
 # Internal sense enrichment — fills missing channels via targeted Ollama calls
 # ---------------------------------------------------------------------------
+
+_MOOD_TAG_RE = re.compile(r'\[MOOD\s*:\s*"?([^"\]\n]{3,200})"?\]', re.IGNORECASE)
+
+
+def _unload_ollama_vram() -> None:
+    """Ask Ollama to release the loaded model from VRAM immediately.
+
+    Called after each narrator turn is generated. This frees GPU memory so
+    that image generation (flask-sd) and music generation (flask-music) can
+    use the full VRAM budget. Ollama will lazy-reload on the next turn.
+
+    Sends a zero-token generate request with keep_alive=0 which is the
+    documented way to evict a model from Ollama's VRAM cache.
+    Silently swallows errors — music/image still work on CPU as fallback.
+    """
+    try:
+        model = _ollama_model()
+        payload = json.dumps({"model": model, "keep_alive": 0}).encode("utf-8")
+        _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=5.0)
+    except Exception:
+        pass
+
+
+def _broadcast_narrator_mood(narrator_text: str) -> None:
+    """Extract [MOOD: "..."] tags the narrator emitted and fire mood SSE events.
+
+    The sense enrichment only generates MOOD via Ollama when the tag is absent.
+    When the narrator explicitly includes it we must still broadcast it so the
+    client can request music generation.
+    """
+    for m in _MOOD_TAG_RE.finditer(narrator_text):
+        prompt = m.group(1).strip()
+        if prompt:
+            _sse_broadcast("mood", {"text": prompt})
+
 
 _SENSE_CHANNELS = ["MOOD", "SIGHT", "SOUND", "SMELL", "TOUCH", "ENVIRONMENT"]
 
@@ -1805,6 +1856,11 @@ def _exec_action(action_id: str, params: dict) -> tuple[int, dict]:
 
         if action_id == "diag.refresh":
             return 200, {"ok": True, "note": "Re-fetch /ai.json."}
+
+        if action_id == "diag.reload_prompt":
+            _load_fortress_texts()
+            return 200, {"ok": True, "chars": len(_system_prompt),
+                         "note": "System prompt reloaded from disk."}
 
         return 404, {"ok": False, "error": f"unknown action: {action_id}"}
 
@@ -2344,12 +2400,35 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # Per-service log tail: GET /logs/<service>
+        # Also serves native-run log files (flask-stt, flask-tts, flask-music, launcher, diag)
         if path.startswith("/logs/"):
             service = path[len("/logs/"):]
+            # Native log files take priority (present in native dev mode)
+            # STATUS_DIR could be anywhere; use NATIVE_RUN_LOG_DIR env or infer from script location
+            _native_run_dir = Path(os.environ.get(
+                "NATIVE_RUN_LOG_DIR",
+                str(Path(__file__).parent.parent.parent / "logs" / "native-run"),
+            ))
+            _NATIVE_LOG_MAP = {
+                "flask-stt":   _native_run_dir / "flask-stt.log",
+                "flask-tts":   _native_run_dir / "flask-tts.log",
+                "flask-music": _native_run_dir / "flask-music.log",
+                "launcher":    _native_run_dir / "launcher.log",
+                "diag":        _native_run_dir / "diag.log",
+            }
+            native_path = _NATIVE_LOG_MAP.get(service)
+            if native_path and native_path.exists():
+                try:
+                    text = native_path.read_text(encoding="utf-8", errors="replace")
+                    tail = "\n".join(text.splitlines()[-150:])
+                    self._send_text(200, tail + "\n")
+                    return
+                except Exception:
+                    pass
             if not service or service not in _KNOWN_SERVICES:
                 self._send_json(404, {
                     "error": f"unknown service '{service}'",
-                    "known": list(_KNOWN_SERVICES),
+                    "known": list(_KNOWN_SERVICES) + list(_NATIVE_LOG_MAP.keys()),
                 })
                 return
             lines = _tail_service_log(service, 100)
@@ -2516,7 +2595,7 @@ class Handler(BaseHTTPRequestHandler):
                 duration = min(int(req_data.get("duration", 30)), 60)
                 payload = json.dumps({"prompt": prompt, "duration": duration}).encode("utf-8")
                 code, resp, _ = _http("POST", f"{FLASK_MUSIC_URL}/api/generate",
-                                      body=payload, timeout=120.0)
+                                      body=payload, timeout=360.0)
                 self._send_json(code, json.loads(resp) if resp else {})
             except Exception as e:
                 self._send_json(503, {"error": str(e)})

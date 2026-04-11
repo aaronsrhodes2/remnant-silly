@@ -166,6 +166,50 @@ async function tick() {
 
 tick();
 
+// ── Splash ambient music — fire once when flask-music is reachable ────────────
+// Requests a short inspirational sci-fi track from MusicGen to play while
+// models load. Falls back silently if the service isn't up yet.
+(async function _splashMusic() {
+    const MUSIC_PROMPT = "slow ambient sci-fi, deep synthesizer drone, cosmic vastness, awakening, mysterious and hopeful";
+    const MAX_ATTEMPTS = 8;
+    const RETRY_MS = 8000;
+
+    async function _tryPlayMusic() {
+        try {
+            const res = await fetch('/api/music/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: MUSIC_PROMPT, duration: 8 }),
+            });
+            if (!res.ok) return false;
+            const data = await res.json();
+            if (!data.audio) return false;
+            // Decode base64 WAV and play via Web Audio
+            const bytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+            const ctx = new AudioContext();
+            const buf = await ctx.decodeAudioData(bytes.buffer);
+            const src = ctx.createBufferSource();
+            const gain = ctx.createGain();
+            gain.gain.setValueAtTime(0, ctx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.55, ctx.currentTime + 4);  // fade in
+            src.buffer = buf;
+            src.loop = true;
+            src.connect(gain);
+            gain.connect(ctx.destination);
+            src.start();
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        const ok = await _tryPlayMusic();
+        if (ok) break;
+        await new Promise(r => setTimeout(r, RETRY_MS));
+    }
+})();
+
 // ── Hardware profile — written by the Windows launcher before nginx starts ───
 // Silently no-ops in Docker mode (file won't exist → fetch returns non-200).
 async function loadHardwareProfile() {

@@ -22,7 +22,7 @@ cmd = [
     sys.executable, "-m", "PyInstaller",
     "--onefile",
     "--name", "Remnant",
-    "--console",                               # keep console window (log output)
+    "--noconsole",                             # no launcher console window — logs go to logs/
     "--add-data", f"{HARDWARE};.",             # hardware.py at root of _MEIPASS (Windows: ;)
     *([f"--add-data", f"{VERSION_JSON};."] if VERSION_JSON.exists() else []),
     "--hidden-import", "psutil",

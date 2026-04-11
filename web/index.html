@@ -507,6 +507,13 @@ html, body {
 .light-wrap.toggleable.sense-off .light-dot { animation: none !important; }
 
 
+/* ── Turn-complete green border ── */
+#player-input.turn-complete {
+  border-color: rgba(68,210,120,0.75);
+  box-shadow: 0 0 0 2px rgba(68,210,120,0.18);
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
 /* ── Mood text entries (shown when muted instead of generating music) ── */
 .mood-entry {
   display: flex; gap: 12px; align-items: baseline;
@@ -815,13 +822,32 @@ function renderTurn(turn, instant) {
   }
 
   // Speak narrator text for new (non-history) turns
-  if (!instant && isNarratorTurn && _sense.audio) {
-    const ttsText = blocks
-      .filter(b => !b.isPlayer && !b.senseType)
-      .map(b => (b.text || '').trim())
-      .filter(Boolean)
-      .join(' ');
-    if (ttsText) _speakTTS(ttsText);
+  if (!instant && isNarratorTurn) {
+    if (_sense.audio) {
+      const ttsText = blocks
+        .filter(b => !b.isPlayer && !b.senseType)
+        .map(b => (b.text || '').trim())
+        .filter(Boolean)
+        .join(' ');
+      if (ttsText) {
+        _speakTTS(ttsText);
+      } else {
+        _turnState.ttsReady = true;   // no text to speak — mark done
+        _checkTurnComplete();
+      }
+    } else {
+      _turnState.ttsReady = true;     // audio sense disabled — mark done
+      _checkTurnComplete();
+    }
+
+    // If no image tag present, image won't arrive — mark imageReady immediately
+    // so green border isn't blocked on a scene_image that will never come.
+    const hasImageTag = (turn.raw_text || '').toUpperCase().includes('[GENERATE_IMAGE');
+    if (!hasImageTag) {
+      _turnState.imageReady = true;
+      _flushPendingMood();            // fire any buffered mood prompt now
+      _checkTurnComplete();
+    }
   }
 }
 
@@ -1006,6 +1032,8 @@ function connect() {
       } else {
         _narratorTurnCount++;
         _updateNarratorCount();
+        // Reset per-turn sense completion tracking for green border
+        _turnState = { imageReady: false, ttsReady: false, musicReady: false, pendingMoodPrompt: null };
       }
       renderTurn(turn, false);
     } catch (_) {}
@@ -1022,6 +1050,11 @@ function connect() {
         _setGalleryImage(data.image, data.kind, data.description);
         galleryStatus.textContent = '';
       }
+      // GPU scheduling: image generation (flask-sd) is done; GPU is now free
+      // for music generation (flask-music on CUDA). Fire any buffered mood prompt.
+      _turnState.imageReady = true;
+      _flushPendingMood();
+      _checkTurnComplete();
     } catch (_) {}
   });
 
@@ -1081,7 +1114,14 @@ function connect() {
   es.addEventListener('mood', e => {
     try {
       const data = JSON.parse(e.data);
-      if (data.text) _onMoodEvent(data.text);
+      if (!data.text) return;
+      // GPU scheduling: buffer mood prompt until image generation is done.
+      // flask-sd (image) and flask-music both need GPU; run them sequentially.
+      _turnState.pendingMoodPrompt = data.text;
+      if (_turnState.imageReady) {
+        _flushPendingMood();           // image already done — fire immediately
+      }
+      // else: _flushPendingMood() will be called when scene_image arrives
     } catch (_) {}
   });
 
@@ -1232,13 +1272,15 @@ async function _speakTTS(text) {
     const src = ctx.createBufferSource();
     src.buffer = audio;
     src.connect(ctx.destination);
-    src.onended = () => { _ttsSource = null; _ttsAbort = null; _setLight('audio', 'idle'); _setStatus('speaking', false); };
+    src.onended = () => { _ttsSource = null; _ttsAbort = null; _setLight('audio', 'idle'); _setStatus('speaking', false); _turnState.ttsReady = true; _checkTurnComplete(); };
     _ttsSource = src;
     src.start();
   } catch (e) {
     if (e.name !== 'AbortError') console.warn('[tts]', e);
     _setLight('audio', 'idle');
     _setStatus('speaking', false);
+    _turnState.ttsReady = true;   // error = done, don't block green border
+    _checkTurnComplete();
   }
 }
 
@@ -1287,9 +1329,36 @@ function _renderMoodAsText(moodText) {
   feed.scrollTop = feed.scrollHeight;
 }
 
+// ── Per-turn sense completion state (for green border) ─────────────────────
+// Reset on each new narrator turn; updated as each sense channel completes.
+let _turnState = { imageReady: false, ttsReady: false, musicReady: false, pendingMoodPrompt: null };
+
+function _flushPendingMood() {
+  const prompt = _turnState.pendingMoodPrompt;
+  if (prompt) {
+    _turnState.pendingMoodPrompt = null;
+    _onMoodEvent(prompt);
+  }
+}
+
+function _checkTurnComplete() {
+  // Green border appears when image + TTS + music have all reported ready.
+  // TTS marks itself done via _turnState.ttsReady when audio ends.
+  // Music marks itself done when buffer starts playing.
+  if (_turnState.imageReady && _turnState.ttsReady && _turnState.musicReady) {
+    const inp = document.getElementById('player-input');
+    if (inp) {
+      inp.classList.add('turn-complete');
+      setTimeout(() => inp.classList.remove('turn-complete'), 2500);
+    }
+  }
+}
+
 async function _onMoodEvent(moodText) {
   if (!_sense.audio) {
     _renderMoodAsText(moodText);
+    _turnState.musicReady = true;
+    _checkTurnComplete();
     return;
   }
   _setLight('audio', 'busy');
@@ -1298,7 +1367,7 @@ async function _onMoodEvent(moodText) {
     const res = await fetch('/api/music/generate', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt: moodText, duration: 30}),
+      body: JSON.stringify({prompt: moodText, duration: 8}),
     });
     if (!res.ok) throw new Error(`music gen ${res.status}`);
     const data = await res.json();
@@ -1309,10 +1378,14 @@ async function _onMoodEvent(moodText) {
     await _playMusicBuffer(audioBuffer);
     _setLight('audio', 'idle');
     _setStatus('composing', false);
+    _turnState.musicReady = true;
+    _checkTurnComplete();
   } catch (e) {
     console.warn('[music]', e);
     _setLight('audio', 'off');
     _setStatus('composing', false);
+    _turnState.musicReady = true;  // fail counts as done — don't block green border
+    _checkTurnComplete();
   }
 }
 

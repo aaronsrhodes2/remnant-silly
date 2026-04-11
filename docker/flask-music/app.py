@@ -54,12 +54,13 @@ def _get_model():
         import torch
         from transformers import MusicgenForConditionalGeneration, AutoProcessor
 
-        # Force CPU — avoids VRAM conflict with Ollama (qwen2.5:14b keeps its
-        # model hot in GPU memory between narrator turns with a 5-minute
-        # keep-alive). MusicGen-small on CPU takes ~30-60s for a 30s clip,
-        # which is fine for ambient background music.
-        _device = "cpu"
-        print(f"[flask-music] Loading {MUSICGEN_MODEL} on {_device} (CPU mode — avoids VRAM conflict)…")
+        # Prefer CUDA if available. The diag unloads Ollama (keep_alive=0)
+        # after each narrator turn, freeing VRAM for music generation.
+        # On CPU, musicgen-small takes ~30-40s for an 8s clip. On GPU it's
+        # ~1-5s — well within the 30-second response target.
+        import torch
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[flask-music] Loading {MUSICGEN_MODEL} on {_device}…")
 
         _processor = AutoProcessor.from_pretrained(MUSICGEN_MODEL)
         _model = MusicgenForConditionalGeneration.from_pretrained(MUSICGEN_MODEL)

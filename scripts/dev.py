@@ -117,11 +117,45 @@ def _stop_docker():
                    capture_output=True, timeout=60)
 
 
+def _kill_native_services():
+    """Kill all native Remnant Python services (diag, flask-stt, flask-tts, flask-music).
+
+    Uses the launcher's PID file to kill the entire process tree, then falls
+    back to port-based kills for any survivors.
+    """
+    status_dir = ROOT / "status"
+
+    # Kill via launcher PID file (launcher started services as children)
+    pid_file = status_dir / "launcher.pid"
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+            subprocess.run(["taskkill", "/PID", str(old_pid), "/T", "/F"],
+                           capture_output=True, shell=True)
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # Port-based fallback — kill any process on native service ports
+    _NATIVE_PORTS = [1591, 1594, 1595, 1596]
+    for port in _NATIVE_PORTS:
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 f"(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue)"
+                 f".OwningProcess | Select-Object -Unique | ForEach-Object {{ Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }}"],
+                capture_output=True, timeout=10,
+            )
+        except Exception:
+            pass
+
+
 def cmd_down(args) -> int:
     """Stop all build modes."""
     print(_bold("\n[down] Stopping all Remnant builds…"))
     _stop_docker()
     _kill_stale_nginx()
+    _kill_native_services()
     if _wait_port_free(15):
         print(f"  {_ok('✓')} port {PORT} is free")
     else:

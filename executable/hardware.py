@@ -88,17 +88,17 @@ _MODEL_PROFILES: dict[str, dict[str, str]] = {
     "Excellent": {       # 24+ GB VRAM
         "OLLAMA_MODEL":   "qwen2.5:32b",
         "WHISPER_MODEL":  "large-v3",
-        "MUSICGEN_MODEL": "facebook/musicgen-large",
+        "MUSICGEN_MODEL": "facebook/musicgen-small",  # CPU-based; small = ~4x realtime vs medium 18x
     },
     "Great": {           # 16+ GB VRAM
         "OLLAMA_MODEL":   "qwen2.5:14b",
         "WHISPER_MODEL":  "medium.en",
-        "MUSICGEN_MODEL": "facebook/musicgen-medium",
+        "MUSICGEN_MODEL": "facebook/musicgen-small",  # CPU-based; small = ~4x realtime vs medium 18x
     },
     "Good": {            # 12+ GB VRAM
         "OLLAMA_MODEL":   "qwen2.5:14b",
         "WHISPER_MODEL":  "small.en",
-        "MUSICGEN_MODEL": "facebook/musicgen-medium",
+        "MUSICGEN_MODEL": "facebook/musicgen-small",  # CPU-based; small = ~4x realtime vs medium 18x
     },
     "Moderate": {        # 8+ GB VRAM
         "OLLAMA_MODEL":   "qwen2.5:7b",

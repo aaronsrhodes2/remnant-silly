@@ -675,18 +675,28 @@ class ServiceManager:
         # ── diag ────────────────────────────────────────────────────────────
         if not port_open(PORTS["diag"]):
             log("starting diag sidecar...", "head")
+            # Determine native card dir: prefer the live SillyTavern characters folder.
+            _native_st_chars = Path(os.environ.get("LOCALAPPDATA", "")) / ".." / ".." / \
+                               "SillyTavern" / "data" / "default-user" / "characters"
+            _native_st_chars = Path(r"C:\Users") / os.environ.get("USERNAME", "aaron") / \
+                               "SillyTavern" / "data" / "default-user" / "characters"
+            fortress_card_dir = str(_native_st_chars) if _native_st_chars.exists() else \
+                                str(REPO_ROOT / "docker" / "sillytavern" / "content" / "characters")
             p = ManagedProcess(
                 "diag",
-                [str(python), str(REPO_ROOT / "docker" / "diag" / "app.py")],
+                [str(python), "-u", str(REPO_ROOT / "docker" / "diag" / "app.py")],
                 env={
                     **env_base,
-                    "STATUS_DIR":       str(STATUS_DIR),
-                    "FLASK_SD_URL":     f"http://127.0.0.1:{PORTS['flask-sd']}",
-                    "OLLAMA_URL":       f"http://127.0.0.1:{PORTS['ollama']}",
-                    "FLASK_MUSIC_URL":  f"http://127.0.0.1:{PORTS['flask-music']}",
-                    "SILLYTAVERN_URL":  f"http://127.0.0.1:{PORTS['sillytavern']}",
-                    "OLLAMA_MODEL":     ollama_model,
-                    "LISTEN_PORT":      str(PORTS["diag"]),
+                    "STATUS_DIR":          str(STATUS_DIR),
+                    "FLASK_SD_URL":        f"http://127.0.0.1:{PORTS['flask-sd']}",
+                    "OLLAMA_URL":          f"http://127.0.0.1:{PORTS['ollama']}",
+                    "FLASK_MUSIC_URL":     f"http://127.0.0.1:{PORTS['flask-music']}",
+                    "SILLYTAVERN_URL":     f"http://127.0.0.1:{PORTS['sillytavern']}",
+                    "OLLAMA_MODEL":        ollama_model,
+                    "LISTEN_PORT":         str(PORTS["diag"]),
+                    "FORTRESS_CARD_DIR":   fortress_card_dir,
+                    "NATIVE_RUN_LOG_DIR":  str(RUN_DIR),
+                    "PYTHONUNBUFFERED":    "1",
                 },
             )
             p.start()
@@ -944,7 +954,37 @@ def _run_webview(url: str, sm: "ServiceManager"):
         sm.stop_all()
 
     win.events.closed += on_closed
-    webview.start()  # blocks until the window is closed
+
+    # Persistent WebView2 user-data dir — preserves mic/camera permissions across restarts.
+    webview_data = APP_DIR / "webview-data"
+    webview_data.mkdir(parents=True, exist_ok=True)
+
+    # Auto-grant microphone permission so the user never sees the browser popup.
+    # Called once WebView2 is initialised, before any page load completes.
+    def _grant_mic(window):
+        try:
+            wv2 = window.get_current_url  # just a probe; real access below
+            # pywebview exposes the raw CoreWebView2 on Windows via the private _browser attribute
+            cw2 = getattr(window._impl, "browser", None) or getattr(window._impl, "_browser", None)
+            if cw2 and hasattr(cw2, "CoreWebView2"):
+                cw2 = cw2.CoreWebView2
+            if cw2 and hasattr(cw2, "add_PermissionRequested"):
+                import ctypes
+                # CoreWebView2PermissionKind.Microphone = 2
+                # CoreWebView2PermissionState.Allow    = 1
+                def _on_perm(sender, args):
+                    try:
+                        if args.PermissionKind == 2:   # Microphone
+                            args.State = 1             # Allow
+                    except Exception:
+                        pass
+                cw2.add_PermissionRequested(_on_perm)
+        except Exception:
+            pass  # non-critical — user can still grant manually
+
+    win.events.loaded += lambda: _grant_mic(win)
+
+    webview.start(storage_path=str(webview_data))  # blocks until the window is closed
     sys.exit(0)
 
 
@@ -1039,6 +1079,16 @@ def _wait_loop(sm: "ServiceManager"):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── Self-logging when running as a frozen exe (no console window) ─────────
+    # PyInstaller --noconsole suppresses all stdout/stderr. Redirect both to a
+    # log file so the developer can inspect startup issues without a console.
+    if getattr(sys, "frozen", False):
+        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        _lf = open(RUN_DIR / "launcher.log", "w", buffering=1, encoding="utf-8",
+                   errors="replace")
+        sys.stdout = _lf
+        sys.stderr = _lf
+
     parser = argparse.ArgumentParser(
         description="Remnant Fortress Windows Launcher",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1058,6 +1108,25 @@ def main():
         _USE_COLOUR = False
 
     print_banner()
+
+    # ── Single-instance enforcement ─────────────────────────────────────────
+    # Kill any previous launcher instance so the user never has to guess
+    # which console window to close.  Uses a PID file in STATUS_DIR.
+    _pid_file = STATUS_DIR / "launcher.pid"
+    STATUS_DIR.mkdir(parents=True, exist_ok=True)
+    if _pid_file.exists():
+        try:
+            _old_pid = int(_pid_file.read_text().strip())
+            if _old_pid != os.getpid():
+                log(f"killing previous launcher (PID {_old_pid})…", "head")
+                subprocess.run(
+                    ["taskkill", "/PID", str(_old_pid), "/T", "/F"],
+                    capture_output=True,
+                )
+                time.sleep(1)  # give services time to die
+        except Exception:
+            pass
+    _pid_file.write_text(str(os.getpid()))
 
     # ── Status-only mode ────────────────────────────────────────────────────
     if args.status:
