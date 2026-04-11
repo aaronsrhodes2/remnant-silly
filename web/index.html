@@ -774,6 +774,16 @@ function renderTurn(turn, instant) {
     emptyMsg.style.display = 'none';
     feed.scrollTop = feed.scrollHeight;
   }
+
+  // Speak narrator text for new (non-history) turns
+  if (!instant && isNarratorTurn && !_muted) {
+    const ttsText = blocks
+      .filter(b => !b.isPlayer && !b.senseType)
+      .map(b => (b.text || '').trim())
+      .filter(Boolean)
+      .join(' ');
+    if (ttsText) _speakTTS(ttsText);
+  }
 }
 
 function renderMetaEvent(data) {
@@ -1048,6 +1058,42 @@ function connect() {
   };
 }
 
+// ── TTS engine ──
+let _ttsSource = null;
+let _ttsAbort  = null;
+
+async function _speakTTS(text) {
+  // Cancel any in-flight TTS request and stop any playing speech
+  if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
+  if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
+  if (_muted) return;
+
+  const ctrl = new AbortController();
+  _ttsAbort = ctrl;
+  _setLight('audio', 'busy');
+  try {
+    const res = await fetch('/api/tts/v1/audio/speech', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model: 'kokoro', input: text, voice: 'am_michael'}),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) { _setLight('audio', 'idle'); return; }
+    const buf = await res.arrayBuffer();
+    const ctx = _ensureAudioCtx();
+    const audio = await ctx.decodeAudioData(buf);
+    const src = ctx.createBufferSource();
+    src.buffer = audio;
+    src.connect(ctx.destination);
+    src.onended = () => { _ttsSource = null; _ttsAbort = null; _setLight('audio', 'idle'); };
+    _ttsSource = src;
+    src.start();
+  } catch (e) {
+    if (e.name !== 'AbortError') console.warn('[tts]', e);
+    _setLight('audio', 'idle');
+  }
+}
+
 // ── Music engine (Web Audio API) ──
 let _audioCtx = null;
 let _musicSource = null;
@@ -1093,6 +1139,9 @@ function _setMute(on) {
     btn.classList.add('muted');
     if (iconOn)  iconOn.style.display  = 'none';
     if (iconOff) iconOff.style.display = '';
+    // Stop any playing TTS
+    if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
+    if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
     // Stop any playing music
     if (_musicGain && _audioCtx) {
       _musicGain.gain.linearRampToValueAtTime(0, _audioCtx.currentTime + 1);
