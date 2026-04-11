@@ -775,8 +775,12 @@ class ServiceManager:
                     [str(python), str(flask_stt_app)],
                     env={
                         **env_base,
-                        "LISTEN_PORT":    str(PORTS["flask-stt"]),
-                        "WHISPER_MODEL":  env_base.get("WHISPER_MODEL", "base.en"),
+                        "LISTEN_PORT":     str(PORTS["flask-stt"]),
+                        "WHISPER_MODEL":   env_base.get("WHISPER_MODEL", "base.en"),
+                        # Force CPU — Ollama occupies the GPU; CPU+int8 avoids VRAM
+                        # competition and is fast enough for real-time STT.
+                        "WHISPER_DEVICE":  "cpu",
+                        "WHISPER_COMPUTE": "int8",
                     },
                 )
                 p.start()

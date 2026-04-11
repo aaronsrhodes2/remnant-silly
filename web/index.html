@@ -439,29 +439,50 @@ html, body {
 }
 #input-hint.urgent { color: rgba(196,106,90,0.8); }
 
-/* ── Mic / Mute buttons ── */
-#mic-btn, #mute-btn {
+/* ── VAD state — input border reflects mic activity ── */
+#player-input[data-vad-state="speaking"]   { border-color: rgba(255,136,68,0.70); box-shadow: 0 0 0 2px rgba(255,136,68,0.12); }
+#player-input[data-vad-state="processing"] { border-color: rgba(255,136,68,0.30); }
+#player-input[data-vad-state="ready"]      { border-color: rgba(68,187,204,0.55); }
+
+/* ── Dev / Player mode ── */
+body.player-mode #topbar   { display: none; }
+body.dev-mode    #topbar   { display: flex; }
+body.player-mode #thinking-bar { display: flex; }
+body.dev-mode    #thinking-bar { display: none; }
+
+/* Clickable sense toggles — only interactive in dev mode */
+body.dev-mode .light-wrap.toggleable { cursor: pointer; transition: opacity 0.3s; }
+body.dev-mode .light-wrap.toggleable:hover { opacity: 0.85; }
+body.dev-mode .light-wrap.toggleable.sense-off { opacity: 0.22; }
+body.dev-mode .light-wrap.toggleable.sense-off .light-dot { animation: none !important; }
+
+/* ── Thinking bar (player mode only) ── */
+#thinking-bar {
+  display: none;
   flex-shrink: 0;
-  width: 44px;
-  align-self: stretch;   /* fills the full height of #bottombar */
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+#thinking-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #d4a84b;
+  flex-shrink: 0;
+  display: none;
+}
+#thinking-bar.active #thinking-dot {
+  display: block;
+  animation: light-pulse 1.4s ease-in-out infinite;
+}
+#thinking-bar.active { --lc: #d4a84b; }
+#thinking-text {
+  font-size: 11px;
   color: var(--dim);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  padding: 0;
-  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  font-style: italic;
+  letter-spacing: 0.3px;
 }
-#mic-btn:hover:not(:disabled),
-#mute-btn:hover { color: var(--ink); border-color: rgba(255,255,255,0.18); }
-#mic-btn.recording { color: #e54040; border-color: #e54040; animation: mic-pulse 1.2s ease-in-out infinite; }
-#mic-btn.processing { color: var(--dim); border-color: var(--border); cursor: wait; opacity: 0.55; }
-@keyframes mic-pulse {
-  0%, 100% { box-shadow: 0 0 0 0   rgba(229,64,64,0.55); }
-  50%       { box-shadow: 0 0 0 8px rgba(229,64,64,0); }
-}
-#mute-btn.muted { color: #e54040; border-color: rgba(229,64,64,0.5); background: rgba(229,64,64,0.08); }
 
 /* ── Mood text entries (shown when muted instead of generating music) ── */
 .mood-entry {
@@ -527,9 +548,9 @@ html, body {
     <div class="light-cluster" id="all-lights">
       <div class="light-wrap" id="light-story" data-tip="Story — Ollama, SillyTavern, all text processing">
         <div class="light-dot"></div><span class="light-label">story</span></div>
-      <div class="light-wrap" id="light-image" data-tip="Image — Stable Diffusion scenes &amp; portraits">
+      <div class="light-wrap toggleable" id="light-image" data-tip="Image — Stable Diffusion scenes &amp; portraits · click to toggle">
         <div class="light-dot"></div><span class="light-label">image</span></div>
-      <div class="light-wrap" id="light-audio" data-tip="Audio — MusicGen, TTS, STT">
+      <div class="light-wrap toggleable" id="light-audio" data-tip="Audio — MusicGen, TTS, STT · click to toggle">
         <div class="light-dot"></div><span class="light-label">audio</span></div>
       <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
         <div class="light-dot"></div><span class="light-label">gpu</span></div>
@@ -543,6 +564,12 @@ html, body {
         <div class="light-dot"></div><span class="light-label">conn</span></div>
       <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
     </div>
+  </div>
+
+  <!-- ── Thinking bar (player mode only — replaces star trek panel) ── -->
+  <div id="thinking-bar">
+    <span id="thinking-dot"></span>
+    <span id="thinking-text"></span>
   </div>
 
   <!-- ── Main area: narrative feed + image gallery ── -->
@@ -563,30 +590,7 @@ html, body {
 
   <!-- ── Input bar ── -->
   <div id="bottombar">
-    <button id="mute-btn" title="Mute audio — moods and sounds shown as text instead" aria-label="Mute audio">
-      <!-- Speaker icon — JS swaps to muted variant when active -->
-      <svg id="mute-icon-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-      </svg>
-      <svg id="mute-icon-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
-        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-        <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
-      </svg>
-    </button>
     <textarea id="player-input" rows="2" placeholder="Speak, act, or perceive…"></textarea>
-    <button id="mic-btn" title="Voice input (STT)" aria-label="Voice input">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="9" y="2" width="6" height="12" rx="3"/>
-        <path d="M5 10a7 7 0 0 0 14 0"/>
-        <line x1="12" y1="17" x2="12" y2="21"/>
-        <line x1="9"  y1="21" x2="15" y2="21"/>
-      </svg>
-    </button>
     <span id="input-hint"></span>
   </div>
 </div>
@@ -707,6 +711,7 @@ function _removeThinking() {
   if (el) el.remove();
   if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
   _setLight('story', 'idle');
+  _setThinking(false);
 }
 
 function renderTurn(turn, instant) {
@@ -776,7 +781,7 @@ function renderTurn(turn, instant) {
   }
 
   // Speak narrator text for new (non-history) turns
-  if (!instant && isNarratorTurn && !_muted) {
+  if (!instant && isNarratorTurn && _sense.audio) {
     const ttsText = blocks
       .filter(b => !b.isPlayer && !b.senseType)
       .map(b => (b.text || '').trim())
@@ -979,7 +984,7 @@ function connect() {
   es.addEventListener('scene_image', e => {
     try {
       const data = JSON.parse(e.data);
-      if (data.image) {
+      if (data.image && _sense.image) {
         _setGalleryImage(data.image, data.kind, data.description);
         galleryStatus.textContent = '';
       }
@@ -1058,6 +1063,74 @@ function connect() {
   };
 }
 
+// ── Sense toggles (dev mode) ──
+const _sense = { audio: true, image: true };
+
+// ── Dev / Player mode ──
+let _devMode = localStorage.getItem('remnant-dev') === '1';
+
+function _setDevMode(on) {
+  _devMode = on;
+  localStorage.setItem('remnant-dev', on ? '1' : '0');
+  document.body.classList.toggle('dev-mode',    on);
+  document.body.classList.toggle('player-mode', !on);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === '`' && !e.ctrlKey && !e.metaKey) _setDevMode(!_devMode);
+});
+
+function _initLightToggles() {
+  function _toggleSense(id, key) {
+    const el = document.getElementById('light-' + id);
+    if (!el) return;
+    el.addEventListener('click', () => {
+      if (!_devMode) return;
+      _sense[key] = !_sense[key];
+      el.classList.toggle('sense-off', !_sense[key]);
+      if (key === 'audio' && !_sense.audio) {
+        // Stop any playing TTS and music immediately
+        if (_ttsAbort)  { _ttsAbort.abort();  _ttsAbort  = null; }
+        if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
+        if (_musicGain && _audioCtx) {
+          _musicGain.gain.linearRampToValueAtTime(0, _audioCtx.currentTime + 0.5);
+          const old = _musicSource;
+          setTimeout(() => { try { old.stop(); } catch (_) {} }, 700);
+          _musicSource = null; _musicGain = null;
+        }
+        _setLight('audio', 'off');
+      }
+    });
+  }
+  _toggleSense('audio', 'audio');
+  _toggleSense('image', 'image');
+}
+
+// ── Thinking bar (player mode) ──
+const _THINKING_PHRASES = [
+  'The Fortress deliberates…',
+  'The world responds…',
+  'Reading the ether…',
+  'Processing your actions…',
+  'The Remnant stirs…',
+  'Thinking…',
+];
+let _thinkingPhraseIdx = 0;
+const _thinkingBar  = document.getElementById('thinking-bar');
+const _thinkingText = document.getElementById('thinking-text');
+
+function _setThinking(active) {
+  if (!_thinkingBar) return;
+  if (active) {
+    _thinkingText.textContent = _THINKING_PHRASES[_thinkingPhraseIdx % _THINKING_PHRASES.length];
+    _thinkingPhraseIdx++;
+    _thinkingBar.classList.add('active');
+  } else {
+    _thinkingBar.classList.remove('active');
+    _thinkingText.textContent = '';
+  }
+}
+
 // ── TTS engine ──
 let _ttsSource = null;
 let _ttsAbort  = null;
@@ -1066,7 +1139,7 @@ async function _speakTTS(text) {
   // Cancel any in-flight TTS request and stop any playing speech
   if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
   if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
-  if (_muted) return;
+  if (!_sense.audio) return;
 
   const ctrl = new AbortController();
   _ttsAbort = ctrl;
@@ -1127,38 +1200,6 @@ async function _playMusicBuffer(audioBuffer) {
   _musicGain = newGain;
 }
 
-// ── Mute state ──
-let _muted = false;
-
-function _setMute(on) {
-  _muted = on;
-  const btn = document.getElementById('mute-btn');
-  const iconOn  = document.getElementById('mute-icon-on');
-  const iconOff = document.getElementById('mute-icon-off');
-  if (_muted) {
-    btn.classList.add('muted');
-    if (iconOn)  iconOn.style.display  = 'none';
-    if (iconOff) iconOff.style.display = '';
-    // Stop any playing TTS
-    if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
-    if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
-    // Stop any playing music
-    if (_musicGain && _audioCtx) {
-      _musicGain.gain.linearRampToValueAtTime(0, _audioCtx.currentTime + 1);
-      const old = _musicSource;
-      setTimeout(() => { try { old.stop(); } catch (_) {} }, 1500);
-      _musicSource = null; _musicGain = null;
-    }
-    _setLight('audio', 'off');
-  } else {
-    btn.classList.remove('muted');
-    if (iconOn)  iconOn.style.display  = '';
-    if (iconOff) iconOff.style.display = 'none';
-    // Resume AudioContext on unmute — user gesture makes this safe
-    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
-    _setLight('audio', 'idle');
-  }
-}
 
 function _renderMoodAsText(moodText) {
   const el = document.createElement('div');
@@ -1172,7 +1213,7 @@ function _renderMoodAsText(moodText) {
 }
 
 async function _onMoodEvent(moodText) {
-  if (_muted) {
+  if (!_sense.audio) {
     _renderMoodAsText(moodText);
     return;
   }
@@ -1285,6 +1326,7 @@ async function sendInput(overrideText) {
       feed.scrollTop = feed.scrollHeight;
       _thinkTimer = setTimeout(_removeThinking, 90000);
       _setLight('story', 'busy');  // story light pulses while thinking
+      _setThinking(true);          // player-mode thinking bar
     }
   } catch (_) {}
   _sending = false;
@@ -1298,82 +1340,139 @@ inputEl.addEventListener('input', () => {
   if (inputEl.value.trim()) _startCountdown(); else _clearTimers();
 });
 
-// ── Voice input (STT) ──
-const micBtn = document.getElementById('mic-btn');
-let _recorder  = null;
-let _recChunks = [];
-let _micStream = null;
+// ── Always-on VAD (Voice Activity Detection) ──
+const _DEFAULT_PLACEHOLDER = 'Speak, act, or perceive…';
 
 function _sttMime() {
   const candidates = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'];
   return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch(_){return false;} }) || '';
 }
 
-function _micHint(msg, ms = 2800) {
-  hintEl.textContent = msg;
-  setTimeout(() => { if (hintEl.textContent === msg) hintEl.textContent = ''; }, ms);
+const VAD_THRESHOLD  = 0.015;  // RMS energy to count as speech
+const VAD_ONSET_MS   = 120;    // speech must persist this long before we start recording
+const VAD_SILENCE_MS = 1400;   // silence after speech before we stop and transcribe
+
+let _vadStream      = null;
+let _vadAnalyser    = null;
+let _vadRecorder    = null;
+let _vadChunks      = [];
+let _vadSpeaking    = false;
+let _vadSpeechStart = null;
+let _vadSilStart    = null;
+let _vadBuf         = null;
+
+function _vadRMS() {
+  _vadAnalyser.getFloatTimeDomainData(_vadBuf);
+  let s = 0;
+  for (let v of _vadBuf) s += v * v;
+  return Math.sqrt(s / _vadBuf.length);
 }
 
-async function _startRecording() {
-  try {
-    _micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (err) {
-    _micHint(err.name === 'NotFoundError' ? 'no mic found' : 'mic blocked');
+function _vadTick() {
+  if (!_vadAnalyser) return;
+  requestAnimationFrame(_vadTick);
+
+  // Don't capture while TTS is speaking (prevents echo)
+  if (_ttsSource) { _vadSpeaking = false; _vadSpeechStart = null; _vadSilStart = null; return; }
+  // Don't overwrite if user is actively typing
+  if (document.activeElement === inputEl && inputEl.value.trim()) return;
+
+  const rms  = _vadRMS();
+  const loud = rms > VAD_THRESHOLD;
+  const now  = Date.now();
+
+  if (loud) {
+    _vadSilStart = null;
+    if (!_vadSpeaking) {
+      if (!_vadSpeechStart) { _vadSpeechStart = now; }
+      else if (now - _vadSpeechStart >= VAD_ONSET_MS) { _vadBeginRecord(); }
+    }
+  } else {
+    _vadSpeechStart = null;
+    if (_vadSpeaking) {
+      if (!_vadSilStart) { _vadSilStart = now; }
+      else if (now - _vadSilStart >= VAD_SILENCE_MS) { _vadEndRecord(); }
+    }
+  }
+}
+
+function _vadBeginRecord() {
+  if (_vadSpeaking) return;
+  _vadSpeaking = true;
+  _vadChunks   = [];
+  const mime   = _sttMime();
+  _vadRecorder = new MediaRecorder(_vadStream, mime ? {mimeType: mime} : {});
+  _vadRecorder.ondataavailable = e => { if (e.data.size > 0) _vadChunks.push(e.data); };
+  _vadRecorder.onstop = _vadProcess;
+  _vadRecorder.start();
+  inputEl.dataset.vadState = 'speaking';
+  inputEl.placeholder = 'Listening…';
+}
+
+function _vadEndRecord() {
+  _vadSpeaking = false;
+  _vadSilStart = null;
+  if (_vadRecorder && _vadRecorder.state === 'recording') _vadRecorder.stop();
+  inputEl.dataset.vadState = 'processing';
+  inputEl.placeholder = 'Transcribing…';
+}
+
+async function _vadProcess() {
+  if (!_vadChunks.length) {
+    inputEl.dataset.vadState = '';
+    inputEl.placeholder = _DEFAULT_PLACEHOLDER;
     return;
   }
-  _recChunks = [];
-  const mime = _sttMime();
-  _recorder = new MediaRecorder(_micStream, mime ? {mimeType: mime} : {});
-  _recorder.ondataavailable = e => { if (e.data.size > 0) _recChunks.push(e.data); };
-  _recorder.onstop = async () => {
-    _micStream.getTracks().forEach(t => t.stop());
-    _micStream = null;
-    micBtn.className = 'processing';
-    micBtn.disabled = true;
-    inputEl.placeholder = 'Transcribing…';
-    const mimeUsed = _recorder.mimeType || 'audio/webm';
-    const ext  = mimeUsed.includes('ogg') ? 'ogg' : mimeUsed.includes('mp4') ? 'mp4' : 'webm';
-    const blob = new Blob(_recChunks, {type: mimeUsed});
-    const file = new File([blob], `rec.${ext}`, {type: mimeUsed});
-    const form = new FormData();
-    form.append('file', file);
-    form.append('model', 'whisper-1');
-    form.append('response_format', 'json');
-    try {
-      const res  = await fetch('/api/stt/v1/audio/transcriptions', {method:'POST', body:form});
-      if (!res.ok) throw new Error(`STT ${res.status}`);
-      const data = await res.json();
-      const text = (data.text || '').trim();
-      if (text) { inputEl.value = text; _startCountdown(2500); }
-      else _micHint('no speech detected');
-    } catch (err) {
-      console.error('[STT]', err);
-      _micHint('transcription failed');
+  const mime = (_vadRecorder && _vadRecorder.mimeType) || 'audio/webm';
+  const ext  = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : 'webm';
+  const blob = new Blob(_vadChunks, {type: mime});
+  const form = new FormData();
+  form.append('file', new File([blob], `rec.${ext}`, {type: mime}));
+  form.append('model', 'whisper-1');
+  form.append('response_format', 'json');
+  try {
+    const res  = await fetch('/api/stt/v1/audio/transcriptions', {method: 'POST', body: form});
+    if (!res.ok) throw new Error(`STT ${res.status}`);
+    const data = await res.json();
+    const text = (data.text || '').trim();
+    if (text) {
+      inputEl.value = text;
+      inputEl.dataset.vadState = 'ready';
+      _startCountdown(2500);
+    } else {
+      inputEl.dataset.vadState = '';
     }
-    micBtn.disabled = false;
-    micBtn.className = '';
-    micBtn.title = 'Voice input (STT)';
-    inputEl.placeholder = 'Speak, act, or perceive…';
-  };
-  _recorder.start();
-  micBtn.className = 'recording';
-  micBtn.title = 'Stop recording';
-  inputEl.placeholder = 'Recording…';
-}
-
-function _stopRecording() {
-  if (_recorder && _recorder.state === 'recording') {
-    _recorder.stop();
-    inputEl.placeholder = 'Speak, act, or perceive…';
+  } catch (err) {
+    console.warn('[vad]', err);
+    inputEl.dataset.vadState = '';
+  } finally {
+    inputEl.placeholder = _DEFAULT_PLACEHOLDER;
   }
 }
 
-micBtn.addEventListener('click', () => {
-  if (!_recorder || _recorder.state === 'inactive') _startRecording();
-  else if (_recorder.state === 'recording') _stopRecording();
-});
+async function _initVAD() {
+  try {
+    _vadStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
+    });
+  } catch (e) {
+    console.warn('[vad] mic unavailable:', e.message);
+    return;
+  }
+  const ctx     = _ensureAudioCtx();
+  const src     = ctx.createMediaStreamSource(_vadStream);
+  _vadAnalyser  = ctx.createAnalyser();
+  _vadAnalyser.fftSize = 256;
+  _vadBuf       = new Float32Array(_vadAnalyser.fftSize);
+  src.connect(_vadAnalyser);
+  requestAnimationFrame(_vadTick);
+  console.log('[vad] always-on listening active');
+}
 
-document.getElementById('mute-btn').addEventListener('click', () => _setMute(!_muted));
+// ── Initialise on load ──
+_setDevMode(_devMode);
+_initLightToggles();
+_initVAD();
 </script>
 </body>
 </html>
