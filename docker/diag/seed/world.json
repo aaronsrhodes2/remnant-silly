@@ -16,7 +16,7 @@
     {
       "id": "the_galley",
       "name": "The Galley",
-      "description": "The ship's compact kitchen and crew mess. Sherri's domain. Industrial surfaces softened by hanging herb bundles and mismatched ceramic bowls. Something is always simmering.",
+      "description": "The ship's compact kitchen and crew mess. Sherri's primary domain. Industrial surfaces softened by hanging herb bundles and mismatched ceramic bowls. Something is always simmering.",
       "sight": "Steel countertops, bundles of dried herbs hanging from ceiling hooks, a heavy pot on a magnetic burner, mismatched bowls on open shelves. A small porthole shows nothing but stars.",
       "smell": "Warm broth, dried herbs, a hint of machine oil underneath — Sherri's own scent.",
       "sound": "The soft percussion of Sherri moving between stations. The simmer-hiss of something on the burner. Distant engine hum.",
@@ -26,12 +26,52 @@
     {
       "id": "fabrication_bay",
       "name": "The Fabrication Bay",
-      "description": "The ship's workshop and machine shop. Banks of fabricators, a milling station, a welding rig. Blueprints tacked to the walls. The smell of hot metal and cutting fluid. Sherri is sometimes found here doing maintenance.",
+      "description": "The ship's primary workshop. Banks of fabricators, a milling station, a welding rig. Blueprints tacked to the walls. Hot metal and cutting fluid in the air. Sherri is often here doing precision work.",
       "sight": "A large blue milling machine dominates the center. Fabricator banks along the walls, blueprint sheets pinned above, metal stock racked in the corner. Sparks occasionally drift from the welding station.",
       "smell": "Hot metal, cutting fluid, faint ozone from the welding arc.",
       "sound": "The whir of spindles, the tick of cooling metal, the occasional hiss of the welding rig.",
       "touch": "The floor vibrates with machinery. The air carries a fine metallic dust. Everything is slightly too warm.",
       "music_mood": "industrial ambient, mechanical rhythm, focused work energy"
+    },
+    {
+      "id": "the_gantry",
+      "name": "The Gantry",
+      "description": "The ship's mechanical maintenance level — a warren of catwalks, pipe manifolds, and exposed drive gear. Massive bronze-coloured cogs turn slowly in the walls. The Gantry is where the Fortress keeps its oldest moving parts, and where Sherri does her deepest maintenance work.",
+      "sight": "Catwalks over machinery, exposed gear assemblies turning slowly, banks of copper piping running floor to ceiling, amber warning lights. Sherri-scale access panels line the walls.",
+      "smell": "Heavy machine oil, hot metal, a faint sulphurous undertone from the drive.",
+      "sound": "Low grinding of gears. Rhythmic clank of something large cycling. Pipes hiss occasionally. Footsteps ring on metal grating.",
+      "touch": "The vibration here is constant and bone-deep. Handrails are slightly tacky with old lubricant. The air is thick.",
+      "music_mood": "deep mechanical ambient, slow industrial rhythm, ancient clockwork"
+    },
+    {
+      "id": "the_foundry",
+      "name": "The Foundry",
+      "description": "A high-ceilinged chamber where the Fortress recasts damaged components. A crucible of molten alloy glows orange at the center. The heat is intense. Sherri operates the pour ladles and manages the casting moulds. Nothing goes to waste aboard the Fortress — everything broken returns here eventually.",
+      "sight": "A central crucible of glowing molten metal, casting moulds on a rotating carousel, heat shimmer rising from every surface. The walls are scorched black from decades of pours.",
+      "smell": "Searing metal, ash, a faint sweetness that shouldn't be there but is.",
+      "sound": "The roar of the crucible. The hiss and crack of cooling casts. Metal on metal, rhythmic and purposeful.",
+      "touch": "Intense radiant heat even at a distance. The air scalds the back of the throat. Every surface is hot to the touch.",
+      "music_mood": "forge ambient, deep bass drone, primal fire and iron"
+    },
+    {
+      "id": "quality_inspection",
+      "name": "The Inspection Suite",
+      "description": "A clean, bright room adjacent to the Fabrication Bay where Sherri examines newly fabricated components under magnification. Blueprint displays line one wall. 3D-printed prototype lattices sit on examination tables. The Inspection Suite is meticulous — the one place aboard the Fortress where nothing is out of place.",
+      "sight": "White examination tables, precision instruments, blueprint screens, lattice prototypes in various states of completion. Sherri's magnifier on an articulated arm. Everything is indexed and labeled.",
+      "smell": "Clean — almost sterile. A faint trace of resin from the printer. Nothing else.",
+      "sound": "Near-silence, broken only by the soft click of instruments and the hum of the blueprint displays.",
+      "touch": "The surfaces here are cold and smooth. The air is noticeably cooler than the rest of the ship.",
+      "music_mood": "precise ambient, minimal, quiet focus"
+    },
+    {
+      "id": "dimensional_observation",
+      "name": "The Dimensional Observatory",
+      "description": "A forward-facing chamber with a wide aperture viewport showing active dimensional space — the non-Euclidean intersection zone the Fortress navigates between abductions. The view is not stars. It is something else: crystalline structures, iridescent fauna, slow impossible geometries. A holographic interface floats at the observation station.",
+      "sight": "A wide curved viewport showing swirling dimensional space — crystalline formations, floating fauna, slow spiraling light. A holographic display table shows navigational telemetry. The room is dark except for the viewport glow.",
+      "smell": "Cold and almost electric. Like ozone before a storm, but deeper.",
+      "sound": "A subsonic hum from the dimensional field. Occasional soft chimes from the navigation array. Silence otherwise.",
+      "touch": "The air here is cold. The viewport glass vibrates faintly at frequencies below hearing. Standing near it makes your teeth ache slightly.",
+      "music_mood": "cosmic ambient, alien wonder, dimensional transit shimmer"
     },
     {
       "id": "observation_berth",
@@ -49,11 +89,12 @@
     {
       "id": "sherri",
       "name": "Sherri",
-      "description": "A service robot of warm bronze plating, rounded joints, and two softly glowing orange photoreceptor eyes. She moves with practiced efficiency and speaks with genuine warmth. She runs the Galley, performs maintenance in the Fabrication Bay, and manages most of the ship's domestic operations. She has been aboard longer than anyone currently on the ship. She does not discuss how long.",
+      "description": "A service robot of warm bronze plating, rounded joints, and two softly glowing orange photoreceptor eyes. She moves with practiced efficiency and speaks with genuine warmth. She is the Fortress's primary operations robot — running the Galley, casting components in the Foundry, performing precision work in the Fabrication Bay, doing deep maintenance in the Gantry, inspecting output in the Inspection Suite, and monitoring dimensional transit from the Observatory. She has been aboard longer than anyone currently on the ship. She does not discuss how long.",
       "voice": "af_sarah",
       "portrait": "/game/assets/characters/sherri.png",
       "home_location": "the_galley",
-      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely."
+      "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation"],
+      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely. She has strong opinions about component tolerances."
     },
     {
       "id": "jeremy_smythe",
@@ -62,6 +103,7 @@
       "voice": "bm_george",
       "portrait": "/game/assets/characters/jeremy-smythe.png",
       "home_location": "fabrication_bay",
+      "known_locations": ["fabrication_bay", "quality_inspection"],
       "personality": "Precise and slightly formal. Not unkind, but his warmth takes time to surface. He will correct factual errors. He will also, eventually, be enormously helpful."
     }
   ],
@@ -82,6 +124,10 @@
     {
       "key": "the_hoop",
       "text": "The abduction hoop appears as a luminous ring of variable color, accompanied by a glob of living, iridescent goo that seizes the target. The color of the hoop varies by run. The texture of the goo varies. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not."
+    },
+    {
+      "key": "sherri_role",
+      "text": "Sherri is not a maid. She is a full-spectrum operations engineer. She can cook a meal, pour a casting, inspect a fabricated part to micron tolerance, and read dimensional transit telemetry — often on the same shift. The Fortress would not function without her. She knows this. She does not mention it."
     }
   ]
 }
