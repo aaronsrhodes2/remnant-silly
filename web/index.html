@@ -491,32 +491,30 @@ html, body {
 .light-wrap.toggleable.sense-off { opacity: 0.22; }
 .light-wrap.toggleable.sense-off .light-dot { animation: none !important; }
 
-/* ── Thinking bar — lives in topbar, shown when AI is busy ── */
-#thinking-bar {
+/* ── System status — always visible, far right of topbar ── */
+#system-status {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;  /* push to right side of topbar */
-  opacity: 0;
-  transition: opacity 0.4s;
-  pointer-events: none;
-}
-#thinking-bar.active { opacity: 1; }
-#thinking-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: #d4a84b;
+  margin-left: auto;
   flex-shrink: 0;
-  --lc: #d4a84b;
 }
-#thinking-bar.active #thinking-dot {
-  animation: light-pulse 1.4s ease-in-out infinite;
+#status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.4s, box-shadow 0.4s;
+  background: rgba(255,255,255,0.10);
 }
-#thinking-text {
+#status-dot.pulsing {
+  animation: light-pulse 1.2s ease-in-out infinite;
+}
+#status-text {
   font-size: 9px;
-  color: rgba(212,168,75,0.6);
+  letter-spacing: 0.4px;
   font-style: italic;
-  letter-spacing: 0.3px;
   white-space: nowrap;
+  transition: color 0.4s;
+  color: rgba(255,255,255,0.15);
 }
 
 /* ── Mood text entries (shown when muted instead of generating music) ── */
@@ -576,15 +574,15 @@ html, body {
 <body>
 <div id="app">
 
-  <!-- ── Topbar: "The Fortress" toggle + thinking indicator ── -->
+  <!-- ── Topbar: "The Fortress" toggle + always-on system status ── -->
   <div id="topbar">
     <button id="shelf-btn" title="Show / hide diagnostic panel" aria-label="Toggle diagnostic shelf">
       <span class="shelf-arrow">▶</span>The Fortress
     </button>
     <div id="activity-label"></div>
-    <div id="thinking-bar">
-      <span id="thinking-dot"></span>
-      <span id="thinking-text"></span>
+    <div id="system-status">
+      <span id="status-dot"></span>
+      <span id="status-text">Ready</span>
     </div>
   </div>
 
@@ -1051,6 +1049,7 @@ function connect() {
       if (lc.includes('image') || lc.includes('render') || lc.includes('scene') ||
           lc.includes('portrait') || lc.includes('sketch') || lc.includes('paint') || lc.includes('repaint')) {
         _setLight('image', text ? 'busy' : 'idle');
+        _setStatus('painting', !!text);
         galleryStatus.textContent = text || '';
       } else if (lc.includes('thinking') || lc.includes('narrator') || lc.includes('continuing') ||
                  lc.includes('music') || lc.includes('mood') || lc.includes('tts') || lc.includes('speech')) {
@@ -1063,6 +1062,7 @@ function connect() {
         _setLight('image', 'idle');
         _setLight('story', 'idle');
         _setLight('audio', 'idle');
+        _setStatus('painting', false);
         galleryStatus.textContent = '';
       }
     } catch (_) {}
@@ -1155,30 +1155,49 @@ function _initLightToggles() {
   _toggleSense('image', 'image');
 }
 
-// ── Thinking bar (player mode) ──
-const _THINKING_PHRASES = [
-  'The Fortress deliberates…',
-  'The world responds…',
-  'Reading the ether…',
-  'Processing your actions…',
-  'The Remnant stirs…',
-  'Thinking…',
-];
-let _thinkingPhraseIdx = 0;
-const _thinkingBar  = document.getElementById('thinking-bar');
-const _thinkingText = document.getElementById('thinking-text');
+// ── System status widget (always-on — culmination of all activity) ──
+// Priority order: thinking > painting > speaking > composing > transcribing > listening > idle
+const _STATUS_PRIORITY = ['thinking','painting','speaking','composing','transcribing','listening'];
+const _STATUS_META = {
+  thinking:     { text: 'Thinking…',     color: '#4488ff' },
+  painting:     { text: 'Painting…',     color: '#cc44cc' },
+  speaking:     { text: 'Speaking…',     color: '#ff8844' },
+  composing:    { text: 'Composing…',    color: '#ff8844' },
+  transcribing: { text: 'Transcribing…', color: '#ff8844' },
+  listening:    { text: 'Listening…',    color: 'rgba(255,136,68,0.45)' },
+  idle:         { text: 'Ready',         color: 'rgba(255,255,255,0.10)' },
+};
 
-function _setThinking(active) {
-  if (!_thinkingBar) return;
-  if (active) {
-    _thinkingText.textContent = _THINKING_PHRASES[_thinkingPhraseIdx % _THINKING_PHRASES.length];
-    _thinkingPhraseIdx++;
-    _thinkingBar.classList.add('active');
-  } else {
-    _thinkingBar.classList.remove('active');
-    _thinkingText.textContent = '';
+const _activeStatuses = new Set();
+const _statusDot  = document.getElementById('status-dot');
+const _statusText = document.getElementById('status-text');
+
+function _updateStatus() {
+  let current = 'idle';
+  for (const key of _STATUS_PRIORITY) {
+    if (_activeStatuses.has(key)) { current = key; break; }
+  }
+  const meta = _STATUS_META[current] || _STATUS_META.idle;
+  if (_statusDot) {
+    _statusDot.style.background  = meta.color;
+    _statusDot.style.boxShadow   = current !== 'idle' ? `0 0 6px 2px ${meta.color}` : 'none';
+    _statusDot.style.setProperty('--lc', meta.color);
+    _statusDot.classList.toggle('pulsing', current !== 'idle' && current !== 'listening');
+  }
+  if (_statusText) {
+    _statusText.textContent = meta.text;
+    _statusText.style.color = current !== 'idle' ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.15)';
   }
 }
+
+function _setStatus(key, active) {
+  if (active) _activeStatuses.add(key);
+  else        _activeStatuses.delete(key);
+  _updateStatus();
+}
+
+// Backward-compat shim: _setThinking used by _removeThinking and sendInput
+function _setThinking(active) { _setStatus('thinking', active); }
 
 // ── TTS engine ──
 let _ttsSource = null;
@@ -1193,6 +1212,7 @@ async function _speakTTS(text) {
   const ctrl = new AbortController();
   _ttsAbort = ctrl;
   _setLight('audio', 'busy');
+  _setStatus('speaking', true);
   try {
     const res = await fetch('/api/tts/v1/audio/speech', {
       method: 'POST',
@@ -1200,19 +1220,20 @@ async function _speakTTS(text) {
       body: JSON.stringify({model: 'kokoro', input: text, voice: 'am_michael'}),
       signal: ctrl.signal,
     });
-    if (!res.ok) { _setLight('audio', 'idle'); return; }
+    if (!res.ok) { _setLight('audio', 'idle'); _setStatus('speaking', false); return; }
     const buf = await res.arrayBuffer();
     const ctx = _ensureAudioCtx();
     const audio = await ctx.decodeAudioData(buf);
     const src = ctx.createBufferSource();
     src.buffer = audio;
     src.connect(ctx.destination);
-    src.onended = () => { _ttsSource = null; _ttsAbort = null; _setLight('audio', 'idle'); };
+    src.onended = () => { _ttsSource = null; _ttsAbort = null; _setLight('audio', 'idle'); _setStatus('speaking', false); };
     _ttsSource = src;
     src.start();
   } catch (e) {
     if (e.name !== 'AbortError') console.warn('[tts]', e);
     _setLight('audio', 'idle');
+    _setStatus('speaking', false);
   }
 }
 
@@ -1267,6 +1288,7 @@ async function _onMoodEvent(moodText) {
     return;
   }
   _setLight('audio', 'busy');
+  _setStatus('composing', true);
   try {
     const res = await fetch('/api/music/generate', {
       method: 'POST',
@@ -1281,9 +1303,11 @@ async function _onMoodEvent(moodText) {
     const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
     await _playMusicBuffer(audioBuffer);
     _setLight('audio', 'idle');
+    _setStatus('composing', false);
   } catch (e) {
     console.warn('[music]', e);
     _setLight('audio', 'off');
+    _setStatus('composing', false);
   }
 }
 
@@ -1456,6 +1480,7 @@ function _vadBeginRecord() {
   _vadRecorder.start();
   inputEl.dataset.vadState = 'speaking';
   inputEl.placeholder = 'Listening…';
+  _setStatus('listening', true);
 }
 
 function _vadEndRecord() {
@@ -1464,6 +1489,8 @@ function _vadEndRecord() {
   if (_vadRecorder && _vadRecorder.state === 'recording') _vadRecorder.stop();
   inputEl.dataset.vadState = 'processing';
   inputEl.placeholder = 'Transcribing…';
+  _setStatus('listening', false);
+  _setStatus('transcribing', true);
 }
 
 async function _vadProcess() {
@@ -1496,31 +1523,46 @@ async function _vadProcess() {
     inputEl.dataset.vadState = '';
   } finally {
     inputEl.placeholder = _DEFAULT_PLACEHOLDER;
+    _setStatus('transcribing', false);
   }
 }
 
+let _vadStarted = false;
+
 async function _initVAD() {
+  if (_vadStarted) return;
+  _vadStarted = true;
   try {
     _vadStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
     });
   } catch (e) {
     console.warn('[vad] mic unavailable:', e.message);
+    _vadStarted = false;
     return;
   }
-  const ctx     = _ensureAudioCtx();
+  const ctx = _ensureAudioCtx();
+  // Ensure AudioContext is running — WebView2 may auto-suspend it
+  if (ctx.state !== 'running') {
+    try { await ctx.resume(); } catch (_) {}
+  }
   const src     = ctx.createMediaStreamSource(_vadStream);
   _vadAnalyser  = ctx.createAnalyser();
   _vadAnalyser.fftSize = 256;
   _vadBuf       = new Float32Array(_vadAnalyser.fftSize);
   src.connect(_vadAnalyser);
   requestAnimationFrame(_vadTick);
-  console.log('[vad] always-on listening active');
+  console.log('[vad] always-on listening active — AudioCtx:', ctx.state);
 }
 
 // ── Initialise on load ──
 _initLightToggles();
+
+// Try VAD immediately; also try on first user gesture in case AudioContext
+// is suspended (WebView2 policy varies by Windows version)
 _initVAD();
+document.addEventListener('click', () => _initVAD(), { once: true });
+document.addEventListener('keydown', () => _initVAD(), { once: true });
 </script>
 </body>
 </html>
