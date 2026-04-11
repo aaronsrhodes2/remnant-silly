@@ -671,7 +671,7 @@ def _tail_log(n: int = 120) -> list[str]:
 
 
 # Known service identifiers as they appear in [service:...] log prefixes.
-_KNOWN_SERVICES = ("flask-sd", "ollama", "sillytavern", "diag", "bootstrap")
+_KNOWN_SERVICES = ("flask-sd", "ollama", "diag", "bootstrap")
 
 
 def _tail_service_log(service: str, n: int = 40) -> list[str]:
@@ -1562,7 +1562,6 @@ def _detect_issues(services: dict, sentinels: dict, log_cat: dict) -> list[dict]
 
     fsd = services["flask-sd"]
     oll = services["ollama"]
-    st = services["sillytavern"]
 
     # Rule 1: runtime service blocked on a missing sentinel.
     if fsd["status_file"] is None and not sentinels["flask-sd-ready"]:
@@ -1610,7 +1609,7 @@ def _detect_issues(services: dict, sentinels: dict, log_cat: dict) -> list[dict]
                 })
 
     # Rule 4: explicit error phase in any status file.
-    for key, svc in (("flask-sd", fsd), ("ollama", oll), ("sillytavern", st)):
+    for key, svc in (("flask-sd", fsd), ("ollama", oll)):
         sf = svc["status_file"] or {}
         if sf.get("phase") == "error":
             issues.append({
@@ -1708,7 +1707,7 @@ def _action_catalog() -> list[dict]:
         {
             "id": "services.restart",
             "summary": "Restart runtime services. NOT EXECUTED by this sidecar — it has no docker socket. Returns host command to run instead.",
-            "params": {"service": {"type": "string", "enum": ["flask-sd", "ollama", "sillytavern", "all"]}},
+            "params": {"service": {"type": "string", "enum": ["flask-sd", "ollama", "all"]}},
             "side_effects": "(informational)",
             "risk": "safe",
             "requires_host": True,
@@ -1805,7 +1804,7 @@ def _exec_action(action_id: str, params: dict) -> tuple[int, dict]:
 
         if action_id == "status.reset":
             removed = []
-            for name in ("flask-sd.json", "ollama.json", "sillytavern.json"):
+            for name in ("flask-sd.json", "ollama.json"):
                 p = STATUS_DIR / name
                 if p.exists():
                     try:
@@ -1859,8 +1858,7 @@ def _exec_action(action_id: str, params: dict) -> tuple[int, dict]:
             mapping = {
                 "flask-sd": "docker compose restart flask-sd",
                 "ollama": "docker compose restart ollama",
-                "sillytavern": "docker compose restart sillytavern",
-                "all": "docker compose restart flask-sd ollama sillytavern nginx",
+                "all": "docker compose restart flask-sd ollama nginx",
             }
             cmd = mapping.get(service)
             if cmd is None:
@@ -2124,7 +2122,7 @@ def _build_ai_snapshot() -> dict:
         },
         "per_service_log": {
             svc: _tail_service_log(svc, 20)
-            for svc in ("flask-sd", "ollama", "sillytavern", "diag")
+            for svc in ("flask-sd", "ollama", "diag")
         },
         "detected_issues": issues,
         "suggested_action_ids": suggested,
