@@ -16,14 +16,17 @@ Before starting any mode, check what holds :1582 and stop it first.
 Claude runs `scripts/dev.py` — do NOT improvise port-conflict resolution manually.
 
 ```bash
-# Start native dev launcher (headless, attached to console)
+# Open the game window (pywebview/browser, frameless, blocks until window closed)
+python -X utf8 scripts/dev.py exe
+
+# Start native dev launcher headless (console attached, Ctrl+C to stop)
 python -X utf8 scripts/dev.py dev
 
-# Start docker compose stack
+# Start docker compose stack (detached, use 'down' to stop)
 python -X utf8 scripts/dev.py docker
 
-# Start exe build (runs sanity, then leaves stack running)
-python -X utf8 scripts/dev.py exe
+# Headless sanity check then leave stack running for API access
+python -X utf8 scripts/dev.py check
 
 # Stop everything (docker + stale nginx)
 python -X utf8 scripts/dev.py down
@@ -33,6 +36,11 @@ python -X utf8 scripts/dev.py status
 ```
 
 `dev.py` handles: stop docker → kill stale nginx → start requested mode → wait for :1582.
+
+**exe vs check:**
+- `exe` = full game window (what the user sees). Blocks until window is closed.
+- `check` = headless start + sanity test + leave stack running. Claude drives via API.
+- When testing together, use `exe` for the user's window + Claude uses HTTP API in parallel.
 
 ## Port layout
 

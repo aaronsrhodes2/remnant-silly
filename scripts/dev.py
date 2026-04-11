@@ -201,14 +201,65 @@ def cmd_docker(args) -> int:
     return 0
 
 
-# ── exe: native launcher (leave up) ──────────────────────────────────────────
+# ── exe: native launcher with game window ────────────────────────────────────
 def cmd_exe(args) -> int:
-    """Start exe build via native-sanity.py --leave-up (runs checks, then leaves running)."""
-    print(_bold("\n[exe] Starting exe build (sanity check + leave up)…"), flush=True)
+    """Start exe build with the game window (pywebview or browser fallback).
+
+    This is the full user-facing game experience: services start, then a
+    frameless WebView2 window opens to the /game/ UI. Closing the window
+    stops all services.
+
+    Claude can still drive the game via the HTTP API while the window is open.
+    """
+    print(_bold("\n[exe] Starting game window…"), flush=True)
+    if not LAUNCHER.exists():
+        print(_err(f"✗ launcher not found: {LAUNCHER}"))
+        return 2
+    if not _free_port("exe"):
+        return 2
+
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    url = f"http://localhost:{PORT}/game/"
+    print(f"  {_dim('cmd:')} python -X utf8 {LAUNCHER.name}\n", flush=True)
+
+    # Start launcher WITHOUT --no-browser so pywebview window opens.
+    # CREATE_NEW_PROCESS_GROUP isolates CTRL_BREAK so it doesn't kill dev.py.
+    proc = subprocess.Popen(
+        [sys.executable, "-X", "utf8", str(LAUNCHER)],
+        cwd=ROOT, env=env,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+    )
+
+    if not _wait_port_open(90):
+        print(_err("✗ nginx did not come up in 90s"))
+        proc.terminate()
+        return 2
+
+    print(f"  {_ok('✓')} game running at {_cyan(url)}")
+    print(f"  {_dim('→ Close the game window to stop all services.')}")
+    print(f"  {_dim('→ Claude can drive the game via the HTTP API while the window is open.')}")
+
+    # Wait for the launcher/window to exit (user closes the window)
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+# ── check: headless sanity test, leave stack running ─────────────────────────
+def cmd_check(args) -> int:
+    """Run headless sanity test via native-sanity.py --leave-up.
+
+    Starts the native stack (if not already running), runs the full 10-section
+    sanity suite, then leaves the stack running. Used before play sessions or
+    as a quick CI check without the full release-sanity.py sequence.
+    """
+    print(_bold("\n[check] Headless sanity check (leave up)…"), flush=True)
     if not NATIVE.exists():
         print(_err(f"✗ native-sanity.py not found: {NATIVE}"))
         return 2
-    if not _free_port("exe"):
+    if not _free_port("check"):
         return 2
 
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -218,8 +269,8 @@ def cmd_exe(args) -> int:
     ).returncode
 
     if rc == 0:
-        print(f"\n  {_ok('✓')} exe stack running at {_cyan(f'http://localhost:{PORT}')}")
-        print(f"  {_dim('→ Close the launcher console to stop services.')}")
+        print(f"\n  {_ok('✓')} stack running at {_cyan(f'http://localhost:{PORT}')}")
+        print(f"  {_dim('→ Claude can now drive the game via the HTTP API.')}")
     return rc
 
 
@@ -246,11 +297,12 @@ def cmd_status(args) -> int:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 COMMANDS = {
-    "dev":    cmd_dev,
-    "docker": cmd_docker,
-    "exe":    cmd_exe,
-    "down":   cmd_down,
-    "status": cmd_status,
+    "dev":    cmd_dev,     # native dev launcher, headless, console attached
+    "docker": cmd_docker,  # docker compose up -d
+    "exe":    cmd_exe,     # game window (pywebview/browser), blocks until closed
+    "check":  cmd_check,   # headless sanity test, leave stack running for API access
+    "down":   cmd_down,    # stop everything
+    "status": cmd_status,  # what's on :1582?
 }
 
 
