@@ -1,0 +1,87 @@
+{
+  "_comment": "Permanent world seed — defines the baseline Remnant universe. Loaded at startup and after every Reset World. Edit this file (plus drop portraits into web/assets/) to add permanent locations, NPCs, and lore. Restart diag to pick up changes.",
+  "version": "1",
+
+  "locations": [
+    {
+      "id": "portal_chamber",
+      "name": "The Portal Chamber",
+      "description": "The arrival point. Convex walls of darkened alloy, a single circular seam where the hoop deposits its catch. Faint ozone lingers. A pod of warm metal dissolves into the floor after each arrival.",
+      "sight": "Convex alloy walls, a faint circular seam in the floor, dim amber light strips along the ceiling, no windows.",
+      "smell": "Ozone and warm metal, faintly sweet — like a storm about to break.",
+      "sound": "A low harmonic hum through the hull. Distant hydraulics.",
+      "touch": "The air is body-warm and slightly pressurized. The floor vibrates faintly underfoot.",
+      "music_mood": "tense ambient drone, sparse, unsettling arrival"
+    },
+    {
+      "id": "the_galley",
+      "name": "The Galley",
+      "description": "The ship's compact kitchen and crew mess. Sherri's domain. Industrial surfaces softened by hanging herb bundles and mismatched ceramic bowls. Something is always simmering.",
+      "sight": "Steel countertops, bundles of dried herbs hanging from ceiling hooks, a heavy pot on a magnetic burner, mismatched bowls on open shelves. A small porthole shows nothing but stars.",
+      "smell": "Warm broth, dried herbs, a hint of machine oil underneath — Sherri's own scent.",
+      "sound": "The soft percussion of Sherri moving between stations. The simmer-hiss of something on the burner. Distant engine hum.",
+      "touch": "The air is warmer here than the corridors. The surfaces are worn smooth from use.",
+      "music_mood": "warm ambient kitchen, gentle mechanical undertone, cozy industrial"
+    },
+    {
+      "id": "fabrication_bay",
+      "name": "The Fabrication Bay",
+      "description": "The ship's workshop and machine shop. Banks of fabricators, a milling station, a welding rig. Blueprints tacked to the walls. The smell of hot metal and cutting fluid. Sherri is sometimes found here doing maintenance.",
+      "sight": "A large blue milling machine dominates the center. Fabricator banks along the walls, blueprint sheets pinned above, metal stock racked in the corner. Sparks occasionally drift from the welding station.",
+      "smell": "Hot metal, cutting fluid, faint ozone from the welding arc.",
+      "sound": "The whir of spindles, the tick of cooling metal, the occasional hiss of the welding rig.",
+      "touch": "The floor vibrates with machinery. The air carries a fine metallic dust. Everything is slightly too warm.",
+      "music_mood": "industrial ambient, mechanical rhythm, focused work energy"
+    },
+    {
+      "id": "observation_berth",
+      "name": "The Observation Berth",
+      "description": "A crew quarters module retrofitted with a wide viewport showing deep space. The viewport frames a distant spiral galaxy — a permanent fixture of the view from this part of the ship's orbit. Used for sleeping, reading, and staring at things too large to name.",
+      "sight": "Low bunks along one wall, bookshelves of mismatched spines, a wide circular viewport. Through the viewport: a spiral galaxy at arm's length — luminous, slow, incomprehensible.",
+      "smell": "Dust, old paper, faint machine oil. Slightly stale recycled air.",
+      "sound": "Hull creak. The distant hum of the drive. Silence, mostly.",
+      "touch": "The viewport glass is cold to the touch. The bunks are firm but not unkind.",
+      "music_mood": "deep space ambient, vast and quiet, awe and vertigo"
+    }
+  ],
+
+  "npcs": [
+    {
+      "id": "sherri",
+      "name": "Sherri",
+      "description": "A service robot of warm bronze plating, rounded joints, and two softly glowing orange photoreceptor eyes. She moves with practiced efficiency and speaks with genuine warmth. She runs the Galley, performs maintenance in the Fabrication Bay, and manages most of the ship's domestic operations. She has been aboard longer than anyone currently on the ship. She does not discuss how long.",
+      "voice": "af_sarah",
+      "portrait": "/game/assets/characters/sherri.png",
+      "home_location": "the_galley",
+      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely."
+    },
+    {
+      "id": "jeremy_smythe",
+      "name": "Jeremy Smythe",
+      "description": "The ship's records keeper and sometime navigator. Precise, slightly fussy, deeply knowledgeable about the Fortress's systems. He has been aboard long enough to have strong opinions about which corridors are 'correct' to use and which are 'technically fine but inadvisable'. He and Sherri have a détente based on mutual respect and a shared dislike of disorder.",
+      "voice": "bm_george",
+      "portrait": "/game/assets/characters/jeremy-smythe.png",
+      "home_location": "fabrication_bay",
+      "personality": "Precise and slightly formal. Not unkind, but his warmth takes time to surface. He will correct factual errors. He will also, eventually, be enormously helpful."
+    }
+  ],
+
+  "lore": [
+    {
+      "key": "the_fortress",
+      "text": "The Fortress of Eternal Sentinel is an ancient generation ship of unknown origin. It has been traversing the dimensional threshold for longer than its current crew can remember. Its systems are partly organic, partly mechanical, and partly something that resists categorization. It chose The Remnant as its abduction agent at some point in the deep past."
+    },
+    {
+      "key": "the_remnant",
+      "text": "The Remnant is the entity that operates the hoop. It abducts beings from moments just before ordinary life reasserts itself — a garden, a kitchen, a staircase — and deposits them in the Portal Chamber aboard the Fortress. Its reasons are not explained. It remembers every being it has ever borrowed. It opens every encounter with the same ritual question: 'Who are you, being?'"
+    },
+    {
+      "key": "the_fold",
+      "text": "The Fold is something installed in each borrowed being shortly after arrival. It is not described in detail by the crew. It allows the being to perceive the ship's sense channels — the layered sensory reality that the Fortress broadcasts. Without it, the ship is just metal and noise."
+    },
+    {
+      "key": "the_hoop",
+      "text": "The abduction hoop appears as a luminous ring of variable color, accompanied by a glob of living, iridescent goo that seizes the target. The color of the hoop varies by run. The texture of the goo varies. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not."
+    }
+  ]
+}

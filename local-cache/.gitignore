@@ -12,9 +12,12 @@
 !hf-cache/
 !nginx-cache/
 !ollama-data/
+!chroma-db/
 hf-cache/*
 nginx-cache/*
 ollama-data/*
+chroma-db/*
 !hf-cache/.gitkeep
 !nginx-cache/.gitkeep
 !ollama-data/.gitkeep
+!chroma-db/.gitkeep

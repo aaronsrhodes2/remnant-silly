@@ -211,12 +211,15 @@ services:
       - "1591"
     volumes:
       - remnant-status:/remnant-status
+      - chroma-db:/remnant-chroma
     environment:
       - STATUS_DIR=/remnant-status
       - FLASK_SD_URL=http://flask-sd:1592
       - OLLAMA_URL=http://ollama:1593
       - FLASK_MUSIC_URL=http://flask-music:1596
       - LISTEN_PORT=1591
+      - CHROMA_DB_PATH=/remnant-chroma
+      - EMBED_MODEL=nomic-embed-text
     networks:
       - play-net
 
@@ -357,3 +360,5 @@ volumes:
                       # Bind-mounted to dev-cache/nginx-cache in dev.
   flask-gallery:      # Generated images (LIVING world data).
   remnant-status:     # Shared status JSON + sentinels (persistent).
+  chroma-db:          # ChromaDB vector index — narrator turn embeddings for
+                      # semantic memory retrieval (RAG). Grows with play history.

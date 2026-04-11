@@ -121,6 +121,28 @@ FORTRESS_CARD_DIR = Path(os.environ.get(
     Path(__file__).parent.parent / "sillytavern" / "content" / "characters",
 ))
 
+# ChromaDB — semantic memory / RAG retrieval for narrator context.
+# Optional: degrades gracefully when chromadb is not installed.
+CHROMA_DB_PATH = Path(os.environ.get(
+    "CHROMA_DB_PATH",
+    STATUS_DIR.parent / "chroma-db",
+))
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
+
+# Permanent world seed — baseline locations, NPCs, and lore that survive
+# all resets and are reloaded on every startup and after "Reset World".
+SEED_PATH = Path(os.environ.get(
+    "SEED_PATH",
+    Path(__file__).parent / "seed" / "world.json",
+))
+_RECENT_TURNS_WINDOW = 10   # always sent verbatim as chat history
+_MEMORY_RETRIEVE_K   = 5    # extra turns retrieved by semantic similarity
+_MEMORY_MIN_HISTORY  = 20   # don't bother retrieving until we have this many turns
+
+# Set at _init_chroma(); None when chromadb unavailable.
+_chroma_client = None
+_chroma_turns  = None   # Collection: narrator_turns
+
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
 NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
 WORLD_STATE_LOG = STATUS_DIR / "world-state.jsonl"
@@ -787,6 +809,9 @@ def _handle_meta_command(text: str, sub: str) -> dict:
         for eid in remove_ids:
             del _world["entities"][eid]
         _pending_reset = {"level": level}  # kept for extension backward-compat (no-op in new engine)
+        # Re-seed permanent world assets after clearing runtime state.
+        # This restores locations, NPCs, and lore that must always exist.
+        _load_seed_world()
         _sse_broadcast("meta", {"type": "reset", "level": level, "text": text})
         _sse_broadcast("reset", {"level": level})
         # Trigger narrator's opening response now that history is cleared
@@ -979,6 +1004,261 @@ def _load_fortress_texts() -> None:
         _first_mes = fm_path.read_text(encoding="utf-8").strip()
 
 
+def _load_seed_world() -> None:
+    """Load permanent world assets from SEED_PATH into the entity graph.
+
+    Called at startup (after _replay_world_log) and after every Reset World.
+    Seed entities use permanence='WORLD' and are tagged source='seed' so
+    they can be identified and are reloaded rather than lost on world reset.
+
+    Does NOT write to world-state.jsonl — seed data is always reloaded from
+    the file, so no persistence needed. Does broadcast portrait SSE events so
+    the game UI immediately knows seeded NPC portrait URLs.
+    """
+    global _system_prompt
+
+    if not SEED_PATH.exists():
+        print(f"[diag/seed] no seed file at {SEED_PATH} — skipping")
+        return
+
+    try:
+        seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[diag/seed] failed to parse seed: {exc}")
+        return
+
+    seed_turn_id = "seed"
+
+    # ── Locations ──────────────────────────────────────────────────────────
+    for loc in seed.get("locations", []):
+        loc_id = loc.get("id", "")
+        name   = loc.get("name", "")
+        if not loc_id or not name:
+            continue
+        ent = _ensure_entity(loc_id, name, "location")
+        ent["permanence"] = "WORLD"
+        ent["source"]     = "seed"
+        ent["description"] = loc.get("description", "")
+        for sense_key in ("sight", "smell", "sound", "touch", "taste"):
+            text = loc.get(sense_key, "").strip()
+            if text:
+                _add_sense_layer(ent, sense_key.upper(), text, seed_turn_id)
+        if loc.get("music_mood"):
+            ent["music_mood"] = loc["music_mood"]
+        if loc.get("portrait"):
+            ent["portrait"] = loc["portrait"]
+
+    # ── NPCs ───────────────────────────────────────────────────────────────
+    npc_lines = []  # for system prompt injection
+    for npc in seed.get("npcs", []):
+        npc_id = npc.get("id", "")
+        name   = npc.get("name", "")
+        if not npc_id or not name:
+            continue
+        ent = _ensure_entity(npc_id, name, "npc")
+        ent["permanence"]  = "WORLD"
+        ent["source"]      = "seed"
+        ent["description"] = npc.get("description", "")
+        ent["personality"] = npc.get("personality", "")
+        ent["portrait"]    = npc.get("portrait", "")
+        ent["voice"]       = npc.get("voice", "")
+        if npc.get("home_location"):
+            ent["home_location"] = npc["home_location"]
+        # Push portrait URL to connected UI clients so names map immediately
+        if npc.get("portrait"):
+            _sse_broadcast("portrait", {"name": name, "url": npc["portrait"]})
+        # Collect for system prompt block
+        desc_short = (npc.get("description") or "")[:120].split(".")[0]
+        npc_lines.append(f"  - {name}: {desc_short}.")
+
+    # ── Lore ───────────────────────────────────────────────────────────────
+    for entry in seed.get("lore", []):
+        key  = entry.get("key", "")
+        text = entry.get("text", "")
+        if not key or not text:
+            continue
+        # Write to forever.jsonl only if key not already present
+        try:
+            existing_keys: set = set()
+            if FOREVER_LOG.exists():
+                for line in FOREVER_LOG.read_text(encoding="utf-8").splitlines():
+                    try:
+                        rec = json.loads(line)
+                        if rec.get("key"):
+                            existing_keys.add(rec["key"])
+                    except Exception:
+                        pass
+            if key not in existing_keys:
+                with FOREVER_LOG.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "key": key, "text": text,
+                        "permanence": "FOREVER", "source": "seed",
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }) + "\n")
+        except Exception as exc:
+            print(f"[diag/seed] lore write failed ({key}): {exc}")
+
+    # ── System prompt injection — seed NPCs ────────────────────────────────
+    # Append a lightweight roster block so the narrator knows these beings
+    # exist from the very first turn, without needing the world graph replay.
+    if npc_lines and _system_prompt:
+        roster_block = (
+            "\n\n[PERMANENT CREW — These beings exist aboard the Fortress at all times. "
+            "You know them. They do not need to be introduced unless the player asks.]\n"
+            + "\n".join(npc_lines)
+            + "\n[END PERMANENT CREW]"
+        )
+        # Only append once — check if block already present
+        if "[PERMANENT CREW" not in _system_prompt:
+            _system_prompt += roster_block
+
+    locs  = len(seed.get("locations", []))
+    npcs  = len(seed.get("npcs", []))
+    lores = len(seed.get("lore", []))
+    print(f"[diag/seed] loaded — {locs} locations, {npcs} NPCs, {lores} lore entries from {SEED_PATH}")
+
+
+def _init_chroma() -> None:
+    """Initialize ChromaDB persistent client with Ollama-backed embeddings.
+
+    No-op if chromadb is not installed — every downstream caller checks
+    _chroma_turns is not None before proceeding.
+    """
+    global _chroma_client, _chroma_turns
+    try:
+        import chromadb  # noqa: PLC0415
+        from chromadb import EmbeddingFunction, Documents, Embeddings as ChromaEmbed  # noqa: PLC0415
+    except ImportError:
+        print("[diag/chroma] chromadb not installed — semantic memory disabled")
+        return
+
+    class _OllamaEmbedder(EmbeddingFunction):
+        """Calls Ollama /api/embed; falls back silently on errors."""
+        def __init__(self) -> None:
+            pass
+        def __call__(self, input: Documents) -> ChromaEmbed:
+            results: ChromaEmbed = []
+            for text in input:
+                try:
+                    payload = json.dumps({
+                        "model": EMBED_MODEL,
+                        "input": text[:2000],
+                    }).encode()
+                    req = urllib.request.Request(
+                        f"{OLLAMA_URL}/api/embed",
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as r:
+                        data = json.loads(r.read())
+                    results.append(data["embeddings"][0])
+                except Exception as exc:
+                    print(f"[diag/chroma] embed error: {exc}")
+                    # Return sentinel — will be skipped in add flow
+                    results.append(None)  # type: ignore[arg-type]
+            return results
+
+    try:
+        CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
+        _chroma_client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
+        _chroma_turns = _chroma_client.get_or_create_collection(
+            name="narrator_turns",
+            embedding_function=_OllamaEmbedder(),
+            metadata={"hnsw:space": "cosine"},
+        )
+        print(f"[diag/chroma] ready — {_chroma_turns.count()} turns indexed at {CHROMA_DB_PATH}")
+    except Exception as exc:
+        print(f"[diag/chroma] init failed: {exc}")
+        _chroma_client = None
+        _chroma_turns = None
+
+
+def _chroma_add_turn_async(turn: dict) -> None:
+    """Index one narrator turn into ChromaDB in a background thread."""
+    if _chroma_turns is None:
+        return
+
+    def _add() -> None:
+        try:
+            turn_id = turn.get("turn_id", "")
+            text = turn.get("raw_text", "").strip()
+            if not turn_id or not text:
+                return
+            # Skip if already indexed (idempotent after restart backfill)
+            if _chroma_turns.get(ids=[turn_id])["ids"]:
+                return
+            _chroma_turns.add(
+                ids=[turn_id],
+                documents=[text[:2000]],
+                metadatas=[{
+                    "is_player":    str(turn.get("is_player", False)),
+                    "received_at":  turn.get("received_at", ""),
+                    "narrator_name": turn.get("narrator_name", ""),
+                }],
+            )
+        except Exception as exc:
+            print(f"[diag/chroma] add_turn error: {exc}")
+
+    threading.Thread(target=_add, daemon=True).start()
+
+
+def _chroma_query_relevant(query_text: str, exclude_ids: set) -> list[dict]:
+    """Return up to _MEMORY_RETRIEVE_K turns semantically relevant to query_text.
+
+    Skips IDs in exclude_ids (recent-window turns already in the chat).
+    """
+    if _chroma_turns is None:
+        return []
+    total = _chroma_turns.count()
+    if total == 0:
+        return []
+    try:
+        n_fetch = min(_MEMORY_RETRIEVE_K + len(exclude_ids) + 2, total)
+        results = _chroma_turns.query(
+            query_texts=[query_text[:1000]],
+            n_results=n_fetch,
+        )
+        memories = []
+        ids   = (results.get("ids")        or [[]])[0]
+        docs  = (results.get("documents")  or [[]])[0]
+        metas = (results.get("metadatas")  or [[]])[0]
+        for rid, doc, meta in zip(ids, docs, metas):
+            if rid in exclude_ids:
+                continue
+            memories.append({
+                "text":        doc,
+                "received_at": meta.get("received_at", ""),
+                "is_player":   meta.get("is_player", "False") == "True",
+            })
+            if len(memories) >= _MEMORY_RETRIEVE_K:
+                break
+        return memories
+    except Exception as exc:
+        print(f"[diag/chroma] query error: {exc}")
+        return []
+
+
+def _chroma_backfill_async() -> None:
+    """Index all turns already in _narrator_turns that aren't in ChromaDB yet.
+
+    Called once after _restore_narrator_turns() so a fresh ChromaDB instance
+    gets seeded from the persisted JSONL history.
+    """
+    if _chroma_turns is None:
+        return
+    snapshot = list(_narrator_turns)
+
+    def _backfill() -> None:
+        indexed = 0
+        for turn in snapshot:
+            _chroma_add_turn_async(turn)
+            indexed += 1
+        print(f"[diag/chroma] backfill dispatched {indexed} turns")
+
+    threading.Thread(target=_backfill, daemon=True).start()
+
+
 def _restore_narrator_turns() -> None:
     """Rebuild _narrator_turns from narrator-turns.jsonl on startup."""
     if not NARRATOR_TURNS_LOG.exists():
@@ -1014,7 +1294,17 @@ def _is_truncated(text: str) -> bool:
 
 
 def _build_messages() -> list[dict]:
-    """Convert _narrator_turns deque into Ollama /api/chat messages list."""
+    """Convert _narrator_turns into Ollama /api/chat messages list.
+
+    When ChromaDB is available and enough history has accumulated, older turns
+    beyond the recent verbatim window are replaced with a compact [RECALLED
+    MEMORIES] block injected into the system prompt — semantically retrieved
+    based on the current conversational context. Recent turns are always sent
+    verbatim so temporal coherence is preserved.
+
+    Falls back to full flat history when ChromaDB is unavailable or the
+    history is too short to benefit from retrieval.
+    """
     system = _system_prompt
     if _player_dressed:
         system += (
@@ -1022,8 +1312,47 @@ def _build_messages() -> list[dict]:
             "Sherri's outfitting arc is complete. Do NOT restart or re-engage the wardrobe sequence. "
             "Focus on the mission, exploration, and movement to new locations."
         )
+
+    all_turns = list(_narrator_turns)
+
+    # --- Semantic retrieval path ---
+    # Only activate when we have enough history that retrieval is worthwhile.
+    if (
+        _chroma_turns is not None
+        and len(all_turns) > _RECENT_TURNS_WINDOW + _MEMORY_MIN_HISTORY
+    ):
+        recent_turns = all_turns[-_RECENT_TURNS_WINDOW:]
+        recent_ids = {t.get("turn_id", "") for t in recent_turns}
+
+        # Build the query from the last few turns (player + narrator context).
+        query_parts = []
+        for t in recent_turns[-4:]:
+            part = t.get("raw_text", "").strip()[:300]
+            if part:
+                query_parts.append(part)
+        query_text = " ".join(query_parts)
+
+        memories = _chroma_query_relevant(query_text, exclude_ids=recent_ids)
+        if memories:
+            lines = []
+            for m in memories:
+                prefix = "Player" if m["is_player"] else "Narrator"
+                ts     = (m["received_at"] or "")[:16]
+                short  = m["text"][:400].replace("\n", " ").strip()
+                lines.append(f"  [{ts}] {prefix}: {short}")
+            system += (
+                "\n\n[RECALLED MEMORIES — Relevant events from earlier in the session, "
+                "retrieved by semantic similarity to the current moment:]\n"
+                + "\n".join(lines)
+                + "\n[END RECALLED MEMORIES]"
+            )
+        active_turns = recent_turns
+    else:
+        # Not enough history yet — send everything verbatim (current behaviour).
+        active_turns = all_turns
+
     msgs: list[dict] = [{"role": "system", "content": system}]
-    for turn in _narrator_turns:
+    for turn in active_turns:
         is_player = turn.get("is_player") or any(
             b.get("isPlayer") for b in (turn.get("parsed_blocks") or [])
         )
@@ -1533,6 +1862,7 @@ def _store_narrator_turn(turn: dict) -> None:
             f.write(json.dumps(turn, default=str) + "\n")
     except Exception:
         pass
+    _chroma_add_turn_async(turn)  # non-blocking semantic index
 
 
 def _categorize_log_lines(lines: list[str]) -> dict:
@@ -2670,7 +3000,10 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     _load_fortress_texts()
     _restore_narrator_turns()
+    _init_chroma()            # optional — no-op when chromadb not installed
+    _chroma_backfill_async()  # seed index from restored turn history
     _replay_world_log()
+    _load_seed_world()        # permanent assets; always applied on top of runtime state
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:

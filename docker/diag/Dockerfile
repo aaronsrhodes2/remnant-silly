@@ -1,6 +1,9 @@
 # Remnant diagnostics sidecar.
 #
-# Tiny stdlib-only HTTP service. Exposes:
+# HTTP service providing AI-consumable state, narrator generation, and
+# semantic memory via ChromaDB + Ollama embeddings.
+#
+# Exposes:
 #   GET  /ai.json               — rich AI-consumable state snapshot
 #   GET  /signature             — composite SHA256 fingerprint of all content + logic files
 #   GET  /actions               — action catalog (JSON schema per action)
@@ -8,13 +11,12 @@
 #
 # Attaches to play-net only (no egress), reads/writes the shared
 # remnant-status volume, and reaches the other runtime services over
-# docker DNS. nginx proxies host:1582/diagnostics/ai.json and
-# host:1582/diagnostics/actions/* to this service.
-#
-# No pip install: we use only Python stdlib to keep the image tiny
-# and keep build time fast. If the feature set grows we can revisit.
+# docker DNS. nginx proxies host:1582/diagnostics/* to this service.
 
 FROM python:3.11-alpine
+
+# Build deps for chromadb's native extensions (hnswlib needs a C++ compiler).
+RUN apk add --no-cache gcc g++ musl-dev
 
 # Bake the git commit hash so /signature can report exactly which build
 # this container came from. Passed via --build-arg GIT_COMMIT=$(git rev-parse --short HEAD).
@@ -23,12 +25,17 @@ ENV GIT_COMMIT_ENV=${GIT_COMMIT}
 
 WORKDIR /app
 
+# Install chromadb (semantic memory / RAG retrieval for narrator context).
+# Installed before COPY so Docker layer cache survives app.py edits.
+RUN pip install --no-cache-dir chromadb
+
 # Copy all content + logic files that /signature fingerprints.
 # The main app.py is placed at its "correct" repo-relative path
 # (/app/docker/diag/app.py) so that Path(__file__).parent.parent.parent
 # resolves to /app — the same math that works natively in the repo.
 # Mirrors _SIGNATURE_FILES in app.py exactly.
 COPY docker/diag/app.py                                              /app/docker/diag/app.py
+COPY docker/diag/seed/                                               /app/docker/diag/seed/
 COPY web/index.html                                                  /app/web/index.html
 COPY extension/index.js                                              /app/extension/index.js
 COPY docker/sillytavern/content/characters/fortress_system_prompt.txt /app/docker/sillytavern/content/characters/fortress_system_prompt.txt

@@ -463,10 +463,12 @@ def run_setup(args) -> bool:
             )
             log(f"{label} Python deps installed", "ok")
 
-    # 6. Pull Ollama model
+    # 6. Pull Ollama models
     if ollama and ok:
         log(f"pulling Ollama model {OLLAMA_MODEL} (may take a while on first run)...", "head")
         subprocess.run([str(ollama), "pull", OLLAMA_MODEL], check=False)
+        log("pulling nomic-embed-text (semantic memory embeddings, ~274 MB)...", "head")
+        subprocess.run([str(ollama), "pull", "nomic-embed-text"], check=False)
 
     if ok:
         log("setup complete — run the launcher again to start the game", "ok")
@@ -670,6 +672,8 @@ class ServiceManager:
                     "OLLAMA_MODEL":        ollama_model,
                     "LISTEN_PORT":         str(PORTS["diag"]),
                     "FORTRESS_CARD_DIR":   fortress_card_dir,
+                    "CHROMA_DB_PATH":      str(LOCAL_CACHE / "chroma-db"),
+                    "EMBED_MODEL":         "nomic-embed-text",
                     "NATIVE_RUN_LOG_DIR":  str(RUN_DIR),
                     "PYTHONUNBUFFERED":    "1",
                 },
