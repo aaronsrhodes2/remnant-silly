@@ -72,8 +72,13 @@ if [ -f "$WATCH_PID_FILE" ]; then
 fi
 
 # 3. diag
-kill_port "${DIAG_PORT:-8700}" "diag"
+kill_port "${DIAG_PORT:-1591}" "diag"
 rm -f "$DIAG_PID_FILE"
+
+# 3b. flask-music
+FLASK_MUSIC_PID_FILE="$NATIVE_RUN_DIR/flask-music.pid"
+kill_port "${FLASK_MUSIC_PORT:-1596}" "flask-music"
+rm -f "$FLASK_MUSIC_PID_FILE"
 
 # 4. SillyTavern
 kill_port "${ST_PORT:-1581}" "SillyTavern"

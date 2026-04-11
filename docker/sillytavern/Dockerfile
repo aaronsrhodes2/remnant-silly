@@ -20,7 +20,7 @@ COPY --chown=node:node extension/ /home/node/app/public/scripts/extensions/image
 # Patch the extension's backend URL to use the docker service name instead
 # of localhost. (The committed source uses localhost for native dev.)
 # Use Node for the substitution to avoid sed / platform quoting headaches.
-RUN node -e "const f='/home/node/app/public/scripts/extensions/image-generator/index.js';const fs=require('fs');const s=fs.readFileSync(f,'utf8').replace('/proxy/http://localhost:5000','/proxy/http://flask-sd:5000');fs.writeFileSync(f,s);console.log('[sillytavern] patched IMG_GEN_API to flask-sd:5000');"
+RUN node -e "const f='/home/node/app/public/scripts/extensions/image-generator/index.js';const fs=require('fs');const s=fs.readFileSync(f,'utf8').replace('/proxy/http://localhost:5000','/proxy/http://flask-sd:1592').replace('/proxy/http://flask-sd:5000','/proxy/http://flask-sd:1592');fs.writeFileSync(f,s);console.log('[sillytavern] patched IMG_GEN_API to flask-sd:1592');"
 
 # --- Pre-seed config.yaml ---
 # Enables CORS proxy, listens on all interfaces, disables whitelist for
@@ -86,6 +86,6 @@ fs.writeFileSync(idxPath,JSON.stringify(idx,null,4));\
 console.log('[seed] index.json now has',idx.length,'entries');\
 "
 
-EXPOSE 8000
+EXPOSE 1590
 
 # Upstream image's CMD/ENTRYPOINT handles `node server.js`

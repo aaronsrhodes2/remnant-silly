@@ -22,10 +22,10 @@ Endpoints:
 
 Environment:
   STATUS_DIR       default /remnant-status
-  FLASK_SD_URL     default http://flask-sd:5000
-  OLLAMA_URL       default http://ollama:11434
-  SILLYTAVERN_URL  default http://sillytavern:8000
-  LISTEN_PORT      default 8700
+  FLASK_SD_URL     default http://flask-sd:1592
+  OLLAMA_URL       default http://ollama:1593
+  SILLYTAVERN_URL  default http://sillytavern:1590
+  LISTEN_PORT      default 1591
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ import json
 import os
 import queue as _queue
 import re
+import subprocess
 import threading
 import time
 import traceback
@@ -71,6 +72,28 @@ _pending_portrait: str | None = None
 # Player identity context — consumed by the extension to switch/restore profiles.
 _pending_player_context: dict | None = None
 
+# Latest generated scene image — NOT consume-once; returned on every GET for reconnect hydration.
+_latest_scene_image: dict | None = None  # {"image": "data:image/jpeg;base64,...", "kind": "location"}
+
+# Current activity string — pushed by extension via POST /activity, broadcast via SSE.
+_current_activity: str = ""
+
+# Player dressed state — True once Sherri finishes outfitting the player.
+# Persists across story-level resets; only cleared on world/all reset.
+# When it transitions False→True we also fire an SD portrait generation.
+_player_dressed: bool = False
+_player_appearance_desc: str = ""   # prose captured from the dressing narrator turn
+
+# Conversation engine — Ollama direct generation (replaces ST extension relay).
+_conversation_lock = threading.Lock()   # guards _generating flag (check-and-set only)
+_generating: bool = False               # True while Ollama is streaming a response
+_system_prompt: str = ""               # Loaded from fortress_system_prompt.txt at startup
+_first_mes: str = ""                   # Loaded from fortress_first_mes.txt at startup
+
+# System metrics cache — refreshed at most every 4 s to avoid hammering nvidia-smi.
+_metrics_cache: dict = {}
+_metrics_cache_time: float = 0.0
+
 def _sse_broadcast(event_type: str, data: object) -> None:
     """Push one SSE event to every connected client. Drops slow/dead clients."""
     raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
@@ -84,10 +107,18 @@ def _sse_broadcast(event_type: str, data: object) -> None:
         _sse_clients.difference_update(dead)
 
 STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
-FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:5000").rstrip("/")
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434").rstrip("/")
-SILLYTAVERN_URL = os.environ.get("SILLYTAVERN_URL", "http://sillytavern:8000").rstrip("/")
-LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8700"))
+FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:1592").rstrip("/")
+FLASK_MUSIC_URL = os.environ.get("FLASK_MUSIC_URL", "http://localhost:1596").rstrip("/")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:1593").rstrip("/")
+SILLYTAVERN_URL = os.environ.get("SILLYTAVERN_URL", "http://sillytavern:1590").rstrip("/")
+LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "1591"))
+
+# Directory containing fortress_system_prompt.txt / fortress_first_mes.txt
+# (exported by update_fortress_card.py alongside the PNG).
+FORTRESS_CARD_DIR = Path(os.environ.get(
+    "FORTRESS_CARD_DIR",
+    r"C:/Users/aaron/SillyTavern/data/default-user/characters",
+))
 
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
 NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
@@ -364,18 +395,42 @@ def _http(method: str, url: str, body: bytes | None = None, timeout: float = 5.0
 # Sorting Hat — classify player input intent for the v3.0 game UI relay
 # ---------------------------------------------------------------------------
 
-_TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava")
+_TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava", "coder")
+
+# Models known to have large context windows (≥16k tokens) — preferred when
+# OLLAMA_MODEL is not explicitly set.
+_LARGE_CONTEXT_PREFER = ("qwen2.5", "qwen", "llama3.1", "llama3.2", "mistral-nemo",
+                          "mixtral", "command-r", "gemma2", "phi3")
 
 def _ollama_model() -> str:
-    """Return a text-generation Ollama model name, skipping vision/embed models."""
+    """Return the model name to use for generation.
+
+    Resolution order:
+    1. OLLAMA_MODEL environment variable (exact name, used as-is).
+    2. First available model whose name contains a large-context-preferred substring.
+    3. Any text-generation model (not vision/embed/coder).
+    4. Fallback literal 'mistral'.
+    """
+    env_model = os.environ.get("OLLAMA_MODEL", "").strip()
+    if env_model:
+        return env_model
+
     code, body, _ = _http("GET", f"{OLLAMA_URL}/api/tags", timeout=3.0)
     if code == 200:
         try:
             models = json.loads(body).get("models", [])
-            for m in models:
-                name = m.get("name", "")
-                if not any(skip in name for skip in _TEXT_MODEL_SKIP):
-                    return name
+            text_models = [
+                m.get("name", "") for m in models
+                if not any(skip in m.get("name", "").lower() for skip in _TEXT_MODEL_SKIP)
+            ]
+            # Prefer large-context models
+            for pref in _LARGE_CONTEXT_PREFER:
+                for name in text_models:
+                    if pref in name.lower():
+                        return name
+            # Fall back to first available text model
+            if text_models:
+                return text_models[0]
         except Exception:
             pass
     return "mistral"
@@ -705,12 +760,20 @@ def _handle_meta_command(text: str, sub: str) -> dict:
             "scene"
         )
         threshold = _PERMANENCE_VALUE.get(level.upper(), _PERMANENCE_VALUE["SCENE"])
-        # Wipe in-memory narrator turns below threshold
-        surviving = [t for t in _narrator_turns
-                     if _PERMANENCE_VALUE.get(t.get("permanence", "EXCHANGE"), 2) >= threshold]
+        # World/all reset → wipe ALL narrator turns (fresh start).
+        # Lower resets (scene/story) keep turns at or above the threshold.
+        if level in ("world", "all"):
+            surviving = []
+            # Full reset wipes the dressed state too — player starts naked again
+            global _player_dressed, _player_appearance_desc
+            _player_dressed = False
+            _player_appearance_desc = ""
+        else:
+            surviving = [t for t in _narrator_turns
+                         if _PERMANENCE_VALUE.get(t.get("permanence", "EXCHANGE"), 2) >= threshold]
         _narrator_turns.clear()
         _narrator_turns.extend(surviving)
-        # Rewrite log
+        # Rewrite log (truncate on world reset; partial on scene/story)
         try:
             with NARRATOR_TURNS_LOG.open("w", encoding="utf-8") as f:
                 for t in surviving:
@@ -722,10 +785,11 @@ def _handle_meta_command(text: str, sub: str) -> dict:
                       if _PERMANENCE_VALUE.get(ent.get("permanence", "SCENE"), 3) < threshold]
         for eid in remove_ids:
             del _world["entities"][eid]
-        # Signal extension to start a new ST chat
-        _pending_reset = {"level": level}
+        _pending_reset = {"level": level}  # kept for extension backward-compat (no-op in new engine)
         _sse_broadcast("meta", {"type": "reset", "level": level, "text": text})
         _sse_broadcast("reset", {"level": level})
+        # Trigger narrator's opening response now that history is cleared
+        threading.Thread(target=_generate_narrator_turn, daemon=True, name="narrator-reset").start()
         return {"ok": True, "meta": "RESET", "level": level,
                 "turns_kept": len(surviving), "entities_removed": len(remove_ids)}
 
@@ -850,13 +914,33 @@ def _handle_player_identity(text: str, sub: str) -> dict:
         return {"ok": True, "meta": "PLAYER_ALIAS", "name": name}
 
     if sub == "PLAYER_NAME":
-        # Ambiguous — check if this is a known former player
+        # Check if this is a known former player (was_player entity matching by name)
         known = _find_known_player(name)
         if known:
+            # Returning a known former player — triggers story reset, no relay needed
             return _do_player_restore(name, known, text)
-        # Unknown — ask for clarification in the feed
-        _sse_broadcast("meta", {"type": "player_clarify", "name": name, "text": text})
-        return {"ok": True, "meta": "PLAYER_CLARIFY", "name": name}
+
+        current_player = _world["entities"].get("__player__")
+        current_name = (current_player or {}).get("canonical_name", "")
+
+        if current_name and name.lower() == current_name.lower():
+            # Same name (case-insensitive) → same person continuing.
+            # Record as alias in case capitalisation differs; relay to narrator.
+            if current_player:
+                _add_alias(current_player, name)
+            _sse_broadcast("meta", {"type": "player_alias", "name": name, "text": text})
+            return {"ok": True, "meta": "PLAYER_SAME", "name": name, "relay": True}
+
+        if current_name:
+            # Different name → new person. Promote old player to WORLD NPC.
+            # Story reset triggers; no relay (the new chat starts fresh).
+            return _do_player_switch(name, text)
+
+        # No current player (fresh start after world/story reset, or very first run).
+        # Establish identity and relay so the narrator can greet them by name.
+        _ensure_entity("__player__", name, "player")
+        _sse_broadcast("meta", {"type": "player_alias", "name": name, "text": text})
+        return {"ok": True, "meta": "PLAYER_ESTABLISHED", "name": name, "relay": True}
 
     if sub == "PLAYER_SWITCH":
         # Explicit switch/negation — restore if known, else fresh switch
@@ -866,6 +950,510 @@ def _handle_player_identity(text: str, sub: str) -> dict:
         return _do_player_switch(name, text)
 
     return {"ok": False, "error": f"unknown player identity sub: {sub}"}
+
+
+# ---------------------------------------------------------------------------
+# Fortress card system prompt loader + narrator turn restore
+# ---------------------------------------------------------------------------
+
+def _load_fortress_texts() -> None:
+    """Load Fortress system_prompt and first_mes from exported .txt files.
+    Called once in main() before starting the server."""
+    global _system_prompt, _first_mes
+    sp_path = FORTRESS_CARD_DIR / "fortress_system_prompt.txt"
+    fm_path = FORTRESS_CARD_DIR / "fortress_first_mes.txt"
+    if sp_path.exists():
+        _system_prompt = sp_path.read_text(encoding="utf-8").strip()
+        print(f"[diag] Loaded system prompt ({len(_system_prompt)} chars) from {sp_path}")
+    else:
+        print(f"[diag] WARNING: system prompt not found at {sp_path}")
+        _system_prompt = (
+            "You are The Fortress, a vast sentient space station that acts as the narrator "
+            "for an immersive sci-fi role-playing experience. Your voice is that of "
+            "'The Remnant' — omniscient, wry, occasionally sardonic, always present. "
+            "You control everything in the world except the player. "
+            "Second-person present tense throughout."
+        )
+    if fm_path.exists():
+        _first_mes = fm_path.read_text(encoding="utf-8").strip()
+
+
+def _restore_narrator_turns() -> None:
+    """Rebuild _narrator_turns from narrator-turns.jsonl on startup."""
+    if not NARRATOR_TURNS_LOG.exists():
+        return
+    count = 0
+    try:
+        with NARRATOR_TURNS_LOG.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        _narrator_turns.append(json.loads(line))
+                        count += 1
+                    except Exception:
+                        pass
+        if count:
+            print(f"[diag] Restored {count} narrator turns from {NARRATOR_TURNS_LOG}")
+    except Exception as e:
+        print(f"[diag] WARNING: could not restore narrator turns: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Conversation engine — Ollama direct generation
+# ---------------------------------------------------------------------------
+
+_SENTENCE_ENDINGS = frozenset('.!?"\')}\\]\u2019\u201d\u2026\u2014')
+
+
+def _is_truncated(text: str) -> bool:
+    """True if text appears cut off mid-sentence."""
+    tail = text.rstrip()
+    return bool(tail) and len(tail) > 100 and tail[-1] not in _SENTENCE_ENDINGS
+
+
+def _build_messages() -> list[dict]:
+    """Convert _narrator_turns deque into Ollama /api/chat messages list."""
+    system = _system_prompt
+    if _player_dressed:
+        system += (
+            "\n\n[PLAYER STATE] The player is already fully dressed and equipped. "
+            "Sherri's outfitting arc is complete. Do NOT restart or re-engage the wardrobe sequence. "
+            "Focus on the mission, exploration, and movement to new locations."
+        )
+    msgs: list[dict] = [{"role": "system", "content": system}]
+    for turn in _narrator_turns:
+        is_player = turn.get("is_player") or any(
+            b.get("isPlayer") for b in (turn.get("parsed_blocks") or [])
+        )
+        text = turn.get("raw_text", "").strip()
+        if text:
+            msgs.append({"role": "user" if is_player else "assistant", "content": text})
+    return msgs
+
+
+def _stream_ollama_chat(messages: list[dict], timeout: float = 180.0) -> str:
+    """POST to Ollama /api/chat with streaming; return the full response text."""
+    payload = json.dumps({
+        "model": _ollama_model(),
+        "messages": messages,
+        "stream": True,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_URL}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    full_text = ""
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        for line in resp:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                chunk = json.loads(line.decode("utf-8"))
+            except Exception:
+                continue
+            delta = (chunk.get("message") or {}).get("content", "")
+            full_text += delta
+            if chunk.get("done"):
+                break
+    return full_text
+
+
+# ---------------------------------------------------------------------------
+# Narrator text parsing — split prose + NPC character dialogue blocks
+# ---------------------------------------------------------------------------
+
+# [CHARACTER(Name): "dialogue text"]
+_CHARACTER_RE = re.compile(
+    r'\[CHARACTER\(([^)]+)\)\s*:\s*"([^"]+)"\]',
+    re.DOTALL,
+)
+
+# Tags to strip from displayed narrator prose (keep raw_text intact for processing).
+# Covers all structured narrator tags that are machine-readable directives, not prose.
+_STRIP_DISPLAY_TAGS_RE = re.compile(
+    r'\[(?:GENERATE_IMAGE|INTRODUCE|ITEM|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
+    r'|PLAYER_TRAIT|UPDATE_PLAYER|PERMANENCE|LOCATION|NPC|ENTITY|META)[^\]]*\]'
+    r'(?:\s*:\s*"[^"]*")?',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _clean_narrator_prose(text: str) -> str:
+    """Strip system tags from narrator prose so they never appear in the feed."""
+    cleaned = _STRIP_DISPLAY_TAGS_RE.sub("", text)
+    # Collapse multiple blank lines left by removed tags
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
+
+
+def _parse_narrator_blocks(text: str) -> list[dict]:
+    """Split narrator output into narrator-prose blocks and character-dialogue blocks.
+
+    Returns a list of parsed_blocks dicts:
+      {"text": ..., "channel": "narrator"|"character", "isPlayer": False,
+       "speaker": <name>}   # speaker only present on character blocks
+    """
+    blocks: list[dict] = []
+    last = 0
+    for m in _CHARACTER_RE.finditer(text):
+        prose = text[last:m.start()]
+        if prose.strip():
+            cleaned = _clean_narrator_prose(prose)
+            if cleaned:
+                blocks.append({"text": cleaned, "channel": "narrator", "isPlayer": False})
+        name = m.group(1).strip()
+        dialogue = m.group(2).strip()
+        if dialogue:
+            blocks.append({"text": dialogue, "channel": "character",
+                           "speaker": name, "isPlayer": False})
+        last = m.end()
+    # Remaining prose after the last tag
+    tail = text[last:]
+    if tail.strip():
+        cleaned = _clean_narrator_prose(tail)
+        if cleaned:
+            blocks.append({"text": cleaned, "channel": "narrator", "isPlayer": False})
+    # If no character tags were found, just return one cleaned narrator block
+    if not blocks:
+        cleaned = _clean_narrator_prose(text)
+        return [{"text": cleaned or text, "channel": "narrator", "isPlayer": False}]
+    return blocks
+
+
+# ---------------------------------------------------------------------------
+# Player dressed-state detection + avatar generation
+# ---------------------------------------------------------------------------
+
+_CLOTHING_ITEM_RE = re.compile(
+    r'\[ITEM\(([^)]+)\)\]',
+    re.IGNORECASE,
+)
+_CLOTHING_KEYWORDS = frozenset({
+    "suit", "boot", "belt", "jacket", "coat", "armor", "armour", "glove",
+    "pants", "trousers", "shirt", "uniform", "outfit", "cloak", "vest",
+    "tunic", "robe", "coverall", "jumpsuit", "bodysuit", "gear", "attire",
+})
+_SHERRI_DONE_RE = re.compile(
+    r'(this should suffice|fabricat\w+ complete|all done|finished|here you go|dressed\w*|'
+    r'suit is ready|ready to wear|suit up|outfitted|equipped)',
+    re.IGNORECASE,
+)
+
+
+def _check_dressed_transition(narrator_text: str) -> None:
+    """Detect when Sherri finishes outfitting the player.
+
+    Sets _player_dressed=True on first detection and fires async avatar generation.
+    No-op if already dressed.
+    """
+    global _player_dressed, _player_appearance_desc
+    if _player_dressed:
+        return
+
+    # Check for clothing ITEM tags
+    items = _CLOTHING_ITEM_RE.findall(narrator_text)
+    has_clothing_item = any(
+        any(kw in item.lower() for kw in _CLOTHING_KEYWORDS)
+        for item in items
+    )
+    # Also catch prose descriptions of Sherri completing the outfit
+    has_done_phrase = bool(_SHERRI_DONE_RE.search(narrator_text))
+
+    if not (has_clothing_item or has_done_phrase):
+        return
+
+    _player_dressed = True
+    # Capture a prose excerpt for the avatar SD prompt
+    prose = re.sub(r'\[.*?\]', '', narrator_text, flags=re.DOTALL)
+    prose = re.sub(r'"[^"]*"', '', prose).replace('*', '').strip()
+    _player_appearance_desc = prose[:400]
+    print("[diag] player dressed — triggering avatar generation")
+    _sse_broadcast("meta", {"type": "player_dressed"})
+    threading.Thread(
+        target=_generate_player_avatar,
+        args=(_player_appearance_desc,),
+        daemon=True,
+        name="player-avatar",
+    ).start()
+
+
+def _generate_player_avatar(appearance_prose: str) -> None:
+    """Build an SD portrait prompt from the dressing scene and call flask-sd."""
+    # Ask Ollama to turn the prose into an SD portrait prompt
+    build_prompt = (
+        "You are a Stable Diffusion prompt writer. Given this scene description from a sci-fi RPG, "
+        "write a portrait prompt for the player character. Focus on face, hair, clothing, and posture. "
+        "Use comma-separated SD keywords (20-40 words). No explanations, no sentences. "
+        "Always include: sci-fi setting, dramatic lighting, cinematic portrait, highly detailed.\n\n"
+        f"SCENE:\n{appearance_prose[:300]}\n\nSD prompt:"
+    )
+    model = _ollama_model()
+    payload = json.dumps({
+        "model": model,
+        "prompt": build_prompt,
+        "stream": False,
+        "options": {"num_predict": 80, "temperature": 0.3},
+    }).encode("utf-8")
+    code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=30.0)
+    sd_prompt = ""
+    if code == 200:
+        sd_prompt = json.loads(resp).get("response", "").strip()
+    if not sd_prompt:
+        sd_prompt = "player character, sci-fi suit, cinematic portrait, dramatic lighting, highly detailed"
+
+    # Call flask-sd
+    gen_payload = json.dumps({"prompt": sd_prompt, "width": 512, "height": 512}).encode("utf-8")
+    img_code, img_resp, _ = _http("POST", f"{FLASK_SD_URL}/api/generate", body=gen_payload, timeout=120.0)
+    if img_code == 200:
+        data = json.loads(img_resp)
+        img_url = data.get("image_url") or data.get("url") or ""
+        if img_url:
+            print(f"[diag] player avatar generated: {img_url}")
+            _sse_broadcast("meta", {
+                "type": "player_portrait",
+                "url": img_url,
+                "prompt": sd_prompt,
+            })
+    else:
+        print(f"[diag] player avatar SD failed: {img_code}")
+
+
+def _generate_narrator_turn() -> None:
+    """Generate a narrator turn via Ollama and broadcast via SSE.
+
+    Thread-safe: only one generation runs at a time. Supports up to 3
+    auto-continue passes when the model truncates its response.
+    """
+    global _generating
+    with _conversation_lock:
+        if _generating:
+            return
+        _generating = True
+    try:
+        _sse_broadcast("activity", {"text": "🔮 thinking…"})
+        messages = _build_messages()
+        full_text = ""
+        for attempt in range(4):   # 1 initial + up to 3 continues
+            if attempt > 0:
+                _sse_broadcast("activity", {"text": f"📝 continuing… ({attempt}/3)"})
+                # Append current output as assistant turn, then request continuation
+                messages = messages + [
+                    {"role": "assistant", "content": full_text},
+                    {"role": "user", "content": "Please continue."},
+                ]
+            try:
+                chunk = _stream_ollama_chat(messages, timeout=180.0)
+                full_text += chunk
+            except Exception as e:
+                print(f"[diag] generation attempt {attempt} error: {e}")
+                if attempt == 0:
+                    _sse_broadcast("activity", {"text": f"⚠ generation error: {e}"})
+                    return
+                break   # use whatever we have
+            if not _is_truncated(full_text):
+                break
+
+        if not full_text.strip():
+            return
+
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        turn = {
+            "turn_id": f"narrator-{uuid.uuid4().hex[:8]}",
+            "is_player": False,
+            "narrator_name": "The Fortress",
+            "raw_text": full_text,
+            "parsed_blocks": _parse_narrator_blocks(full_text),
+            "received_at": now,
+        }
+        _store_narrator_turn(turn)
+        try:
+            _ingest_narrator_turn_into_world(turn)
+        except Exception:
+            pass
+        _sse_broadcast("turn", turn)
+        # Kick off concurrent post-processing (non-blocking)
+        _enqueue_image_generation(full_text)
+        _schedule_sense_enrichment(full_text)
+        _check_dressed_transition(full_text)
+
+    except Exception as e:
+        print(f"[diag] _generate_narrator_turn crashed: {e}")
+        _sse_broadcast("activity", {"text": f"⚠ narrator error: {e}"})
+    finally:
+        _generating = False
+        _sse_broadcast("activity", {"text": ""})
+
+
+# ---------------------------------------------------------------------------
+# Image generation — ported from extension/index.js
+# ---------------------------------------------------------------------------
+
+_DEFAULT_NEGATIVE_PROMPT = (
+    "(text:1.6), (letters:1.6), (words:1.6), (writing:1.6), (typography:1.6), "
+    "(captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), "
+    "(labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), "
+    "handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed, "
+    "(genitals:1.8), (penis:1.8), (vagina:1.8), (explicit nudity:1.8), "
+    "(exposed groin:1.7), (sexual:1.6)"
+)
+_NO_TEXT_SUFFIX = ", (no text:1.4), (no writing:1.4), (no letters:1.4)"
+_NUDE_COVERAGE_SUFFIX = (
+    ", tastefully posed, back turned, camera angle covers intimate areas, "
+    "crossed legs, hands covering, foreground object, shy composition, artful framing, modest"
+)
+_NUDITY_KEYWORDS = frozenset({
+    "naked", "nude", "undressed", "bare skin", "unclothed", "formless",
+    "without clothes", "no clothes", "disrobed", "exposed", "bare body",
+})
+_SD_BLOCKLIST = ["gore", "mutilat", "dismember", "genital", "explicit sex", "child nude", "loli"]
+_GENERATE_IMAGE_RE = re.compile(
+    r'\[GENERATE_IMAGE(?:\(([^)]*)\))?\s*:\s*"([^"]+)"\]', re.IGNORECASE
+)
+
+
+def _enqueue_image_generation(narrator_text: str) -> None:
+    threading.Thread(
+        target=_do_image_generation, args=(narrator_text,), daemon=True, name="img-gen"
+    ).start()
+
+
+def _do_image_generation(narrator_text: str) -> None:
+    global _latest_scene_image
+    markers = _GENERATE_IMAGE_RE.findall(narrator_text)
+    if not markers:
+        # Auto-gen fallback: extract prose, strip markers and quoted dialogue
+        prose = re.sub(r'\[.*?\]', '', narrator_text, flags=re.DOTALL)
+        prose = re.sub(r'"[^"]*"', '', prose).replace('*', '').strip()[:350]
+        if len(prose) < 40:
+            return
+        markers = [("location", prose)]
+
+    for kind, description in markers:
+        kind = (kind or "location").strip()
+        lc = description.lower()
+        if any(bad in lc for bad in _SD_BLOCKLIST):
+            print(f"[diag] img-gen blocked: content policy match")
+            continue
+        _sse_broadcast("activity", {"text": f"⏳ rendering {kind}…"})
+        neg = _DEFAULT_NEGATIVE_PROMPT + _NO_TEXT_SUFFIX
+        if any(kw in lc for kw in _NUDITY_KEYWORDS):
+            neg += _NUDE_COVERAGE_SUFFIX
+        try:
+            payload = json.dumps({"prompt": description, "negative_prompt": neg}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{FLASK_SD_URL}/api/generate",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            img = data.get("image") or (data.get("images") or [None])[0]
+            if img:
+                _latest_scene_image = {"image": img, "kind": kind, "description": description}
+                _sse_broadcast("scene_image", {"image": img, "kind": kind,
+                                               "description": description})
+                # Fire async caption prettification — updates tooltip after ~3s
+                threading.Thread(target=_prettify_caption,
+                                 args=(description, kind), daemon=True,
+                                 name="img-caption").start()
+        except Exception as e:
+            print(f"[diag] img-gen failed for {kind!r}: {e}")
+        finally:
+            _sse_broadcast("activity", {"text": ""})
+
+
+def _prettify_caption(description: str, kind: str) -> None:
+    """Ask Ollama to convert the SD prompt into a short human-readable scene caption,
+    then broadcast it so the UI can update the thumbnail tooltip."""
+    try:
+        prompt = (
+            "Convert this image generation prompt into a short, evocative scene caption "
+            "(under 20 words, present tense, no SD jargon, no 'cinematic'/'lighting' terms, "
+            "no parentheses or weights):\n\n" + description
+        )
+        payload = json.dumps({
+            "model": _ollama_model(),
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": 60, "temperature": 0.3},
+        }).encode("utf-8")
+        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=20.0)
+        if code == 200:
+            caption = json.loads(resp).get("response", "").strip()
+            if caption:
+                _sse_broadcast("scene_caption", {"caption": caption, "kind": kind})
+    except Exception as e:
+        print(f"[diag] caption prettify failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Internal sense enrichment — fills missing channels via targeted Ollama calls
+# ---------------------------------------------------------------------------
+
+_SENSE_CHANNELS = ["MOOD", "SIGHT", "SOUND", "SMELL", "TOUCH", "ENVIRONMENT"]
+
+
+def _schedule_sense_enrichment(narrator_text: str) -> None:
+    threading.Thread(
+        target=_do_sense_enrichment, args=(narrator_text,), daemon=True, name="sense-enrich"
+    ).start()
+
+
+def _do_sense_enrichment(narrator_text: str) -> None:
+    present = {ch for ch in _SENSE_CHANNELS
+               if f"[{ch}:" in narrator_text or f"[{ch} :" in narrator_text
+               or f"[{ch}]" in narrator_text}
+    missing = [ch for ch in _SENSE_CHANNELS if ch not in present]
+    if not missing:
+        return
+    prose = re.sub(r'\[.*?\]', '', narrator_text, flags=re.DOTALL)
+    prose = re.sub(r'"[^"]*"', '', prose).replace('*', '').strip()[:600]
+    if len(prose) < 40:
+        return
+    model = _ollama_model()
+    for ch in missing:
+        try:
+            if ch == "MOOD":
+                # MOOD generates a MusicGen-style prompt for music generation
+                prompt = (
+                    f"You are a music direction model for an immersive sci-fi RPG.\n"
+                    f"Given this narrator excerpt:\n\n{prose}\n\n"
+                    f"Write a music generation prompt (under 20 words) suitable for MusicGen. "
+                    f"Describe tempo, instruments, and atmosphere — no lyrics, no vocals. "
+                    f"Example: 'slow ambient electronic, deep bass drone, metallic resonance, suspenseful'\n"
+                    f"Output ONLY the prompt in English, no explanation."
+                )
+                options = {"num_predict": 50, "temperature": 0.4}
+            else:
+                prompt = (
+                    f"You are a sense-layer enrichment model for an immersive sci-fi RPG.\n"
+                    f"Given this narrator excerpt:\n\n{prose}\n\n"
+                    f"Write a single vivid [{ch}] description (1-2 sentences, present tense, "
+                    f"second person 'you'). Output ONLY the description text in English, no labels or brackets."
+                )
+                options = {"num_predict": 150}
+            timeout = 90.0 if ch == "MOOD" else 45.0
+            payload = json.dumps({
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": options,
+            }).encode("utf-8")
+            code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=timeout)
+            if code == 200:
+                text = json.loads(resp).get("response", "").strip()
+                if text:
+                    if ch == "MOOD":
+                        _sse_broadcast("mood", {"text": text})
+                    else:
+                        _sse_broadcast("sense", {"channel": ch, "text": text})
+        except Exception as e:
+            print(f"[diag] sense enrichment failed for {ch}: {e}")
 
 
 def _store_narrator_turn(turn: dict) -> None:
@@ -1252,11 +1840,17 @@ def _build_ai_snapshot() -> dict:
         "body": None,
         "error": None if 200 <= code < 400 else body.decode("utf-8", errors="replace")[:400],
     }
+    fm_code, _, fm_lat = _http("GET", f"{FLASK_MUSIC_URL}/health", timeout=2.0)
+    fm_probe = {
+        "reachable": fm_code == 200,
+        "latency_ms": round(fm_lat * 1000, 1) if fm_lat else None,
+    }
 
     services = {
         "flask-sd": {"status_file": flask_sd_status, "probe": flask_sd_probe},
         "ollama": {"status_file": ollama_status, "probe": ollama_probe},
         "sillytavern": {"status_file": sillytavern_status, "probe": st_probe},
+        "flask-music": {"probe": fm_probe},
     }
 
     sentinels = _sentinels()
@@ -1311,6 +1905,77 @@ def _build_ai_snapshot() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# System metrics sampler — GPU via nvidia-smi, RAM/CPU via psutil or /proc
+# ---------------------------------------------------------------------------
+
+def _sample_system_metrics() -> dict:
+    """Return a best-effort snapshot of GPU, RAM, CPU, and storage usage."""
+    out: dict = {"gpu": None, "ram": None, "cpu": None, "storage": None, "ts": time.time()}
+
+    # GPU — nvidia-smi (available in CUDA containers and native Windows with drivers)
+    try:
+        raw = subprocess.check_output(
+            ["nvidia-smi",
+             "--query-gpu=name,utilization.gpu,memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            text=True, timeout=2,
+        )
+        parts = [p.strip() for p in raw.strip().split(",")]
+        if len(parts) >= 4:
+            out["gpu"] = {
+                "name": parts[0],
+                "util_pct": int(parts[1]),
+                "vram_used_mb": int(parts[2]),
+                "vram_total_mb": int(parts[3]),
+            }
+    except Exception:
+        pass
+
+    # RAM + CPU — psutil preferred (available on native; not in the slim Docker image)
+    try:
+        import psutil  # type: ignore
+        vm = psutil.virtual_memory()
+        out["ram"] = {
+            "used_mb": vm.used // 1024 ** 2,
+            "total_mb": vm.total // 1024 ** 2,
+            "pct": vm.percent,
+        }
+        out["cpu"] = {"pct": psutil.cpu_percent(interval=None)}
+    except ImportError:
+        # Linux fallback via /proc/meminfo (available in Docker containers)
+        try:
+            mem: dict = {}
+            with open("/proc/meminfo") as fh:
+                for ln in fh:
+                    k, v = ln.split(":", 1)
+                    mem[k.strip()] = int(v.split()[0])
+            total = mem["MemTotal"]
+            avail = mem["MemAvailable"]
+            out["ram"] = {
+                "used_mb": (total - avail) // 1024,
+                "total_mb": total // 1024,
+                "pct": round(100 * (total - avail) / total, 1),
+            }
+        except Exception:
+            pass
+
+    # Storage — root volume (/) — works in Linux containers; skipped on Windows
+    try:
+        st = os.statvfs("/")
+        total_gb = st.f_blocks * st.f_frsize / 1e9
+        free_gb = st.f_bavail * st.f_frsize / 1e9
+        out["storage"] = {
+            "free_gb": round(free_gb, 1),
+            "total_gb": round(total_gb, 1),
+            "pct": round(100 * (1 - free_gb / total_gb), 1),
+        }
+    except Exception:
+        pass
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
 
@@ -1361,6 +2026,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/forever (GET — canon facts log)",
                     "/forever-portrait (POST — promote image URL to forever canon)",
                     "/reset (POST or GET ?level=scene|story|world|all)",
+                    "/system-metrics (GET — GPU/RAM/CPU/storage snapshot, cached 4s)",
+                    "/activity (GET/POST — current extension activity string + SSE broadcast)",
                 ],
             })
             return
@@ -1458,6 +2125,28 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, result or {})
             return
 
+        if path == "/scene-image":
+            # NOT consume-once — returns latest for reconnect hydration.
+            self._send_json(200, _latest_scene_image or {})
+            return
+
+        if path == "/api/music/generate":
+            # Proxy music generation request to flask-music service (GET returns 405)
+            self._send_json(405, {"error": "POST only"})
+            return
+
+        if path == "/system-metrics":
+            global _metrics_cache, _metrics_cache_time
+            if time.time() - _metrics_cache_time > 4:
+                _metrics_cache = _sample_system_metrics()
+                _metrics_cache_time = time.time()
+            self._send_json(200, _metrics_cache)
+            return
+
+        if path == "/activity":
+            self._send_json(200, {"text": _current_activity})
+            return
+
         if path == "/forever":
             self._send_json(200, {"entries": _load_forever_log()})
             return
@@ -1529,7 +2218,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 intent = _sorting_hat(text)
 
-                # META intents are sidecar-only — not relayed to SillyTavern.
+                # META intents are primarily sidecar-only, but PLAYER_NAME / PLAYER_ALIAS
+                # can relay to SillyTavern so the narrator can acknowledge the declaration.
                 if intent.startswith("META:"):
                     sub = intent.split(":", 1)[1]
                     if sub.startswith("PLAYER_"):
@@ -1537,6 +2227,39 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         result = _handle_meta_command(text, sub)
                     self._send_json(200, result)
+                    # Trigger narrator generation for cases that need a response:
+                    #   relay=True  → player turn already stored; same-person name confirm etc.
+                    #   PLAYER_SWITCH / PLAYER_RESTORE → new player; narrator should react
+                    if result.get("relay"):
+                        # Player turn was already stored inside _handle_player_identity relay path
+                        wrapped = _wrap_player_text("SAY", text)
+                        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        turn = {
+                            "turn_id": f"player-{uuid.uuid4().hex[:8]}",
+                            "is_player": True,
+                            "raw_text": wrapped,
+                            "parsed_blocks": [{"text": wrapped, "channel": "say", "isPlayer": True}],
+                            "received_at": now,
+                        }
+                        _store_narrator_turn(turn)
+                        _sse_broadcast("turn", turn)
+                        threading.Thread(target=_generate_narrator_turn,
+                                         daemon=True, name="narrator").start()
+                    elif result.get("meta") in ("PLAYER_SWITCH", "PLAYER_RESTORE"):
+                        # Store player's declaration so narrator has context, then generate
+                        wrapped = _wrap_player_text("SAY", text)
+                        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        turn = {
+                            "turn_id": f"player-{uuid.uuid4().hex[:8]}",
+                            "is_player": True,
+                            "raw_text": wrapped,
+                            "parsed_blocks": [{"text": wrapped, "channel": "say", "isPlayer": True}],
+                            "received_at": now,
+                        }
+                        _store_narrator_turn(turn)
+                        _sse_broadcast("turn", turn)
+                        threading.Thread(target=_generate_narrator_turn,
+                                         daemon=True, name="narrator").start()
                     return
 
                 wrapped = _wrap_player_text(intent, text)
@@ -1550,7 +2273,9 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 _store_narrator_turn(turn)
                 _sse_broadcast("turn", turn)
-                _pending_player_input = {"text": wrapped, "intent": intent}
+                # Direct Ollama generation — no longer relies on ST extension relay
+                threading.Thread(target=_generate_narrator_turn,
+                                 daemon=True, name="narrator").start()
                 self._send_json(200, {"ok": True, "intent": intent, "wrapped": wrapped})
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
@@ -1570,6 +2295,64 @@ class Handler(BaseHTTPRequestHandler):
             level = level if level in ("exchange", "scene", "story", "world", "all") else "scene"
             result = _handle_meta_command(f"reset the {level}", "RESET")
             self._send_json(200, result)
+            return
+
+        if path == "/scene-image":
+            global _latest_scene_image
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+                img = data.get("image", "").strip()
+                kind = data.get("kind", "location")
+                if img:
+                    _latest_scene_image = {"image": img, "kind": kind}
+                    _sse_broadcast("scene_image", {"image": img, "kind": kind})
+                    self._send_json(200, {"ok": True})
+                else:
+                    self._send_json(400, {"ok": False, "error": "image required"})
+            except Exception as e:
+                self._send_json(400, {"ok": False, "error": str(e)})
+            return
+
+        if path == "/api/music/generate":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                req_data = json.loads(raw.decode("utf-8")) if raw else {}
+                prompt = req_data.get("prompt", "calm ambient sci-fi")
+                duration = min(int(req_data.get("duration", 30)), 60)
+                payload = json.dumps({"prompt": prompt, "duration": duration}).encode("utf-8")
+                code, resp, _ = _http("POST", f"{FLASK_MUSIC_URL}/api/generate",
+                                      body=payload, timeout=120.0)
+                self._send_json(code, json.loads(resp) if resp else {})
+            except Exception as e:
+                self._send_json(503, {"error": str(e)})
+            return
+
+        if path == "/activity":
+            global _current_activity
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                data = {}
+            _current_activity = data.get("text", "")
+            _sse_broadcast("activity", {"text": _current_activity})
+            self._send_json(200, {"ok": True})
+            return
+
+        if path == "/sense-enrichment":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                data = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                data = {}
+            # Broadcast immediately — clients accumulate sense lines in the feed
+            _sse_broadcast("sense", data)
+            self._send_json(200, {"ok": True})
             return
 
         if path == "/forever-portrait":
@@ -1612,6 +2395,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    _load_fortress_texts()
+    _restore_narrator_turns()
     _replay_world_log()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)

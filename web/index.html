@@ -26,6 +26,9 @@
   --c-player:#64b5f6;
 }
 
+html {
+  zoom: 1.2; /* native 120% — matches the legible zoom users prefer */
+}
 html, body {
   height: 100%;
   background: var(--bg);
@@ -36,28 +39,119 @@ html, body {
   overflow: hidden;
 }
 
+/* scene-bg removed — gallery panel shows scene images; full-bleed blur is no longer needed */
+
 /* ── Layout ── */
 #app {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  background: transparent;
 }
 
-/* Top bar: connection state only */
+/* ── Topbar — Star Trek console lights ── */
 #topbar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 4px 16px;
+  justify-content: space-between;
+  padding: 0 10px;
+  height: 40px;
+  gap: 8px;
   border-bottom: 1px solid var(--border);
-  font-size: 10px;
-  color: var(--dim);
 }
-#topbar #conn-status { font-size: 10px; }
-#topbar #conn-status.ok     { color: #6fa86a; }
-#topbar #conn-status.err    { color: #c46a5a; }
-#topbar #conn-status.wait   { color: #d6a85c; }
+
+.light-cluster { display: flex; gap: 7px; align-items: center; }
+
+.light-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: default;
+  position: relative;
+  user-select: none;
+}
+.light-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.07);
+  transition: background 0.5s, box-shadow 0.5s, opacity 0.5s;
+}
+.light-label {
+  font-size: 6.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.15);
+  transition: color 0.5s;
+}
+
+/* States: class on .light-wrap */
+/* Dormant (no state class): faintly visible so the bar reads as populated */
+.light-wrap:not(.idle):not(.active):not(.busy):not(.off) .light-dot {
+  background: var(--lc, rgba(255,255,255,0.18));
+  opacity: 0.25;
+}
+.light-wrap:not(.idle):not(.active):not(.busy):not(.off) .light-label {
+  color: rgba(255,255,255,0.3);
+}
+.light-wrap.idle   .light-dot  { background: var(--lc); opacity: 0.4;  box-shadow: 0 0 5px 1px var(--lc); }
+.light-wrap.active .light-dot  { background: var(--lc); opacity: 0.85; box-shadow: 0 0 8px 2px var(--lc); }
+.light-wrap.busy   .light-dot  {
+  background: var(--lc); opacity: 1; box-shadow: 0 0 12px 3px var(--lc);
+  animation: light-pulse 0.75s ease-in-out infinite;
+}
+.light-wrap.idle   .light-label,
+.light-wrap.active .light-label,
+.light-wrap.busy   .light-label { color: var(--lc); opacity: 0.75; }
+.light-wrap.off { opacity: 0.22; }
+
+@keyframes light-pulse {
+  0%,100% { box-shadow: 0 0 7px 2px var(--lc);  opacity: 0.8; }
+  50%      { box-shadow: 0 0 16px 5px var(--lc); opacity: 1.0; }
+}
+
+/* Per-light brand colors */
+#light-story    { --lc: #4488ff; }
+#light-narrator { --lc: #44cccc; }
+
+/* Turn counter badge next to narrator light */
+.light-turn-count {
+  font-size: 7px;
+  letter-spacing: 0.3px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(68,204,204,0.55);
+  min-width: 18px;
+  text-align: center;
+  padding: 0 2px;
+  transition: color 0.4s;
+  align-self: center;
+  margin-left: -4px;
+}
+#light-image    { --lc: #cc44cc; }
+#light-tts      { --lc: #ff8844; }
+#light-stt      { --lc: #44cc88; }
+#light-music    { --lc: #8844ff; }
+#light-gpu      { --lc: #ff4444; }
+#light-vram     { --lc: #ff7744; }
+#light-cpu      { --lc: #ffcc44; }
+#light-ram      { --lc: #44bbcc; }
+#light-conn     { --lc: #6fa86a; }
+
+#activity-label {
+  flex: 1;
+  text-align: center;
+  font-size: 9px;
+  color: var(--dim);
+  font-style: italic;
+  letter-spacing: 0.3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
 /* Thinking indicator */
 .entry.thinking .entry-text {
@@ -71,6 +165,13 @@ html, body {
 }
 .entry.thinking { animation: thinking-pulse 1.2s ease-in-out infinite; }
 
+/* ── Main area: feed + gallery side by side ── */
+#main-area {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
 /* Narrative feed */
 #feed {
   flex: 1;
@@ -81,6 +182,7 @@ html, body {
   flex-direction: column;
   gap: 6px;
   scrollbar-width: none;
+  background: rgba(9, 9, 14, 0.82);
 }
 #feed::-webkit-scrollbar { display: none; }
 
@@ -91,17 +193,183 @@ html, body {
   text-align: center;
 }
 
+/* ── Gallery panel ── */
+#gallery-panel {
+  width: 380px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: rgba(9, 9, 14, 0.90);
+  overflow: hidden;
+}
+
+#gallery-current {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #06060a;
+  min-height: 0;
+}
+
+#gallery-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: opacity 0.4s ease;
+}
+
+#gallery-status {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 9px;
+  color: rgba(255,255,255,0.5);
+  font-style: italic;
+  letter-spacing: 0.4px;
+  pointer-events: none;
+}
+
+/* ── NPC presence strip ── */
+#npc-presence {
+  display: none;
+  flex-direction: row;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: rgba(6, 6, 10, 0.6);
+  flex-shrink: 0;
+  min-height: 72px;
+  align-items: center;
+}
+#npc-presence::-webkit-scrollbar { display: none; }
+
+.npc-avatar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+  flex-shrink: 0;
+  position: relative;
+}
+.npc-avatar-img {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.12);
+  opacity: 0.88;
+  transition: opacity 0.2s;
+}
+.npc-avatar-wrap:hover .npc-avatar-img { opacity: 1; }
+/* Initial-letter fallback when no portrait yet */
+.npc-avatar-wrap.no-portrait::before {
+  content: attr(data-initial);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 18px;
+  color: var(--dim);
+}
+.npc-avatar-label {
+  font-size: 8px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--dim);
+  max-width: 50px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Sense enrichment lines — aligned with .entry-text column ── */
+.sense-line {
+  /* match indent: avatar(28px) + gap(8px) + speaker(60px) + gap(8px) = 104px */
+  padding: 1px 14px 1px 104px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  font-style: italic;
+}
+.sense-tag {
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-right: 7px;
+  color: rgba(255,255,255,0.3);  /* fallback, overridden per channel */
+}
+/* Per-channel tag colours */
+.sense-line[data-channel="sight"]       .sense-tag { color: var(--c-sight); }
+.sense-line[data-channel="sound"]       .sense-tag { color: var(--c-sound); }
+.sense-line[data-channel="smell"]       .sense-tag { color: var(--c-smell); }
+.sense-line[data-channel="touch"]       .sense-tag { color: var(--c-touch); }
+.sense-line[data-channel="environment"] .sense-tag { color: var(--c-env); }
+.sense-line[data-channel="mood"]        .sense-tag { color: #8844ff; }
+.sense-body { color: rgba(205, 218, 230, 0.68); }
+
+/* ── Gallery thumbnails ── */
+#gallery-thumbs {
+  height: 72px;
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+  scrollbar-width: none;
+}
+#gallery-thumbs::-webkit-scrollbar { display: none; }
+
+.gallery-thumb {
+  height: 64px;
+  width: 64px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.2s;
+  border: 1px solid transparent;
+}
+.gallery-thumb:hover { opacity: 1; }
+.gallery-thumb.active { opacity: 1; border-color: rgba(255,255,255,0.3); }
+
 /* ── Entry rows ── */
 .entry {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: baseline;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.entry-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  opacity: 0.72;
+  align-self: flex-start;
+  margin-top: 1px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.entry-avatar.hidden { visibility: hidden; }
 .entry-speaker {
   flex-shrink: 0;
-  width: 68px;
+  width: 60px;
   text-align: right;
   font-size: 10px;
   letter-spacing: 0.5px;
@@ -123,10 +391,12 @@ html, body {
 .entry.sense-environment .entry-text { color: var(--c-env);   font-style: italic; }
 .entry.is-player  .entry-text { color: var(--c-player); font-style: normal; }
 
+/* NPC character dialogue — distinct speaker colour, slightly indented feel */
+.entry.character-line .entry-speaker { color: rgba(255, 200, 100, 0.85); }
+.entry.character-line .entry-text    { color: rgba(255, 220, 140, 0.80); font-style: italic; }
+
 /* arrival animation */
-.arriving {
-  animation: arrive 0.22s ease-out both;
-}
+.arriving { animation: arrive 0.22s ease-out both; }
 @keyframes arrive {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
@@ -157,7 +427,6 @@ html, body {
 }
 #player-input::placeholder { color: var(--dim); }
 #player-input:focus { border-color: rgba(255,255,255,0.18); }
-/* auto-send countdown hint */
 #input-hint {
   flex-shrink: 0;
   font-size: 10px;
@@ -171,67 +440,210 @@ html, body {
 }
 #input-hint.urgent { color: rgba(196,106,90,0.8); }
 
+/* ── Mic / Mute buttons ── */
+#mic-btn, #mute-btn {
+  flex-shrink: 0;
+  width: 44px;
+  align-self: stretch;   /* fills the full height of #bottombar */
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--dim);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+#mic-btn:hover:not(:disabled),
+#mute-btn:hover { color: var(--ink); border-color: rgba(255,255,255,0.18); }
+#mic-btn.recording { color: #e54040; border-color: #e54040; animation: mic-pulse 1.2s ease-in-out infinite; }
+#mic-btn.processing { color: var(--dim); border-color: var(--border); cursor: wait; opacity: 0.55; }
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(229,64,64,0.55); }
+  50%       { box-shadow: 0 0 0 8px rgba(229,64,64,0); }
+}
+#mute-btn.muted { color: #e54040; border-color: rgba(229,64,64,0.5); background: rgba(229,64,64,0.08); }
+
+/* ── Mood text entries (shown when muted instead of generating music) ── */
+.mood-entry {
+  display: flex; gap: 12px; align-items: baseline;
+  opacity: 0.7;
+}
+.mood-label {
+  flex-shrink: 0; width: 68px; text-align: right;
+  font-size: 10px; letter-spacing: 0.5px; font-weight: bold;
+  color: #8844ff;
+}
+.mood-text { flex: 1; min-width: 0; font-size: 12px; color: rgba(160,130,220,0.80); font-style: italic; }
+
 /* ── META canon events ── */
 .meta-event {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  color: #a07820;
-  font-style: italic;
-  opacity: 0.82;
+  display: flex; gap: 12px; align-items: baseline;
+  color: #a07820; font-style: italic; opacity: 0.82;
 }
 .meta-label {
-  flex-shrink: 0;
-  width: 68px;
-  text-align: right;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  font-weight: bold;
-  font-style: normal;
-  color: #b8960c;
+  flex-shrink: 0; width: 68px; text-align: right;
+  font-size: 10px; letter-spacing: 0.5px; font-weight: bold;
+  font-style: normal; color: #b8960c;
 }
 .meta-text { flex: 1; min-width: 0; font-size: 12px; }
 .meta-btn {
-  background: none;
-  border: 1px solid #b8960c;
-  color: #b8960c;
-  border-radius: 3px;
-  padding: 1px 6px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  margin: 0 2px;
+  background: none; border: 1px solid #b8960c; color: #b8960c;
+  border-radius: 3px; padding: 1px 6px; cursor: pointer;
+  font: inherit; font-size: 11px; margin: 0 2px;
 }
 .meta-btn:hover { background: rgba(184,150,12,0.15); }
 .meta-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* CSS-only tooltips via data-tip */
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a24;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--ink);
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 200;
+  pointer-events: none;
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+}
 </style>
 </head>
 <body>
 <div id="app">
+
+  <!-- ── Topbar: console lights ── -->
   <div id="topbar">
-    <span id="conn-status" class="wait">connecting…</span>
+    <div id="activity-label"></div>
+
+    <div class="light-cluster" id="all-lights">
+      <div class="light-wrap" id="light-story" data-tip="Ollama — language model">
+        <div class="light-dot"></div><span class="light-label">story</span></div>
+      <div class="light-wrap" id="light-image" data-tip="Stable Diffusion — scene images">
+        <div class="light-dot"></div><span class="light-label">image</span></div>
+      <div class="light-wrap off" id="light-tts"  data-tip="Kokoro — text to speech">
+        <div class="light-dot"></div><span class="light-label">tts</span></div>
+      <div class="light-wrap off" id="light-stt"  data-tip="Whisper — speech to text">
+        <div class="light-dot"></div><span class="light-label">stt</span></div>
+      <div class="light-wrap" id="light-music" data-tip="Music — MusicGen (mood-driven)">
+        <div class="light-dot"></div><span class="light-label">music</span></div>
+      <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
+        <div class="light-dot"></div><span class="light-label">gpu</span></div>
+      <div class="light-wrap" id="light-vram" data-tip="VRAM usage">
+        <div class="light-dot"></div><span class="light-label">vram</span></div>
+      <div class="light-wrap" id="light-cpu"  data-tip="CPU utilisation">
+        <div class="light-dot"></div><span class="light-label">cpu</span></div>
+      <div class="light-wrap" id="light-ram"  data-tip="System RAM">
+        <div class="light-dot"></div><span class="light-label">ram</span></div>
+      <div class="light-wrap" id="light-conn" data-tip="SSE connection">
+        <div class="light-dot"></div><span class="light-label">conn</span></div>
+      <div class="light-wrap" id="light-narrator" data-tip="The Fortress — Ollama conversation engine">
+        <div class="light-dot"></div><span class="light-label">fortress</span></div>
+      <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
+    </div>
   </div>
 
-  <div id="feed">
-    <div id="empty-msg">Waiting for The Fortress…</div>
+  <!-- ── Main area: narrative feed + image gallery ── -->
+  <div id="main-area">
+    <div id="feed">
+      <div id="empty-msg">Waiting for The Fortress…</div>
+    </div>
+
+    <div id="gallery-panel">
+      <div id="gallery-current">
+        <img id="gallery-img" src="/game/assets/fortress-interior.jpg" alt="Current scene">
+        <div id="gallery-status"></div>
+      </div>
+      <div id="npc-presence"></div>
+      <div id="gallery-thumbs"></div>
+    </div>
   </div>
 
+  <!-- ── Input bar ── -->
   <div id="bottombar">
+    <button id="mute-btn" title="Mute audio — moods and sounds shown as text instead" aria-label="Mute audio">
+      <!-- Speaker icon — JS swaps to muted variant when active -->
+      <svg id="mute-icon-on" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+      </svg>
+      <svg id="mute-icon-off" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+        <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
+      </svg>
+    </button>
     <textarea id="player-input" rows="2" placeholder="Speak, act, or perceive…"></textarea>
+    <button id="mic-btn" title="Voice input (STT)" aria-label="Voice input">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3"/>
+        <path d="M5 10a7 7 0 0 0 14 0"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+        <line x1="9"  y1="21" x2="15" y2="21"/>
+      </svg>
+    </button>
     <span id="input-hint"></span>
   </div>
 </div>
 
 <script>
-const feed      = document.getElementById('feed');
-const emptyMsg  = document.getElementById('empty-msg');
-const connEl    = document.getElementById('conn-status');
+const feed     = document.getElementById('feed');
+const emptyMsg = document.getElementById('empty-msg');
 let _lastLocation = '';
 let _thinkTimer   = null;
-const _pendingPlayerTexts = new Set(); // optimistic-render dedup for SSE echo
+const _pendingPlayerTexts = new Set();
 
-// Pre-wrap text locally (mirrors sidecar _wrap_player_text logic) so the
-// optimistic render shows the same text the SSE echo will carry.
+// Speaker portrait map — defaults from static assets, updated by SSE meta portrait events.
+// '__player__' is the player's avatar (SVG inline, no file needed).
+const _PLAYER_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='8' r='4' fill='%2364b5f6' opacity='0.75'/%3E%3Cpath d='M4 21v-1a8 8 0 0 1 16 0v1' fill='%2364b5f6' opacity='0.5'/%3E%3C/svg%3E";
+
+const _portraitMap = {
+  'Narrator':     '/game/assets/the-remnant-portrait.png',
+  'The Fortress': '/game/assets/fortress-interior.jpg',
+  'The Remnant':  '/game/assets/the-remnant-portrait.png',
+  '__player__':   _PLAYER_AVATAR,
+};
+
+// Current player name — set by player_alias / player_switch meta events.
+let _playerName = 'You';
+
+// Track last rendered speaker to suppress repeated avatar/label.
+let _lastSpeaker = '';
+
+// NPC presence map — name → {name, description, portraitUrl}
+// Populated by INTRODUCE markers; cleared on location change.
+const _presentNPCs = new Map();
+
+// ── Console light helpers ──
+function _setLight(id, state, tipSuffix) {
+  const el = document.getElementById('light-' + id);
+  if (!el) return;
+  el.className = 'light-wrap ' + state;
+  if (tipSuffix !== undefined) {
+    const base = (el.dataset.tip || '').split(' ·')[0].trim();
+    el.dataset.tip = base + (tipSuffix ? ' · ' + tipSuffix : '');
+  }
+}
+
+function _setResourceLight(id, pct, tipSuffix) {
+  if (pct == null) return;
+  const state = pct < 5 ? 'idle' : pct >= 85 ? 'busy' : 'active';
+  _setLight(id, state, tipSuffix);
+}
+
+// Pre-wrap text locally so optimistic render matches SSE echo.
 function _localWrap(text) {
   const t = text.trim();
   if (t.startsWith('"'))  return { channel: 'say', wrapped: t.endsWith('"') ? t : t + '"' };
@@ -246,10 +658,62 @@ function esc(s) {
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 }
 
+// ── NPC presence ──
+const _introduceRe = /\[INTRODUCE\(([^)]+)\)\s*:\s*"?([^"\]\n]+)"?\]/gi;
+
+function _renderNpcPresence() {
+  const el = document.getElementById('npc-presence');
+  if (!el) return;
+  el.innerHTML = '';
+  if (_presentNPCs.size === 0) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  for (const npc of _presentNPCs.values()) {
+    const wrap = document.createElement('div');
+    wrap.className = 'npc-avatar-wrap';
+    wrap.dataset.tip = npc.description || npc.name;
+    if (npc.portraitUrl) {
+      const img = document.createElement('img');
+      img.className = 'npc-avatar-img';
+      img.src = npc.portraitUrl;
+      img.alt = npc.name;
+      wrap.appendChild(img);
+    } else {
+      wrap.classList.add('no-portrait');
+      wrap.dataset.initial = (npc.name[0] || '?').toUpperCase();
+    }
+    const label = document.createElement('span');
+    label.className = 'npc-avatar-label';
+    label.textContent = npc.name.split(' ')[0];
+    wrap.appendChild(label);
+    el.appendChild(wrap);
+  }
+}
+
+function _extractIntroductions(rawText) {
+  if (!rawText) return;
+  _introduceRe.lastIndex = 0;
+  let m;
+  let changed = false;
+  while ((m = _introduceRe.exec(rawText)) !== null) {
+    const name = m[1].trim();
+    const desc = m[2].trim();
+    if (!_presentNPCs.has(name)) {
+      _presentNPCs.set(name, {
+        name,
+        description: desc,
+        portraitUrl: _portraitMap[name] || '',
+      });
+      changed = true;
+    }
+  }
+  if (changed) _renderNpcPresence();
+}
+
 function _removeThinking() {
   const el = document.getElementById('thinking-indicator');
   if (el) el.remove();
   if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
+  _setLight('narrator', 'idle');
 }
 
 function renderTurn(turn, instant) {
@@ -257,14 +721,16 @@ function renderTurn(turn, instant) {
   let added = 0;
   const isNarratorTurn = blocks.some(b => !b.isPlayer);
 
-  // Remove thinking indicator on first narrator turn
   if (isNarratorTurn && !instant) _removeThinking();
 
-  // Location change → feed entry (before blocks)
   if (isNarratorTurn) {
     const loc = (turn.context || {}).location || '';
     if (loc && loc !== _lastLocation) {
       _lastLocation = loc;
+      _lastSpeaker = ''; // reset so first speaker after location break shows avatar
+      // Location changed — clear NPCs (they haven't followed unless re-introduced)
+      _presentNPCs.clear();
+      _renderNpcPresence();
       const locEl = document.createElement('div');
       locEl.className = 'meta-event' + (instant ? '' : ' arriving');
       locEl.innerHTML =
@@ -273,18 +739,18 @@ function renderTurn(turn, instant) {
       feed.appendChild(locEl);
       added++;
     }
+    // Extract NPC introductions from raw text
+    _extractIntroductions(turn.raw_text || '');
   }
 
   for (const b of blocks) {
     const text = (b.text || '').trim();
     if (!text) continue;
-    // Filter dangling/partial marker fragments (e.g. "[LORE(Galley): The")
     if (/^\[[A-Z_]/.test(text) && !b.isPlayer) continue;
 
     const div = document.createElement('div');
     div.className = 'entry';
 
-    // Channel / sense class
     if (b.senseType) {
       div.classList.add('sense-' + b.senseType.toLowerCase());
     } else if (b.channel) {
@@ -293,9 +759,18 @@ function renderTurn(turn, instant) {
     if (b.isPlayer) div.classList.add('is-player');
     if (!instant) div.classList.add('arriving');
 
-    const speaker = b.isPlayer ? 'You' : (turn.narrator_name || 'Narrator');
+    const isCharacter = b.channel === 'character';
+    if (isCharacter) div.classList.add('character-line');
+    const speaker = b.isPlayer
+      ? (_playerName || 'You')
+      : (isCharacter ? (b.speaker || 'NPC') : (turn.narrator_name || 'The Fortress'));
+    const avatarUrl = b.isPlayer ? (_portraitMap['__player__'] || _PLAYER_AVATAR) : (_portraitMap[speaker] || '');
+    const speakerChanged = speaker !== _lastSpeaker;
+    _lastSpeaker = speaker;
     div.innerHTML =
-      '<span class="entry-speaker">' + esc(speaker) + '</span>' +
+      '<img class="entry-avatar' + (!speakerChanged || !avatarUrl ? ' hidden' : '') + '" src="' +
+      (avatarUrl ? esc(avatarUrl) : '') + '" alt="">' +
+      '<span class="entry-speaker"' + (!speakerChanged ? ' style="visibility:hidden"' : '') + '>' + esc(speaker) + '</span>' +
       '<span class="entry-text">' + esc(text) + '</span>';
 
     feed.appendChild(div);
@@ -313,41 +788,34 @@ function renderMetaEvent(data) {
   el.className = 'meta-event';
   if (!data.type) return;
 
-  // Special path: clarify prompt renders interactive buttons
-  if (data.type === 'player_clarify') {
-    el.innerHTML =
-      '<span class="meta-label">WHO ARE YOU?</span>' +
-      '<span class="meta-text">Is <em>' + esc(data.name || '?') + '</em> ' +
-      '<button class="meta-btn" data-choice="alias">another name for you</button>' +
-      ' or ' +
-      '<button class="meta-btn" data-choice="switch">a new story</button>?' +
-      '</span>';
-    el.querySelectorAll('.meta-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const clarText = btn.dataset.choice === 'alias'
-          ? "that's me, I am also known as " + data.name
-          : "that's not me, my name is " + data.name;
-        fetch('/player-input', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({text: clarText}),
-        });
-        el.querySelectorAll('.meta-btn').forEach(b => b.disabled = true);
-      });
-    });
-    feed.appendChild(el);
-    emptyMsg.style.display = 'none';
-    feed.scrollTop = feed.scrollHeight;
-    return;
+  if (data.type === 'portrait' && data.name && data.url) {
+    _portraitMap[data.name] = data.url;
+    if (_presentNPCs.has(data.name)) {
+      _presentNPCs.get(data.name).portraitUrl = data.url;
+      _renderNpcPresence();
+    }
   }
 
-  const label = data.type === 'reset'          ? 'RESET:' + (data.level || 'scene').toUpperCase()
-              : data.type === 'portrait'        ? 'PORTRAIT'
-              : data.type === 'portrait_saved'  ? 'FOREVER'
-              : data.type === 'player_alias'    ? 'ALIAS'
-              : data.type === 'player_switch'   ? 'NEW PLAYER'
-              : data.type === 'player_restore'  ? 'RESTORED'
-              :                                   'FOREVER';
+  if ((data.type === 'player_alias' || data.type === 'player_switch' || data.type === 'player_restore') && data.name) {
+    _playerName = data.name;
+    _lastSpeaker = ''; // force avatar to show on next player turn
+  }
+
+  if (data.type === 'player_portrait' && data.url) {
+    // Sherri finished outfitting — replace SVG placeholder with real SD portrait
+    _portraitMap['__player__'] = data.url;
+    _lastSpeaker = ''; // force re-render with new avatar on next player turn
+  }
+
+  const label = data.type === 'reset'           ? 'RESET:' + (data.level || 'scene').toUpperCase()
+              : data.type === 'portrait'         ? 'PORTRAIT'
+              : data.type === 'portrait_saved'   ? 'FOREVER'
+              : data.type === 'player_alias'     ? 'ALIAS'
+              : data.type === 'player_switch'    ? 'NEW PLAYER'
+              : data.type === 'player_restore'   ? 'RESTORED'
+              : data.type === 'player_dressed'   ? 'DRESSED'
+              : data.type === 'player_portrait'  ? 'AVATAR'
+              :                                    'FOREVER';
   const text = data.name || data.text || (data.url ? data.url.split('/').pop() : '');
   el.innerHTML =
     '<span class="meta-label">' + esc(label) + '</span>' +
@@ -357,14 +825,123 @@ function renderMetaEvent(data) {
   feed.scrollTop = feed.scrollHeight;
 }
 
+// ── Scene background removed — gallery panel handles scene images ──
+
+async function loadLatestSceneImage() {
+  try {
+    const res = await fetch('/scene-image');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.image) {
+      _setGalleryImage(data.image, data.kind, data.description);
+    }
+  } catch (_) {}
+}
+
+// ── Gallery ──
+const galleryImg    = document.getElementById('gallery-img');
+const galleryStatus = document.getElementById('gallery-status');
+const galleryThumbs = document.getElementById('gallery-thumbs');
+const _galleryHistory = [];
+
+function _setGalleryImage(dataUrl, kind, description) {
+  galleryImg.style.opacity = '0';
+  setTimeout(() => {
+    galleryImg.src = dataUrl;
+    galleryImg.style.opacity = '1';
+    if (description) galleryImg.title = description;
+  }, 200);
+  _galleryHistory.unshift({dataUrl, ts: Date.now(),
+                            kind: kind || 'location',
+                            description: description || ''});
+  if (_galleryHistory.length > 20) _galleryHistory.pop();
+  _renderGalleryThumbs();
+}
+
+function _renderGalleryThumbs() {
+  galleryThumbs.innerHTML = '';
+  _galleryHistory.forEach((item, i) => {
+    const img = document.createElement('img');
+    img.src = item.dataUrl;
+    img.className = 'gallery-thumb' + (i === 0 ? ' active' : '');
+    if (item.description) img.title = item.description;
+    img.addEventListener('click', () => {
+      galleryImg.src = item.dataUrl;
+      if (item.description) galleryImg.title = item.description;
+      galleryThumbs.querySelectorAll('.gallery-thumb').forEach(t => t.classList.remove('active'));
+      img.classList.add('active');
+    });
+    galleryThumbs.appendChild(img);
+  });
+}
+
+// ── Topbar polling ──
+async function _pollServiceStatus() {
+  try {
+    const res = await fetch('/ai.json');
+    if (!res.ok) return;
+    const data = await res.json();
+    const svcs = data.services || {};
+    const ollamaModel = (data.environment || {}).OLLAMA_MODEL || 'llm';
+
+    const _svcState = (svc) => {
+      const probe = (svcs[svc] || {}).probe || {};
+      const sf    = (svcs[svc] || {}).status_file || {};
+      const phase = sf.phase || (probe.reachable ? 'ready' : 'down');
+      return { phase, probe, reachable: probe.reachable, lat: probe.latency_ms };
+    };
+
+    const ollama = _svcState('ollama');
+    const st     = _svcState('sillytavern');
+    const sd     = _svcState('flask-sd');
+
+    _setLight('story',    ollama.reachable ? 'idle' : 'off',
+              `${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
+    // Narrator light = Ollama reachable (diag owns the conversation loop now, not ST)
+    _setLight('narrator', ollama.reachable ? 'idle' : 'off',
+              `narrator · ${ollama.reachable ? 'ready' : 'down'}`);
+    _setLight('image',    sd.reachable ? 'idle' : 'off',
+              `SD · ${sd.phase}` + (sd.lat ? ` · ${Math.round(sd.lat)}ms` : ''));
+    ['tts','stt'].forEach(id => _setLight(id, svcs[id] ? 'idle' : 'off'));
+    const music = _svcState('flask-music');
+    if (!_muted) _setLight('music', music.reachable ? 'idle' : 'off',
+              `MusicGen · ${music.reachable ? 'ready' : 'down'}` + (music.lat ? ` · ${Math.round(music.lat)}ms` : ''));
+  } catch(_) {}
+}
+
+async function _pollSystemMetrics() {
+  try {
+    const res = await fetch('/system-metrics');
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d.gpu)  _setResourceLight('gpu',  d.gpu.util_pct,
+                  `${d.gpu.name} · ${d.gpu.util_pct}%`);
+    if (d.gpu)  _setResourceLight('vram', Math.round(d.gpu.vram_used_mb * 100 / d.gpu.vram_total_mb),
+                  `${(d.gpu.vram_used_mb/1024).toFixed(1)}G / ${Math.round(d.gpu.vram_total_mb/1024)}G`);
+    if (d.cpu)  _setResourceLight('cpu',  d.cpu.pct, `${d.cpu.pct}%`);
+    if (d.ram)  _setResourceLight('ram',  d.ram.pct, `${(d.ram.used_mb/1024).toFixed(1)}G`);
+  } catch(_) {}
+}
+
 // ── SSE connection ──
 function connect() {
   const es = new EventSource('/game/events');
 
+  // Narrator turn counter — counts non-player turns received this session.
+  let _narratorTurnCount = 0;
+  function _updateNarratorCount() {
+    const el = document.getElementById('narrator-turn-count');
+    if (el) el.textContent = `T${_narratorTurnCount}`;
+  }
+
   es.addEventListener('history', e => {
     try {
       const turns = JSON.parse(e.data);
-      for (const t of turns) renderTurn(t, true);
+      for (const t of turns) {
+        renderTurn(t, true);
+        if (!(t.parsed_blocks || []).some(b => b.isPlayer)) _narratorTurnCount++;
+      }
+      _updateNarratorCount();
       feed.scrollTop = feed.scrollHeight;
     } catch (_) {}
   });
@@ -372,16 +949,18 @@ function connect() {
   es.addEventListener('turn', e => {
     try {
       const turn = JSON.parse(e.data);
-      // Skip player turns we already rendered optimistically
       const isPlayerTurn = (turn.parsed_blocks || []).some(b => b.isPlayer);
       if (isPlayerTurn) {
         const rawText = (turn.raw_text || '').trim();
         for (const pending of _pendingPlayerTexts) {
           if (rawText === pending || rawText.includes(pending) || pending.includes(rawText)) {
             _pendingPlayerTexts.delete(pending);
-            return; // already shown
+            return;
           }
         }
+      } else {
+        _narratorTurnCount++;
+        _updateNarratorCount();
       }
       renderTurn(turn, false);
     } catch (_) {}
@@ -391,32 +970,197 @@ function connect() {
     try { renderMetaEvent(JSON.parse(e.data)); } catch (_) {}
   });
 
+  es.addEventListener('scene_image', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.image) {
+        _setGalleryImage(data.image, data.kind, data.description);
+        galleryStatus.textContent = '';
+      }
+    } catch (_) {}
+  });
+
+  es.addEventListener('scene_caption', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.caption && _galleryHistory.length) {
+        _galleryHistory[0].description = data.caption;
+        const thumbs = galleryThumbs.querySelectorAll('.gallery-thumb');
+        if (thumbs.length) thumbs[0].title = data.caption;
+        if (galleryImg.src === _galleryHistory[0].dataUrl) galleryImg.title = data.caption;
+      }
+    } catch (_) {}
+  });
+
+  es.addEventListener('activity', e => {
+    try {
+      const data = JSON.parse(e.data);
+      const text = data.text || '';
+      document.getElementById('activity-label').textContent = text;
+      const lc = text.toLowerCase();
+      if (lc.includes('image') || lc.includes('render') || lc.includes('scene')) {
+        _setLight('image', text ? 'busy' : 'idle');
+        galleryStatus.textContent = text || '';
+      } else if (lc.includes('thinking') || lc.includes('narrator') || lc.includes('continuing')) {
+        _setLight('narrator', text ? 'busy' : 'idle');
+      } else if (lc.includes('portrait') || lc.includes('sketch') || lc.includes('paint') || lc.includes('repaint')) {
+        _setLight('image', text ? 'busy' : 'idle');
+      }
+      if (!text) {
+        _setLight('image', 'idle');
+        _setLight('narrator', 'idle');
+        galleryStatus.textContent = '';
+      }
+    } catch (_) {}
+  });
+
+  es.addEventListener('sense', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (!data.channel || !data.text) return;
+      const div = document.createElement('div');
+      div.className = 'sense-line';
+      div.dataset.channel = data.channel.toLowerCase();
+      div.innerHTML = `<span class="sense-tag">[${data.channel.toUpperCase()}]</span> <span class="sense-body">${data.text}</span>`;
+      feed.appendChild(div);
+      feed.scrollTop = feed.scrollHeight;
+    } catch (_) {}
+  });
+
+  es.addEventListener('mood', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.text) _onMoodEvent(data.text);
+    } catch (_) {}
+  });
+
   es.onopen = () => {
-    connEl.textContent = 'live';
-    connEl.className = 'ok';
+    _setLight('conn', 'active');
+    loadLatestSceneImage();
+    _pollServiceStatus();
+    _pollSystemMetrics();
   };
 
   es.onerror = () => {
-    connEl.textContent = 'reconnecting…';
-    connEl.className = 'err';
+    _setLight('conn', 'busy');
     es.close();
-    // EventSource auto-reconnects; we close and reopen to reset the label
     setTimeout(connect, 3000);
   };
 }
 
+// ── Music engine (Web Audio API) ──
+let _audioCtx = null;
+let _musicSource = null;
+let _musicGain = null;
+
+function _ensureAudioCtx() {
+  if (!_audioCtx) _audioCtx = new AudioContext();
+  // Resume if suspended (browsers auto-suspend idle contexts)
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+
+async function _playMusicBuffer(audioBuffer) {
+  const ctx = _ensureAudioCtx();
+  const newGain = ctx.createGain();
+  newGain.gain.setValueAtTime(0, ctx.currentTime);
+  newGain.gain.linearRampToValueAtTime(0.55, ctx.currentTime + 4);
+  newGain.connect(ctx.destination);
+  const src = ctx.createBufferSource();
+  src.buffer = audioBuffer;
+  src.loop = true;
+  src.connect(newGain);
+  src.start();
+  // Fade out and stop old track
+  if (_musicGain) {
+    _musicGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 4);
+    const old = _musicSource;
+    setTimeout(() => { try { old.stop(); } catch (_) {} }, 5000);
+  }
+  _musicSource = src;
+  _musicGain = newGain;
+}
+
+// ── Mute state ──
+let _muted = false;
+
+function _setMute(on) {
+  _muted = on;
+  const btn = document.getElementById('mute-btn');
+  const iconOn  = document.getElementById('mute-icon-on');
+  const iconOff = document.getElementById('mute-icon-off');
+  if (_muted) {
+    btn.classList.add('muted');
+    if (iconOn)  iconOn.style.display  = 'none';
+    if (iconOff) iconOff.style.display = '';
+    // Stop any playing music
+    if (_musicGain && _audioCtx) {
+      _musicGain.gain.linearRampToValueAtTime(0, _audioCtx.currentTime + 1);
+      const old = _musicSource;
+      setTimeout(() => { try { old.stop(); } catch (_) {} }, 1500);
+      _musicSource = null; _musicGain = null;
+    }
+    _setLight('music', 'off');
+  } else {
+    btn.classList.remove('muted');
+    if (iconOn)  iconOn.style.display  = '';
+    if (iconOff) iconOff.style.display = 'none';
+    // Resume AudioContext on unmute — user gesture makes this safe
+    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+    _setLight('music', 'idle');
+  }
+}
+
+function _renderMoodAsText(moodText) {
+  const el = document.createElement('div');
+  el.className = 'mood-entry arriving';
+  el.innerHTML =
+    '<span class="mood-label">MOOD</span>' +
+    '<span class="mood-text">' + esc(moodText) + '</span>';
+  feed.appendChild(el);
+  emptyMsg.style.display = 'none';
+  feed.scrollTop = feed.scrollHeight;
+}
+
+async function _onMoodEvent(moodText) {
+  if (_muted) {
+    _renderMoodAsText(moodText);
+    return;
+  }
+  _setLight('music', 'busy');
+  try {
+    const res = await fetch('/api/music/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt: moodText, duration: 30}),
+    });
+    if (!res.ok) throw new Error(`music gen ${res.status}`);
+    const data = await res.json();
+    if (!data.audio) throw new Error('no audio in response');
+    const bytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+    const ctx = _ensureAudioCtx();
+    const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+    await _playMusicBuffer(audioBuffer);
+    _setLight('music', 'idle');
+  } catch (e) {
+    console.warn('[music]', e);
+    _setLight('music', 'off');
+  }
+}
+
+setInterval(_pollServiceStatus, 3000);
+setInterval(_pollSystemMetrics, 4000);
 connect();
 
-// ── Player input — no escape ──
-// Enter sends immediately. Inactivity for 30s auto-appends "…" and sends.
-const inputEl  = document.getElementById('player-input');
-const hintEl   = document.getElementById('input-hint');
+// ── Player input ──
+const inputEl = document.getElementById('player-input');
+const hintEl  = document.getElementById('input-hint');
 
 const AUTO_SEND_MS = 30000;
-let _autoTimer   = null;
-let _countdown   = 0;
-let _tickTimer   = null;
-let _sending     = false;
+let _autoTimer = null;
+let _countdown = 0;
+let _tickTimer = null;
+let _sending   = false;
 
 function _clearTimers() {
   clearTimeout(_autoTimer);
@@ -437,7 +1181,7 @@ function _startCountdown() {
     if (_countdown <= 10) hintEl.classList.add('urgent');
   }, 1000);
   _autoTimer = setTimeout(() => {
-    let text = inputEl.value.trim();
+    const text = inputEl.value.trim();
     if (text) sendInput(text + '…');
   }, AUTO_SEND_MS);
 }
@@ -450,17 +1194,17 @@ async function sendInput(overrideText) {
   _clearTimers();
   inputEl.value = '';
 
-  // ── Optimistic render — show player turn immediately, no server round-trip ──
   const { channel, wrapped } = _localWrap(text);
   const optimEl = document.createElement('div');
   optimEl.className = 'entry ' + channel + ' is-player arriving';
   optimEl.innerHTML =
+    '<img class="entry-avatar hidden" alt="">' +
     '<span class="entry-speaker">You</span>' +
     '<span class="entry-text">' + esc(wrapped) + '</span>';
   feed.appendChild(optimEl);
   emptyMsg.style.display = 'none';
   feed.scrollTop = feed.scrollHeight;
-  _pendingPlayerTexts.add(wrapped); // register for SSE echo dedup
+  _pendingPlayerTexts.add(wrapped);
 
   try {
     const res = await fetch('/player-input', {
@@ -471,11 +1215,9 @@ async function sendInput(overrideText) {
     const data = res.ok ? await res.json() : {};
 
     if (data.meta) {
-      // META intents: no SSE player turn — remove the optimistic render
       optimEl.remove();
       _pendingPlayerTexts.delete(wrapped);
     } else {
-      // Reconcile: if server wrapped differently, update text in-place (no flicker)
       if (data.wrapped && data.wrapped !== wrapped) {
         const ch = (data.intent || channel).toLowerCase();
         optimEl.className = 'entry ' + ch + ' is-player';
@@ -483,39 +1225,106 @@ async function sendInput(overrideText) {
         _pendingPlayerTexts.delete(wrapped);
         _pendingPlayerTexts.add(data.wrapped);
       }
-      // Show thinking indicator
       _removeThinking();
       const thinkEl = document.createElement('div');
       thinkEl.id = 'thinking-indicator';
       thinkEl.className = 'entry say thinking arriving';
       thinkEl.innerHTML =
-        '<span class="entry-speaker">Narrator</span>' +
+        '<span class="entry-speaker">The Fortress</span>' +
         '<span class="entry-text">· · ·</span>';
       feed.appendChild(thinkEl);
       feed.scrollTop = feed.scrollHeight;
       _thinkTimer = setTimeout(_removeThinking, 90000);
+      _setLight('narrator', 'busy');  // narrator light pulses while thinking
     }
-  } catch (_) { /* optimistic render stays — player can see their message */ }
+  } catch (_) {}
   _sending = false;
   inputEl.focus();
 }
 
 inputEl.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendInput();
-    return;
-  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInput(); }
+});
+inputEl.addEventListener('input', () => {
+  if (inputEl.value.trim()) _startCountdown(); else _clearTimers();
 });
 
-// Restart countdown on every keystroke that leaves text in the box
-inputEl.addEventListener('input', () => {
-  if (inputEl.value.trim()) {
-    _startCountdown();
-  } else {
-    _clearTimers();
+// ── Voice input (STT) ──
+const micBtn = document.getElementById('mic-btn');
+let _recorder  = null;
+let _recChunks = [];
+let _micStream = null;
+
+function _sttMime() {
+  const candidates = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'];
+  return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch(_){return false;} }) || '';
+}
+
+function _micHint(msg, ms = 2800) {
+  hintEl.textContent = msg;
+  setTimeout(() => { if (hintEl.textContent === msg) hintEl.textContent = ''; }, ms);
+}
+
+async function _startRecording() {
+  try {
+    _micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    _micHint(err.name === 'NotFoundError' ? 'no mic found' : 'mic blocked');
+    return;
   }
+  _recChunks = [];
+  const mime = _sttMime();
+  _recorder = new MediaRecorder(_micStream, mime ? {mimeType: mime} : {});
+  _recorder.ondataavailable = e => { if (e.data.size > 0) _recChunks.push(e.data); };
+  _recorder.onstop = async () => {
+    _micStream.getTracks().forEach(t => t.stop());
+    _micStream = null;
+    micBtn.className = 'processing';
+    micBtn.disabled = true;
+    inputEl.placeholder = 'Transcribing…';
+    const mimeUsed = _recorder.mimeType || 'audio/webm';
+    const ext  = mimeUsed.includes('ogg') ? 'ogg' : mimeUsed.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(_recChunks, {type: mimeUsed});
+    const file = new File([blob], `rec.${ext}`, {type: mimeUsed});
+    const form = new FormData();
+    form.append('file', file);
+    form.append('model', 'whisper-1');
+    form.append('response_format', 'json');
+    try {
+      const res  = await fetch('/api/stt/v1/audio/transcriptions', {method:'POST', body:form});
+      if (!res.ok) throw new Error(`STT ${res.status}`);
+      const data = await res.json();
+      const text = (data.text || '').trim();
+      if (text) { inputEl.value = text; sendInput(); }
+      else _micHint('no speech detected');
+    } catch (err) {
+      console.error('[STT]', err);
+      _micHint('transcription failed');
+    }
+    micBtn.disabled = false;
+    micBtn.className = '';
+    micBtn.title = 'Voice input (STT)';
+    inputEl.placeholder = 'Speak, act, or perceive…';
+  };
+  _recorder.start();
+  micBtn.className = 'recording';
+  micBtn.title = 'Stop recording';
+  inputEl.placeholder = 'Recording…';
+}
+
+function _stopRecording() {
+  if (_recorder && _recorder.state === 'recording') {
+    _recorder.stop();
+    inputEl.placeholder = 'Speak, act, or perceive…';
+  }
+}
+
+micBtn.addEventListener('click', () => {
+  if (!_recorder || _recorder.state === 'inactive') _startRecording();
+  else if (_recorder.state === 'recording') _stopRecording();
 });
+
+document.getElementById('mute-btn').addEventListener('click', () => _setMute(!_muted));
 </script>
 </body>
 </html>

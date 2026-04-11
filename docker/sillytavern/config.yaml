@@ -7,7 +7,7 @@ listen: true
 protocol:
   ipv4: true
   ipv6: false
-port: 8000
+port: 1590
 
 # The stack is local-only and the only published port is on the host
 # loopback (or LAN if the user chooses). ST 1.17+ refuses to listen on

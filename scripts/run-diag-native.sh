@@ -33,10 +33,10 @@ NATIVE_STATUS_DIR="$REPO_ROOT/scripts/splash/status"
 mkdir -p "$NATIVE_STATUS_DIR"
 
 export STATUS_DIR="$NATIVE_STATUS_DIR"
-export FLASK_SD_URL="http://localhost:5000"
-export OLLAMA_URL="http://localhost:11434"
-export SILLYTAVERN_URL="http://localhost:8000"
-export LISTEN_PORT="1580"
+export FLASK_SD_URL="http://localhost:1592"
+export OLLAMA_URL="http://localhost:1593"
+export SILLYTAVERN_URL="http://localhost:1581"   # native ST stays on egress port 1581
+export LISTEN_PORT="1591"
 
 echo "[diag-native] status_dir     = $STATUS_DIR"
 echo "[diag-native] flask-sd       = $FLASK_SD_URL"

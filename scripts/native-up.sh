@@ -48,13 +48,18 @@ cd "$REPO_ROOT"
 # Config — override any of these with env vars if needed.
 # ---------------------------------------------------------------
 ST_DIR="${ST_DIR:-/c/Users/aaron/SillyTavern}"
-ST_PORT="${ST_PORT:-1581}"     # 1580=nginx 1581=ST 1582=docker-nginx — project-specific, away from all defaults
-DIAG_PORT="${DIAG_PORT:-8700}"
-FLASK_SD_PORT="${FLASK_SD_PORT:-5000}"
-OLLAMA_PORT="${OLLAMA_PORT:-11434}"
-TTS_PORT="${TTS_PORT:-8880}"  # Kokoro FastAPI TTS (optional — not yet started automatically)
-STT_PORT="${STT_PORT:-9000}"  # Whisper ASR (optional — not yet started automatically)
-NGINX_PORT="${NGINX_PORT:-1580}"
+ST_PORT="${ST_PORT:-1581}"          # egress: 1580=nginx 1581=ST 1582=docker-nginx
+DIAG_PORT="${DIAG_PORT:-1591}"      # internal 159x sequence (was 8700)
+FLASK_SD_PORT="${FLASK_SD_PORT:-1592}"  # internal 159x sequence (was 5000)
+OLLAMA_PORT="${OLLAMA_PORT:-1593}"  # internal 159x sequence (was 11434)
+TTS_PORT="${TTS_PORT:-1594}"        # internal 159x sequence (was 8880) — optional, not auto-started
+STT_PORT="${STT_PORT:-1595}"        # internal 159x sequence (was 9000) — optional, not auto-started
+FLASK_MUSIC_PORT="${FLASK_MUSIC_PORT:-1596}"  # MusicGen service — optional, not auto-started
+NGINX_PORT="${NGINX_PORT:-1580}"    # egress
+# Language model — qwen2.5:14b has 32k context, required for the 36k-char system prompt.
+# The diag's _ollama_model() will auto-prefer large-context models even without this set,
+# but pinning it here avoids surprises on systems with many models installed.
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:14b}"
 
 # Status dir — mirrors the remnant-status named volume in docker.
 NATIVE_STATUS_DIR="$REPO_ROOT/scripts/splash/status"
@@ -376,11 +381,27 @@ else
     STATUS_DIR="$NATIVE_STATUS_DIR" \
     FLASK_SD_URL="http://127.0.0.1:$FLASK_SD_PORT" \
     OLLAMA_URL="http://127.0.0.1:$OLLAMA_PORT" \
+    OLLAMA_MODEL="$OLLAMA_MODEL" \
+    FLASK_MUSIC_URL="http://127.0.0.1:$FLASK_MUSIC_PORT" \
     SILLYTAVERN_URL="http://127.0.0.1:$ST_PORT" \
     LISTEN_PORT="$DIAG_PORT" \
         nohup python docker/diag/app.py >"$DIAG_LOG" 2>&1 &
     echo $! >"$DIAG_PID_FILE"
     wait_for_port "$DIAG_PORT" "diag" 15
+fi
+
+# ── Flask-Music (MusicGen) ──────────────────────────────────────────────────
+FLASK_MUSIC_PID_FILE="$NATIVE_RUN_DIR/flask-music.pid"
+FLASK_MUSIC_LOG="$NATIVE_RUN_DIR/flask-music.log"
+if port_listening "$FLASK_MUSIC_PORT"; then
+    log "flask-music already running on :$FLASK_MUSIC_PORT — leaving alone"
+else
+    log "starting Flask-Music (MusicGen) on :$FLASK_MUSIC_PORT (log: $FLASK_MUSIC_LOG)"
+    LISTEN_PORT="$FLASK_MUSIC_PORT" \
+        nohup python "$(pwd)/docker/flask-music/app.py" >"$FLASK_MUSIC_LOG" 2>&1 &
+    echo $! >"$FLASK_MUSIC_PID_FILE"
+    # Don't wait_for_port — model lazy-loads on first request, health may be slow
+    log "  Flask-Music PID $(cat "$FLASK_MUSIC_PID_FILE") started"
 fi
 
 # ---------------------------------------------------------------
@@ -474,6 +495,7 @@ sed \
     -e "s|{{DIAG_UPSTREAM}}|127.0.0.1:${DIAG_PORT}|g" \
     -e "s|{{TTS_UPSTREAM}}|127.0.0.1:${TTS_PORT}|g" \
     -e "s|{{STT_UPSTREAM}}|127.0.0.1:${STT_PORT}|g" \
+    -e "s|{{FLASK_MUSIC_UPSTREAM}}|127.0.0.1:${FLASK_MUSIC_PORT}|g" \
     -e "s|{{SPLASH_ROOT}}|${SPLASH_ROOT}|g" \
     -e "s|{{DIAG_HTML_DIR}}|${DIAG_HTML_DIR}|g" \
     -e "s|{{GAME_HTML_DIR}}|${GAME_HTML_DIR}|g" \

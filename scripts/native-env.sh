@@ -41,7 +41,7 @@ export npm_config_registry=http://localhost:1580/npm/
 # then fetches from registry.ollama.ai directly; that's a non-
 # cacheable protocol and matches the bootstrap-ollama hybrid
 # exception on the docker side.
-export OLLAMA_HOST=127.0.0.1:11434
+export OLLAMA_HOST=127.0.0.1:1593
 
 echo "[native-env] routed hf_hub + pip + npm through http://localhost:1580"
 echo "[native-env]   HF_ENDPOINT          = $HF_ENDPOINT"

@@ -117,6 +117,7 @@ function initSettings() {
         extension_settings[EXTENSION_NAME] = {
             enabled: true,
             autoGenerate: true,
+            routeImagesToGame: true,   // route SD images to 3.0 UI background instead of ST DOM
             generateEvery: 1,
             images: [],
             imageHistory: [],
@@ -258,6 +259,10 @@ function initSettings() {
         // v2.6.0: default to hidden on fresh installs. Existing users who
         // explicitly toggled it retain their preference.
         extension_settings[EXTENSION_NAME].topBarHidden = true;
+    }
+    if (extension_settings[EXTENSION_NAME].routeImagesToGame === undefined) {
+        // Route SD images to the 3.0 game UI background instead of ST's DOM.
+        extension_settings[EXTENSION_NAME].routeImagesToGame = true;
     }
     // v2.3.2: persistent "where the player is now" memory, injected into the
     // LLM prompt at depth 1 so the narrator stops drifting back to rooms
@@ -1216,8 +1221,11 @@ function injectNpcContextIntoPrompt(description) {
 // in both positive and negative prompts. The garbled-text problem is the
 // single most common aesthetic failure, so we hit it hard here and also
 // append a "no text" reminder to every positive prompt.
-const DEFAULT_NEGATIVE_PROMPT = '(text:1.6), (letters:1.6), (words:1.6), (writing:1.6), (typography:1.6), (captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), (labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed';
+const DEFAULT_NEGATIVE_PROMPT = '(text:1.6), (letters:1.6), (words:1.6), (writing:1.6), (typography:1.6), (captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), (labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed, (genitals:1.8), (penis:1.8), (vagina:1.8), (explicit nudity:1.8), (exposed groin:1.7), (sexual:1.6)';
 const NO_TEXT_SUFFIX = ', (no text:1.4), (no writing:1.4), (no letters:1.4)';
+// v3.0 — Nudity coverage suffix: injected into scene prompts when nudity context is detected.
+// Guides SD to use natural poses, angles, and foreground elements to provide tasteful coverage.
+const NUDE_COVERAGE_SUFFIX = ', tastefully posed, back turned, camera angle covers intimate areas, crossed legs, hands covering, foreground object, shy composition, artful framing, modest';
 // v2.12.1 — Visual style lock. Prepended to every GENERATE_IMAGE scene prompt
 // so all generated images stay in the game's dark-fantasy register regardless
 // of what the Fortress emits in the marker description.
@@ -1504,6 +1512,83 @@ function updateLocationFromMessage(messageText) {
 }
 
 // Generate a scene image. Injects known-NPC portrait descriptions into the
+// ---------------------------------------------------------------------------
+// Sensory enrichment pipeline
+//
+// After a narrator turn, detects which sense channels ([SIGHT], [SOUND],
+// [SMELL], [TOUCH], [ENVIRONMENT]) are absent from the narrator text.
+// For each missing channel, fires a small targeted Ollama call (≤150 tokens)
+// and POSTs the result to /sense-enrichment — which broadcasts via SSE so
+// the sense line appears in the game UI feed as soon as it's ready.
+// ---------------------------------------------------------------------------
+
+const _SENSE_CHANNELS = ['SIGHT', 'SOUND', 'SMELL', 'TOUCH', 'ENVIRONMENT'];
+
+async function _enrichSenses(narratorText) {
+    // Detect which channels are already present in the narrator text
+    const present = new Set(
+        _SENSE_CHANNELS.filter(ch =>
+            narratorText.includes('[' + ch + ':') || narratorText.includes('[' + ch + ' :')
+        )
+    );
+    const missing = _SENSE_CHANNELS.filter(ch => !present.has(ch));
+    if (missing.length === 0) return; // narrator already wrote all channels
+
+    // Extract narrative prose (strip markers, dialogue, asterisks — same as auto-gen fallback)
+    const prose = narratorText
+        .replace(/\[.*?\]/gs, '')
+        .replace(/"[^"]*"/g, '')
+        .replace(/\*/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .substring(0, 600);
+
+    if (prose.length < 40) return; // not enough context to enrich
+
+    console.log('[Image Generator] Sense enrichment: narrator has', Array.from(present).join(',') || 'none',
+                '— enriching:', missing.join(','));
+
+    for (const channel of missing) {
+        try {
+            const prompt =
+                'You are a sense-layer enrichment model for an immersive sci-fi RPG.\n' +
+                'Given this narrator excerpt:\n\n' + prose + '\n\n' +
+                'Write a single vivid [' + channel + '] description (1-2 sentences, ' +
+                'present tense, second person "you"). Be specific, sensory, and brief. ' +
+                'Output ONLY the description text — no labels, no brackets, no preamble.';
+
+            const resp = await fetch('/api/ollama/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: 'mistral',
+                    prompt,
+                    stream: false,
+                    options: { num_predict: 150, temperature: 0.7 },
+                }),
+            });
+            if (!resp.ok) {
+                console.warn('[Image Generator] Sense enrichment HTTP error for', channel, resp.status);
+                continue;
+            }
+            const result = await resp.json();
+            const text = (result.response || '').trim();
+            if (!text) continue;
+
+            await fetch('/sense-enrichment', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channel, text }),
+            });
+        } catch (err) {
+            console.warn('[Image Generator] Sense enrichment failed for', channel, err);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scene image generation
+//
 // prompt and threads any locked reference-image URLs so the backend's
 // IP-Adapter can lock visual identity across scenes. `kind` is carried
 // through to the stored gallery entry so `renderGallery()` can decide
@@ -1515,9 +1600,14 @@ async function generateSceneImage(rawDescription, kind = 'subject') {
         console.warn('[Image Generator] Content blocklist triggered, skipping:', rawDescription.substring(0, 80));
         return null;
     }
+    // v3.0 — Nudity context detection: append coverage suffix so SD uses tasteful framing.
+    // This does NOT block the generation — it guides pose/angle/foreground composition instead.
+    const _nudityKeywords = ['naked', 'nude', 'undressed', 'bare skin', 'unclothed', 'formless', 'without clothes', 'no clothes', 'disrobed', 'exposed', 'bare body'];
+    const _hasNudity = _nudityKeywords.some(kw => lc.includes(kw));
+    const safeDescription = _hasNudity ? rawDescription + NUDE_COVERAGE_SUFFIX : rawDescription;
     // v2.12.1 — Strip raw SD weight syntax the Fortress may emit (e.g. "(term:1.4)").
     // These tokens are ours to control; LLM-sourced ones cause prompt drift.
-    const cleanedDescription = rawDescription.replace(/\([^)]*:\d+\.?\d*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+    const cleanedDescription = safeDescription.replace(/\([^)]*:\d+\.?\d*\)/g, '').replace(/\s{2,}/g, ' ').trim();
     const { prompt: augmented, reference_images } = injectNpcContextIntoPrompt(cleanedDescription);
     // v2.12.1 — Prepend the visual style lock so all scene images stay in the
     // dark-fantasy register regardless of what the Fortress described.
@@ -3754,6 +3844,8 @@ function installSecretForgetPhraseInterceptor() {
 // Clearing (null) removes our inline override so ST's normal background
 // takes over again.
 function updateBackgroundWallpaper(imageUrl) {
+    const settings = initSettings();
+    if (settings.routeImagesToGame) return;  // 3.0 UI owns the background now
     const $bg = $('#bg1');
     if ($bg.length === 0) return;
     if (imageUrl) {
@@ -3769,6 +3861,7 @@ function updateBackgroundWallpaper(imageUrl) {
 // strip, and mirror the current image as the ST chat background wallpaper.
 function renderGallery() {
     const settings = initSettings();
+    if (settings.routeImagesToGame) return;  // 3.0 UI handles display; skip ST gallery DOM updates
     const images = settings.images;
     const $frame = $('#image-generator-panel .img-gen-main-frame');
     const $img = $('#img-gen-main-img');
@@ -3874,6 +3967,12 @@ function updatePanelStatus(message) {
     } else {
         status.hide();
     }
+    // Also push activity to the 3.0 game UI via sidecar SSE broadcast.
+    fetch('/activity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: message || '' }),
+    }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -4689,14 +4788,15 @@ async function onCharacterMessageRendered(messageId) {
     // the same message. The one-shot guard prevents spin if continue also
     // fails.
     try {
-        if (!window.__imgGenContinuedFor) window.__imgGenContinuedFor = new Set();
+        if (!window.__imgGenContinuedFor) window.__imgGenContinuedFor = new Map();
         const continued = window.__imgGenContinuedFor;
         const raw = (message.mes || '').trim();
         const tail = raw.slice(-1);
         const looksTruncated = raw.length > 100 && !/[.!?"'\)\]\}…]/.test(tail);
-        if (looksTruncated && !continued.has(messageId) && typeof Generate === 'function') {
-            continued.add(messageId);
-            console.warn('[Image Generator] Narrator response looks truncated (mesid=' + messageId + ', ends: "' + raw.slice(-40).replace(/\s+/g, ' ') + '"). Auto-continuing…');
+        const continueCount = continued.get(messageId) || 0;
+        if (looksTruncated && continueCount < 3 && typeof Generate === 'function') {
+            continued.set(messageId, continueCount + 1);
+            console.warn('[Image Generator] Narrator response looks truncated (mesid=' + messageId + ', attempt ' + (continueCount + 1) + '/3, ends: "' + raw.slice(-40).replace(/\s+/g, ' ') + '"). Auto-continuing…');
             try { updatePanelStatus('⚠ narrator cut off — auto-continuing…'); } catch (_) { /* ignore */ }
             // Defer so ST finishes its own post-render bookkeeping first.
             setTimeout(() => {
@@ -4777,6 +4877,12 @@ async function onCharacterMessageRendered(messageId) {
     // reflects any beats just recorded this turn.
     try { applyStoryBeatPrompt(); } catch (_) { /* ignore */ }
 
+    // v2.13.0 — Fire sense enrichment in the background. For each sense
+    // channel ([SIGHT], [SOUND], [SMELL], [TOUCH], [ENVIRONMENT]) that the
+    // narrator didn't write, make a small targeted Ollama call and stream
+    // the result into the feed via SSE. Doesn't block image generation.
+    _enrichSenses(message.mes).catch(err => console.warn('[enrichSenses]', err));
+
     // Scene images
     const imageMarkers = detectImageMarkers(message.mes);
     for (const marker of imageMarkers) {
@@ -4788,9 +4894,49 @@ async function onCharacterMessageRendered(messageId) {
         if (imageData) {
             storeSceneImage(imageData);
             snapToNewestImage();
+            // Route location images to the 3.0 game UI background via sidecar.
+            const _s = initSettings();
+            if (_s.routeImagesToGame && imageData.image && imageData.kind === 'location') {
+                fetch('/scene-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imageData.image, kind: imageData.kind }),
+                }).catch(() => {});
+            }
             updatePanelStatus('');
         } else {
             updatePanelStatus('❌ Image generation failed. Check console.');
+        }
+    }
+
+    // v3.0 — Auto-gen fallback: if no [GENERATE_IMAGE]/[SIGHT] markers fired this turn,
+    // synthesize a scene image from the first 350 chars of narrator prose. This ensures
+    // every narrator turn produces a scene image even when the Fortress omits markers.
+    if (imageMarkers.length === 0 && settings.autoGenerate) {
+        const rawScene = message.mes
+            .replace(/\[.*?\]/g, '')   // strip all bracketed markers
+            .replace(/"[^"]*"/g, '')   // strip quoted dialogue
+            .replace(/\*/g, '')        // strip asterisk markers, keep the prose text inside
+            .replace(/\s{2,}/g, ' ')
+            .trim()
+            .substring(0, 350);
+        if (rawScene.length > 40) {
+            console.log('[Image Generator] Auto-gen fallback scene from prose:', rawScene.substring(0, 80));
+            updatePanelStatus('⏳ Rendering scene…');
+            const imageData = await generateSceneImage(rawScene, 'location');
+            if (imageData) {
+                storeSceneImage(imageData);
+                snapToNewestImage();
+                const _s = initSettings();
+                if (_s.routeImagesToGame && imageData.image) {
+                    fetch('/scene-image', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ image: imageData.image, kind: 'location' }),
+                    }).catch(() => {});
+                }
+            }
+            updatePanelStatus('');
         }
     }
 }
