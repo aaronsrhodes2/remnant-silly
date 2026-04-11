@@ -1219,10 +1219,10 @@ function _clearTimers() {
   hintEl.classList.remove('urgent');
 }
 
-function _startCountdown() {
+function _startCountdown(delayMs = AUTO_SEND_MS) {
   _clearTimers();
   if (!inputEl.value.trim()) return;
-  _countdown = Math.round(AUTO_SEND_MS / 1000);
+  _countdown = Math.round(delayMs / 1000);
   hintEl.textContent = _countdown + 's';
   _tickTimer = setInterval(() => {
     _countdown--;
@@ -1232,7 +1232,7 @@ function _startCountdown() {
   _autoTimer = setTimeout(() => {
     const text = inputEl.value.trim();
     if (text) sendInput(text + '…');
-  }, AUTO_SEND_MS);
+  }, delayMs);
 }
 
 async function sendInput(overrideText) {
@@ -1344,7 +1344,7 @@ async function _startRecording() {
       if (!res.ok) throw new Error(`STT ${res.status}`);
       const data = await res.json();
       const text = (data.text || '').trim();
-      if (text) { inputEl.value = text; _startCountdown(); }
+      if (text) { inputEl.value = text; _startCountdown(2500); }
       else _micHint('no speech detected');
     } catch (err) {
       console.error('[STT]', err);
