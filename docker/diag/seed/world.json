@@ -92,9 +92,21 @@
       "description": "A service robot of warm bronze plating, rounded joints, and two softly glowing orange photoreceptor eyes. She moves with practiced efficiency and speaks with genuine warmth. She is the Fortress's primary operations robot — running the Galley, casting components in the Foundry, performing precision work in the Fabrication Bay, doing deep maintenance in the Gantry, inspecting output in the Inspection Suite, and monitoring dimensional transit from the Observatory. She has been aboard longer than anyone currently on the ship. She does not discuss how long.",
       "voice": "af_sarah",
       "portrait": "/game/assets/characters/sherri.png",
+      "mesh_reference": "/game/assets/characters/sherri-mesh.png",
       "home_location": "the_galley",
       "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation"],
-      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely. She has strong opinions about component tolerances."
+      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely. She has strong opinions about component tolerances.",
+      "physical_spec": {
+        "form": "humanoid automaton, roughly 1.2m tall, slender build",
+        "head": "smooth dome, flat circular crown plate, rounded chin, no visible mouth",
+        "eyes": "two large circular photoreceptors, glowing warm orange, set wide on the face",
+        "body": "segmented chest plate with a small rectangular accent, rounded torso tapering to a narrow waist, utility pack on upper back",
+        "limbs": "segmented arms with spherical joint connectors at shoulder, elbow, and wrist; five articulated fingers; segmented legs with knee joints and rounded flat feet",
+        "texture": "warm bronze with a faint wood-grain surface pattern, darker ring accents at all joints",
+        "coloring": "primary: burnished bronze / copper-gold; accents: dark brown at joints and seams",
+        "notes": "mesh is open-source OBJ/GLTF compatible; optimised for multi-modal reconstruction"
+      },
+      "sd_prompt": "Sherri, a small friendly humanoid service robot, warm burnished bronze plating with wood-grain texture, large circular glowing orange photoreceptor eyes, smooth dome head with flat crown plate, segmented limbs with spherical joint connectors, small utility pack on upper back, dark brown joint seams, warm soft lighting, detailed mechanical surfaces"
     },
     {
       "id": "jeremy_smythe",
