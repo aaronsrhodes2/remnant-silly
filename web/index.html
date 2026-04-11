@@ -637,6 +637,23 @@ let _lastLocation = '';
 let _thinkTimer   = null;
 const _pendingPlayerTexts = new Set();
 
+// ── NPC voice pool — Kokoro voices for character dialogue ─────────────────
+const _NPC_VOICES = [
+  'af_sarah', 'am_adam', 'bf_emma',  'bm_george',
+  'af_heart', 'am_echo', 'bf_alice', 'bm_lewis',
+  'af_nicole', 'am_eric',
+];
+const _speakerVoiceCache = new Map();
+
+function _voiceForSpeaker(name) {
+  if (_speakerVoiceCache.has(name)) return _speakerVoiceCache.get(name);
+  let h = 0;
+  for (const c of (name || 'NPC')) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+  const v = _NPC_VOICES[h % _NPC_VOICES.length];
+  _speakerVoiceCache.set(name, v);
+  return v;
+}
+
 // Speaker portrait map — defaults from static assets, updated by SSE meta portrait events.
 // '__player__' is the player's avatar (SVG inline, no file needed).
 const _PLAYER_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='8' r='4' fill='%2364b5f6' opacity='0.75'/%3E%3Cpath d='M4 21v-1a8 8 0 0 1 16 0v1' fill='%2364b5f6' opacity='0.5'/%3E%3C/svg%3E";
@@ -834,18 +851,33 @@ function renderTurn(turn, instant) {
     feed.scrollTop = feed.scrollHeight;
   }
 
-  // Speak narrator text for new (non-history) turns
+  // Speak narrator + NPC text for new (non-history) turns.
+  // Each block is spoken sequentially with its own voice:
+  //   narrator prose  → am_michael (The Fortress)
+  //   character lines → deterministic NPC voice from _voiceForSpeaker()
   if (!instant && isNarratorTurn) {
     if (_sense.audio) {
-      const ttsText = blocks
-        .filter(b => !b.isPlayer && !b.senseType)
-        .map(b => (b.text || '').trim())
-        .filter(Boolean)
-        .join(' ');
-      if (ttsText) {
-        _speakTTS(ttsText);
+      const segments = [];
+      for (const b of blocks) {
+        if (b.isPlayer || b.senseType) continue;
+        const text = (b.text || '').trim();
+        if (!text) continue;
+        const voice = b.channel === 'character'
+          ? _voiceForSpeaker(b.speaker || 'NPC')
+          : 'am_michael';
+        segments.push({text, voice});
+      }
+      if (segments.length) {
+        const myGen = ++_ttsGenId;
+        (async () => {
+          for (const seg of segments) {
+            if (!_sense.audio || _ttsGenId !== myGen) break;
+            await _speakTTS(seg.text, seg.voice);
+          }
+          if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+        })();
       } else {
-        _turnState.ttsReady = true;   // no text to speak — mark done
+        _turnState.ttsReady = true;   // no speakable text — mark done
         _checkTurnComplete();
       }
     } else {
@@ -1272,41 +1304,45 @@ function _setThinking(active) { _setStatus('thinking', active); }
 // ── TTS engine ──
 let _ttsSource = null;
 let _ttsAbort  = null;
+let _ttsGenId  = 0;   // incremented each turn; old speech loops stop when stale
 
-async function _speakTTS(text) {
+function _speakTTS(text, voice = 'am_michael') {
   // Cancel any in-flight TTS request and stop any playing speech
   if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
   if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
-  if (!_sense.audio) return;
+  if (!_sense.audio) return Promise.resolve();
 
-  const ctrl = new AbortController();
-  _ttsAbort = ctrl;
-  _setLight('audio', 'busy');
-  _setStatus('speaking', true);
-  try {
-    const res = await fetch('/api/tts/v1/audio/speech', {
+  return new Promise(resolve => {
+    const ctrl = new AbortController();
+    _ttsAbort = ctrl;
+    _setLight('audio', 'busy');
+    _setStatus('speaking', true);
+    const done = () => { _setLight('audio', 'idle'); _setStatus('speaking', false); resolve(); };
+
+    fetch('/api/tts/v1/audio/speech', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({model: 'kokoro', input: text, voice: 'am_michael'}),
+      body: JSON.stringify({model: 'kokoro', input: text, voice}),
       signal: ctrl.signal,
+    })
+    .then(res => { if (!res.ok) { done(); return null; } return res.arrayBuffer(); })
+    .then(buf => {
+      if (!buf) return;
+      const ctx = _ensureAudioCtx();
+      ctx.decodeAudioData(buf).then(audio => {
+        const src = ctx.createBufferSource();
+        src.buffer = audio;
+        src.connect(ctx.destination);
+        src.onended = () => { _ttsSource = null; _ttsAbort = null; done(); };
+        _ttsSource = src;
+        src.start();
+      }).catch(() => done());
+    })
+    .catch(e => {
+      if (e.name !== 'AbortError') console.warn('[tts]', e);
+      done();
     });
-    if (!res.ok) { _setLight('audio', 'idle'); _setStatus('speaking', false); return; }
-    const buf = await res.arrayBuffer();
-    const ctx = _ensureAudioCtx();
-    const audio = await ctx.decodeAudioData(buf);
-    const src = ctx.createBufferSource();
-    src.buffer = audio;
-    src.connect(ctx.destination);
-    src.onended = () => { _ttsSource = null; _ttsAbort = null; _setLight('audio', 'idle'); _setStatus('speaking', false); _turnState.ttsReady = true; _checkTurnComplete(); };
-    _ttsSource = src;
-    src.start();
-  } catch (e) {
-    if (e.name !== 'AbortError') console.warn('[tts]', e);
-    _setLight('audio', 'idle');
-    _setStatus('speaking', false);
-    _turnState.ttsReady = true;   // error = done, don't block green border
-    _checkTurnComplete();
-  }
+  });
 }
 
 // ── Music engine (Web Audio API) ──────────────────────────────────────────
