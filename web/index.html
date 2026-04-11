@@ -576,7 +576,7 @@ html, body {
     <!-- Dev face: star trek lights + hide button -->
     <div id="status-dev">
       <div class="light-cluster" id="all-lights">
-        <div class="light-wrap" id="light-story" data-tip="Story — Ollama, SillyTavern, all text processing">
+        <div class="light-wrap" id="light-story" data-tip="Story — Ollama · SillyTavern · always on">
           <div class="light-dot"></div><span class="light-label">story</span></div>
         <div class="light-wrap toggleable" id="light-image" data-tip="Image — SD scenes &amp; portraits · click to toggle">
           <div class="light-dot"></div><span class="light-label">image</span></div>
@@ -655,7 +655,13 @@ const _presentNPCs = new Map();
 function _setLight(id, state, tipSuffix) {
   const el = document.getElementById('light-' + id);
   if (!el) return;
-  el.className = 'light-wrap ' + state;
+  // Lock to 'off' when the sense for this light is disabled by the user
+  if ((id === 'audio' && !_sense.audio) || (id === 'image' && !_sense.image)) {
+    state = 'off';
+  }
+  // Use classList so we preserve extra classes (toggleable, sense-off, etc.)
+  el.classList.remove('idle', 'active', 'busy', 'off');
+  if (state) el.classList.add(state);
   if (tipSuffix !== undefined) {
     const base = (el.dataset.tip || '').split(' ·')[0].trim();
     el.dataset.tip = base + (tipSuffix ? ' · ' + tipSuffix : '');
@@ -1128,17 +1134,24 @@ function _initLightToggles() {
     el.addEventListener('click', () => {
       _sense[key] = !_sense[key];
       el.classList.toggle('sense-off', !_sense[key]);
-      if (key === 'audio' && !_sense.audio) {
-        // Stop any playing TTS and music immediately
-        if (_ttsAbort)  { _ttsAbort.abort();  _ttsAbort  = null; }
-        if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
-        if (_musicGain && _audioCtx) {
-          _musicGain.gain.linearRampToValueAtTime(0, _audioCtx.currentTime + 0.5);
-          const old = _musicSource;
-          setTimeout(() => { try { old.stop(); } catch (_) {} }, 700);
-          _musicSource = null; _musicGain = null;
+      if (!_sense[key]) {
+        // Disabling — kill any in-flight activity
+        if (key === 'audio') {
+          if (_ttsAbort)  { _ttsAbort.abort();  _ttsAbort  = null; }
+          if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
+          if (_musicGain && _audioCtx) {
+            _musicGain.gain.linearRampToValueAtTime(0, _audioCtx.currentTime + 0.5);
+            const old = _musicSource;
+            setTimeout(() => { try { old.stop(); } catch (_) {} }, 700);
+            _musicSource = null; _musicGain = null;
+          }
+          _setStatus('speaking', false);
+          _setStatus('composing', false);
         }
-        _setLight('audio', 'off');
+        _setLight(id, 'off');   // _setLight will lock to 'off' while sense is false
+      } else {
+        // Re-enabling — let service status restore naturally on next poll
+        _setLight(id, 'idle');
       }
     });
   }
