@@ -52,58 +52,83 @@ html, body {
   background: transparent;
 }
 
-/* ── Topbar — always-visible header strip ── */
-#topbar {
+/* ── Status bar — single bar, two faces ── */
+#status-bar {
   flex-shrink: 0;
+  position: relative;
+  height: 40px;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* ── Simple face: big amber status text, left-justified, click to flip ── */
+#status-simple {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  cursor: pointer;
+  transition: opacity 0.25s;
+}
+#status-simple:hover { background: rgba(212,168,75,0.03); }
+
+#status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.4s, box-shadow 0.4s;
+  background: rgba(212,168,75,0.18);
+}
+#status-dot.pulsing {
+  animation: light-pulse 1.2s ease-in-out infinite;
+}
+#status-text {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: rgba(212,168,75,0.35);   /* Fortress amber, dim when idle */
+  transition: color 0.4s;
+  white-space: nowrap;
+}
+#status-text.active {
+  color: #d4a84b;   /* full amber when anything is happening */
+  text-shadow: 0 0 18px rgba(212,168,75,0.4);
+}
+
+/* ── Dev face: star trek lights + hide button ── */
+#status-dev {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   padding: 0 10px;
-  height: 32px;
-  gap: 10px;
-  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
 }
 
-/* "The Fortress" shelf toggle button */
-#shelf-btn {
+/* Flip state */
+#status-bar.dev-open #status-simple { opacity: 0; pointer-events: none; }
+#status-bar.dev-open #status-dev    { opacity: 1; pointer-events: all; }
+
+/* "hide the madness" button */
+#hide-dev-btn {
+  margin-left: auto;
+  flex-shrink: 0;
   background: none;
-  border: none;
-  color: var(--dim);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 3px;
+  color: rgba(255,255,255,0.20);
   cursor: pointer;
   font: inherit;
-  font-size: 9px;
-  letter-spacing: 1.1px;
-  text-transform: uppercase;
-  padding: 3px 7px;
-  border-radius: 3px;
-  transition: color 0.2s, background 0.2s;
-  white-space: nowrap;
-  flex-shrink: 0;
-  display: flex; align-items: center; gap: 5px;
+  font-size: 8px;
+  letter-spacing: 0.6px;
+  padding: 3px 8px;
+  transition: color 0.2s, border-color 0.2s;
 }
-#shelf-btn:hover { color: var(--ink); background: rgba(255,255,255,0.05); }
-#shelf-btn .shelf-arrow { font-size: 7px; transition: transform 0.25s; display: inline-block; }
-#lights-shelf.open ~ * #shelf-btn .shelf-arrow,
-#shelf-btn.open .shelf-arrow { transform: rotate(90deg); }
-
-/* ── Collapsible lights shelf ── */
-#lights-shelf {
-  flex-shrink: 0;
-  overflow: hidden;
-  max-height: 0;
-  transition: max-height 0.25s ease, border-bottom-width 0.25s;
-  border-bottom: 0px solid var(--border);
-}
-#lights-shelf.open {
-  max-height: 44px;
-  border-bottom: 1px solid var(--border);
-}
-#lights-shelf .light-cluster {
-  padding: 0 12px;
-  height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
+#hide-dev-btn:hover { color: var(--dim); border-color: rgba(255,255,255,0.15); }
 
 .light-cluster { display: flex; gap: 7px; align-items: center; }
 
@@ -181,17 +206,7 @@ html, body {
   font-family: 'Courier New', monospace;
 }
 
-#activity-label {
-  flex: 1;
-  text-align: center;
-  font-size: 9px;
-  color: var(--dim);
-  font-style: italic;
-  letter-spacing: 0.3px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+#activity-label { display: none; } /* subsumed by status-text */
 
 /* Thinking indicator */
 .entry.thinking .entry-text {
@@ -491,31 +506,6 @@ html, body {
 .light-wrap.toggleable.sense-off { opacity: 0.22; }
 .light-wrap.toggleable.sense-off .light-dot { animation: none !important; }
 
-/* ── System status — always visible, far right of topbar ── */
-#system-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-#status-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  flex-shrink: 0;
-  transition: background 0.4s, box-shadow 0.4s;
-  background: rgba(255,255,255,0.10);
-}
-#status-dot.pulsing {
-  animation: light-pulse 1.2s ease-in-out infinite;
-}
-#status-text {
-  font-size: 9px;
-  letter-spacing: 0.4px;
-  font-style: italic;
-  white-space: nowrap;
-  transition: color 0.4s;
-  color: rgba(255,255,255,0.15);
-}
 
 /* ── Mood text entries (shown when muted instead of generating music) ── */
 .mood-entry {
@@ -574,40 +564,41 @@ html, body {
 <body>
 <div id="app">
 
-  <!-- ── Topbar: "The Fortress" toggle + always-on system status ── -->
-  <div id="topbar">
-    <button id="shelf-btn" title="Show / hide diagnostic panel" aria-label="Toggle diagnostic shelf">
-      <span class="shelf-arrow">▶</span>The Fortress
-    </button>
-    <div id="activity-label"></div>
-    <div id="system-status">
+  <!-- ── Status bar: simple face (click→dev) / dev face (click hide→simple) ── -->
+  <div id="status-bar">
+
+    <!-- Simple face: big amber status, left-justified, whole bar is clickable -->
+    <div id="status-simple" title="Click to open diagnostics">
       <span id="status-dot"></span>
       <span id="status-text">Ready</span>
     </div>
-  </div>
 
-  <!-- ── Collapsible lights shelf (hidden by default) ── -->
-  <div id="lights-shelf">
-    <div class="light-cluster" id="all-lights">
-      <div class="light-wrap" id="light-story" data-tip="Story — Ollama, SillyTavern, all text processing">
-        <div class="light-dot"></div><span class="light-label">story</span></div>
-      <div class="light-wrap toggleable" id="light-image" data-tip="Image — SD scenes &amp; portraits · click to toggle">
-        <div class="light-dot"></div><span class="light-label">image</span></div>
-      <div class="light-wrap toggleable" id="light-audio" data-tip="Audio — MusicGen, TTS, STT · click to toggle">
-        <div class="light-dot"></div><span class="light-label">audio</span></div>
-      <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
-        <div class="light-dot"></div><span class="light-label">gpu</span></div>
-      <div class="light-wrap" id="light-vram" data-tip="VRAM usage">
-        <div class="light-dot"></div><span class="light-label">vram</span></div>
-      <div class="light-wrap" id="light-cpu"  data-tip="CPU utilisation">
-        <div class="light-dot"></div><span class="light-label">cpu</span></div>
-      <div class="light-wrap" id="light-ram"  data-tip="System RAM">
-        <div class="light-dot"></div><span class="light-label">ram</span></div>
-      <div class="light-wrap" id="light-conn" data-tip="SSE connection">
-        <div class="light-dot"></div><span class="light-label">conn</span></div>
-      <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
+    <!-- Dev face: star trek lights + hide button -->
+    <div id="status-dev">
+      <div class="light-cluster" id="all-lights">
+        <div class="light-wrap" id="light-story" data-tip="Story — Ollama, SillyTavern, all text processing">
+          <div class="light-dot"></div><span class="light-label">story</span></div>
+        <div class="light-wrap toggleable" id="light-image" data-tip="Image — SD scenes &amp; portraits · click to toggle">
+          <div class="light-dot"></div><span class="light-label">image</span></div>
+        <div class="light-wrap toggleable" id="light-audio" data-tip="Audio — MusicGen, TTS, STT · click to toggle">
+          <div class="light-dot"></div><span class="light-label">audio</span></div>
+        <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
+          <div class="light-dot"></div><span class="light-label">gpu</span></div>
+        <div class="light-wrap" id="light-vram" data-tip="VRAM usage">
+          <div class="light-dot"></div><span class="light-label">vram</span></div>
+        <div class="light-wrap" id="light-cpu"  data-tip="CPU utilisation">
+          <div class="light-dot"></div><span class="light-label">cpu</span></div>
+        <div class="light-wrap" id="light-ram"  data-tip="System RAM">
+          <div class="light-dot"></div><span class="light-label">ram</span></div>
+        <div class="light-wrap" id="light-conn" data-tip="SSE connection">
+          <div class="light-dot"></div><span class="light-label">conn</span></div>
+        <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
+      </div>
+      <button id="hide-dev-btn" title="Back to status view">hide the madness</button>
     </div>
+
   </div>
+  <div id="activity-label"></div>
 
   <!-- ── Main area: narrative feed + image gallery ── -->
   <div id="main-area">
@@ -1105,31 +1096,31 @@ function connect() {
 // ── Sense toggles ──
 const _sense = { audio: true, image: true };
 
-// ── Lights shelf toggle ──
-let _shelfOpen = localStorage.getItem('remnant-shelf') === '1';
+// ── Status bar flip ──
+let _devOpen = localStorage.getItem('remnant-dev') === '1';
 
-function _toggleShelf() {
-  _shelfOpen = !_shelfOpen;
-  localStorage.setItem('remnant-shelf', _shelfOpen ? '1' : '0');
-  const shelf = document.getElementById('lights-shelf');
-  const btn   = document.getElementById('shelf-btn');
-  if (shelf) shelf.classList.toggle('open', _shelfOpen);
-  if (btn)   btn.classList.toggle('open',  _shelfOpen);
-  const arrow = btn && btn.querySelector('.shelf-arrow');
-  if (arrow) arrow.style.transform = _shelfOpen ? 'rotate(90deg)' : '';
+function _flipToDev() {
+  _devOpen = true;
+  localStorage.setItem('remnant-dev', '1');
+  document.getElementById('status-bar').classList.add('dev-open');
+}
+function _flipToSimple() {
+  _devOpen = false;
+  localStorage.setItem('remnant-dev', '0');
+  document.getElementById('status-bar').classList.remove('dev-open');
 }
 
 function _initLightToggles() {
-  // Apply initial shelf state
-  const shelf = document.getElementById('lights-shelf');
-  const btn   = document.getElementById('shelf-btn');
-  if (_shelfOpen && shelf) shelf.classList.add('open');
-  if (_shelfOpen && btn)   btn.classList.add('open');
-  const arrow = btn && btn.querySelector('.shelf-arrow');
-  if (arrow && _shelfOpen) arrow.style.transform = 'rotate(90deg)';
+  // Apply persisted state
+  if (_devOpen) document.getElementById('status-bar').classList.add('dev-open');
 
-  // Shelf toggle button
-  if (btn) btn.addEventListener('click', _toggleShelf);
+  // Simple face → flip to dev on click
+  const simple = document.getElementById('status-simple');
+  if (simple) simple.addEventListener('click', _flipToDev);
+
+  // "hide the madness" → flip back to simple
+  const hideBtn = document.getElementById('hide-dev-btn');
+  if (hideBtn) hideBtn.addEventListener('click', _flipToSimple);
 
   function _toggleSense(id, key) {
     const el = document.getElementById('light-' + id);
@@ -1177,16 +1168,17 @@ function _updateStatus() {
   for (const key of _STATUS_PRIORITY) {
     if (_activeStatuses.has(key)) { current = key; break; }
   }
-  const meta = _STATUS_META[current] || _STATUS_META.idle;
+  const meta    = _STATUS_META[current] || _STATUS_META.idle;
+  const isActive = current !== 'idle';
   if (_statusDot) {
-    _statusDot.style.background  = meta.color;
-    _statusDot.style.boxShadow   = current !== 'idle' ? `0 0 6px 2px ${meta.color}` : 'none';
+    _statusDot.style.background = meta.color;
+    _statusDot.style.boxShadow  = isActive ? `0 0 7px 2px ${meta.color}` : 'none';
     _statusDot.style.setProperty('--lc', meta.color);
-    _statusDot.classList.toggle('pulsing', current !== 'idle' && current !== 'listening');
+    _statusDot.classList.toggle('pulsing', isActive && current !== 'listening');
   }
   if (_statusText) {
     _statusText.textContent = meta.text;
-    _statusText.style.color = current !== 'idle' ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.15)';
+    _statusText.classList.toggle('active', isActive);
   }
 }
 
