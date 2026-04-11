@@ -31,6 +31,7 @@ Environment:
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import os
 import queue as _queue
@@ -1820,6 +1821,89 @@ def _maybe_json(body: bytes):
 
 
 # ---------------------------------------------------------------------------
+# Signature — composite fingerprint of all content + logic files
+# ---------------------------------------------------------------------------
+
+# Files that define "this version of the game". Paths are relative to the
+# repo root (or /app in Docker). Missing files contribute an ABSENT marker
+# so the signature still reflects what's actually present.
+_SIGNATURE_FILES = [
+    "docker/diag/app.py",
+    "web/index.html",
+    "extension/index.js",
+    "docker/sillytavern/content/characters/fortress_system_prompt.txt",
+    "docker/sillytavern/content/characters/fortress_first_mes.txt",
+    "docker/sillytavern/content/worlds/Nullspace Nexus.json",
+    "docker/sillytavern/content/chats/The Remnant/Opening.jsonl",
+    "docker/sillytavern/content/settings.json",
+    "docker/sillytavern/config.yaml",
+]
+
+_REPO_ROOT = Path(__file__).parent.parent.parent  # docker/diag/app.py → docker/diag → docker → repo root
+
+
+def _build_signature() -> dict:
+    """Return a composite fingerprint of every content + logic file.
+
+    The composite_sha256 is a deterministic hash of all per-file hashes in
+    sorted-filename order. If every file is identical between two builds, the
+    composite will match. Any change to any file — system prompt, UI, lore,
+    chat opening — changes the composite. Useful for verifying that `docker
+    compose build` included the expected content.
+    """
+    files_out = {}
+    composite_input = []
+
+    for rel in sorted(_SIGNATURE_FILES):
+        path = _REPO_ROOT / rel
+        if path.exists():
+            try:
+                h = hashlib.sha256(path.read_bytes()).hexdigest()
+                size = path.stat().st_size
+                files_out[rel] = {"sha256": h, "size_bytes": size, "status": "ok"}
+                composite_input.append(f"{rel}:{h}")
+            except Exception as e:
+                files_out[rel] = {"sha256": None, "status": f"error: {e}"}
+                composite_input.append(f"{rel}:ERROR")
+        else:
+            files_out[rel] = {"sha256": None, "status": "absent"}
+            composite_input.append(f"{rel}:ABSENT")
+
+    composite_sha256 = hashlib.sha256(
+        "\n".join(composite_input).encode("utf-8")
+    ).hexdigest()
+
+    # Git commit baked at build time (Dockerfile writes /app/GIT_COMMIT),
+    # or read live if running natively in the repo.
+    git_commit = "unknown"
+    commit_file = _REPO_ROOT / "GIT_COMMIT"
+    if commit_file.exists():
+        git_commit = commit_file.read_text().strip()
+    else:
+        try:
+            git_commit = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(_REPO_ROOT), stderr=subprocess.DEVNULL, timeout=2
+            ).decode().strip()
+        except Exception:
+            pass
+
+    absent = [r for r, v in files_out.items() if v["status"] == "absent"]
+    errors = [r for r, v in files_out.items() if v["status"].startswith("error")]
+
+    return {
+        "composite_sha256": composite_sha256,
+        "git_commit": git_commit,
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "status": "ok" if not absent and not errors else ("degraded" if not errors else "error"),
+        "absent_files": absent,
+        "error_files": errors,
+        "files": files_out,
+    }
+
+
+# ---------------------------------------------------------------------------
 # AI snapshot builder
 # ---------------------------------------------------------------------------
 
@@ -2010,6 +2094,7 @@ class Handler(BaseHTTPRequestHandler):
                 "service": "remnant-diag",
                 "endpoints": [
                     "/ai.json",
+                    "/signature (GET — composite SHA256 fingerprint of all content + logic files)",
                     "/actions",
                     "/actions/<id> (POST)",
                     "/browser-health (POST)",
@@ -2034,6 +2119,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ai.json":
             try:
                 self._send_json(200, _build_ai_snapshot())
+            except Exception as e:
+                self._send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
+            return
+        if path == "/signature":
+            try:
+                self._send_json(200, _build_signature())
             except Exception as e:
                 self._send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
             return
