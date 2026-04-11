@@ -722,6 +722,10 @@ class ServiceManager:
         if not port_open(PORTS["flask-tts"]):
             flask_tts_app = REPO_ROOT / "docker" / "flask-tts" / "app.py"
             if flask_tts_app.exists():
+                flask_tts_reqs = REPO_ROOT / "docker" / "flask-tts" / "requirements.txt"
+                if flask_tts_reqs.exists():
+                    subprocess.run([str(python), "-m", "pip", "install", "-q",
+                                    "-r", str(flask_tts_reqs)], check=False)
                 log("starting flask-tts (text-to-speech)...", "head")
                 p = ManagedProcess(
                     "flask-tts",
@@ -742,6 +746,10 @@ class ServiceManager:
         if not port_open(PORTS["flask-stt"]):
             flask_stt_app = REPO_ROOT / "docker" / "flask-stt" / "app.py"
             if flask_stt_app.exists():
+                flask_stt_reqs = REPO_ROOT / "docker" / "flask-stt" / "requirements.txt"
+                if flask_stt_reqs.exists():
+                    subprocess.run([str(python), "-m", "pip", "install", "-q",
+                                    "-r", str(flask_stt_reqs)], check=False)
                 log("starting flask-stt (speech-to-text)...", "head")
                 p = ManagedProcess(
                     "flask-stt",
