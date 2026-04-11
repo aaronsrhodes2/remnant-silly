@@ -1430,7 +1430,7 @@ def _unload_ollama_vram() -> None:
     """
     try:
         model = _ollama_model()
-        payload = json.dumps({"model": model, "keep_alive": 0}).encode("utf-8")
+        payload = json.dumps({"model": model, "keep_alive": 120}).encode("utf-8")
         _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=5.0)
     except Exception:
         pass

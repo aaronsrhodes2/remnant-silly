@@ -1035,13 +1035,18 @@ function connect() {
       const turn = JSON.parse(e.data);
       const isPlayerTurn = (turn.parsed_blocks || []).some(b => b.isPlayer);
       if (isPlayerTurn) {
-        const rawText = (turn.raw_text || '').trim();
-        for (const pending of _pendingPlayerTexts) {
-          if (rawText === pending || rawText.includes(pending) || pending.includes(rawText)) {
-            _pendingPlayerTexts.delete(pending);
-            return;
-          }
+        // Adopt the optimistic element rendered by sendInput() rather than using
+        // fragile text-comparison (client and server may wrap differently: DO *…* vs SAY "…").
+        const optimEl = feed.querySelector('.is-player[data-pending]');
+        if (optimEl) {
+          const rawText = (turn.raw_text || '').trim();
+          if (rawText) optimEl.querySelector('.entry-text').textContent = rawText;
+          optimEl.removeAttribute('data-pending');
+          _pendingPlayerTexts.clear();
+          if (turn.turn_id) _renderedTurnIds.add(turn.turn_id);
+          return;
         }
+        // No optimistic element — history replay or multi-client; fall through to renderTurn()
       } else {
         _narratorTurnCount++;
         _updateNarratorCount();
@@ -1586,6 +1591,7 @@ async function sendInput(overrideText) {
   const { channel, wrapped } = _localWrap(text);
   const optimEl = document.createElement('div');
   optimEl.className = 'entry ' + channel + ' is-player arriving';
+  optimEl.dataset.pending = 'true';
   optimEl.innerHTML =
     '<img class="entry-avatar hidden" alt="">' +
     '<span class="entry-speaker">You</span>' +
