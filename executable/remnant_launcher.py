@@ -888,25 +888,53 @@ def print_banner():
 
 # ── Browser / window helpers ──────────────────────────────────────────────────
 
+def _set_win32_icon(title: str, ico_path: str) -> None:
+    """Set taskbar + titlebar icon via Win32 API (runs in a background thread)."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    import threading
+    import time
+
+    def _apply():
+        user32 = ctypes.windll.user32
+        WM_SETICON       = 0x0080
+        IMAGE_ICON       = 1
+        LR_LOADFROMFILE  = 0x0010
+        LR_DEFAULTSIZE   = 0x0040
+        hicon = user32.LoadImageW(
+            None, ico_path, IMAGE_ICON, 0, 0,
+            LR_LOADFROMFILE | LR_DEFAULTSIZE,
+        )
+        if not hicon:
+            return
+        # Poll until the window appears (up to 5 s)
+        for _ in range(50):
+            hwnd = user32.FindWindowW(None, title)
+            if hwnd:
+                user32.SendMessageW(hwnd, WM_SETICON, 0, hicon)  # ICON_SMALL
+                user32.SendMessageW(hwnd, WM_SETICON, 1, hicon)  # ICON_BIG
+                return
+            time.sleep(0.1)
+
+    threading.Thread(target=_apply, daemon=True).start()
+
+
 def _run_webview(url: str, sm: "ServiceManager"):
     """Open a frameless WebView2 window. Blocks on the main thread until closed."""
     import webview  # pywebview — requires WebView2 (pre-installed on Win10/11)
 
     ico = REPO_ROOT / "web" / "assets" / "favicon.ico"
-    _win_kwargs = dict(
+    win = webview.create_window(
+        "The Remnant", url,
         frameless=True,
         easy_drag=True,
         resizable=True,
         min_size=(1024, 768),
     )
+
     if ico.exists():
-        _win_kwargs["icon"] = str(ico)
-    try:
-        win = webview.create_window("The Remnant", url, **_win_kwargs)
-    except TypeError:
-        # Older pywebview versions don't support icon= — fall back silently
-        _win_kwargs.pop("icon", None)
-        win = webview.create_window("The Remnant", url, **_win_kwargs)
+        _set_win32_icon("The Remnant", str(ico))
 
     def on_closed():
         sm.stop_all()
