@@ -165,3 +165,29 @@ async function tick() {
 }
 
 tick();
+
+// ── Hardware profile — written by the Windows launcher before nginx starts ───
+// Silently no-ops in Docker mode (file won't exist → fetch returns non-200).
+async function loadHardwareProfile() {
+    try {
+        const r = await fetch("status/hardware-profile.json", { cache: "no-store" });
+        if (!r.ok) return;
+        const hw = await r.json();
+        const tier = hw.perf_tier;
+        if (!tier) return;
+        const el = document.getElementById("hw-perf");
+        if (!el) return;
+        el.textContent = `${tier.label} · ${tier.min_s}–${tier.max_s}s per turn · ~${tier.tok_s} tok/s`;
+        el.title = tier.note || "";
+        // GPU line beneath
+        if (hw.gpu_name && hw.gpu_name !== "Unknown") {
+            const gpu = document.createElement("div");
+            gpu.id = "hw-gpu";
+            gpu.textContent = hw.gpu_vram_gb
+                ? `${hw.gpu_name}  (${hw.gpu_vram_gb} GB VRAM)`
+                : hw.gpu_name;
+            el.insertAdjacentElement("afterend", gpu);
+        }
+    } catch (_) {}
+}
+loadHardwareProfile();

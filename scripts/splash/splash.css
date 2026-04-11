@@ -55,6 +55,25 @@ header .explainer {
     margin: 0 0 32px 0;
 }
 
+/* Hardware performance estimate — shown when Windows launcher writes
+   hardware-profile.json. Hidden (empty) in Docker mode. */
+#hw-perf {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    margin: 0 0 8px 0;
+    letter-spacing: 0.04em;
+}
+#hw-perf:empty { display: none; }
+
+#hw-gpu {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin: 0 0 24px 0;
+}
+#hw-gpu:empty { display: none; }
+
 #services {
     display: flex;
     flex-direction: column;
