@@ -29,14 +29,13 @@ venv/
 # else is treated as runtime scratch and stays ignored.
 #
 # Canonical asset locations:
+#   web/assets/**                                  — primary game UI assets
+#                                                    (portraits, backgrounds,
+#                                                    world art, character refs)
 #   extension/assets/**                            — extension's world art
-#   docker/sillytavern/content/**/assets/**        — SillyTavern seed assets
-#                                                    (world info portraits,
-#                                                    background art, etc.)
-#   docker/sillytavern/content/characters/**       — character card PNGs
-#                                                    (format is "PNG with
-#                                                    JSON in tEXt chunks",
-#                                                    so the file IS the card)
+#   docker/sillytavern/content/**/assets/**        — legacy ST seed assets
+#   docker/sillytavern/content/characters/**       — legacy character card PNGs
+!web/assets/**
 !extension/assets/**
 !docker/sillytavern/content/**/assets/**
 !docker/sillytavern/content/characters/**

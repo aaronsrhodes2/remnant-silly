@@ -24,7 +24,6 @@ Environment:
   STATUS_DIR       default /remnant-status
   FLASK_SD_URL     default http://flask-sd:1592
   OLLAMA_URL       default http://ollama:1593
-  SILLYTAVERN_URL  default http://sillytavern:1590
   LISTEN_PORT      default 1591
 """
 

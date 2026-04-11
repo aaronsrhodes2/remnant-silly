@@ -5,7 +5,7 @@ Provides an OpenAI-compatible /v1/audio/speech endpoint backed by kokoro-onnx.
 Matches the docker Kokoro-FastAPI container API so the game UI needs no changes
 between docker and native modes.
 
-Models download automatically from HuggingFace on first request (~300 MB).
+Models download automatically from GitHub releases on first request (~300 MB).
 
 Port: LISTEN_PORT env var (default 1594)
 Voice: KOKORO_VOICE env var (default am_michael — deep authoritative male)
@@ -16,6 +16,8 @@ from __future__ import annotations
 import io
 import logging
 import os
+import urllib.request
+from pathlib import Path
 
 from flask import Flask, Response, jsonify, request
 
@@ -26,20 +28,55 @@ log = logging.getLogger(__name__)
 TTS = None
 DEFAULT_VOICE = os.environ.get("KOKORO_VOICE", "am_michael")
 
+# kokoro-onnx v0.5+ model files are on GitHub Releases (not HuggingFace)
+# int8 quantised (92 MB) — fast download, CPU-friendly quality
+_MODEL_URL  = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx"
+_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+
+def _model_cache_dir() -> Path:
+    """Return a writable directory for Kokoro model files.
+
+    Respects HF_HOME / HF_HUB_CACHE if set (launcher pipes these to local-cache/).
+    Falls back to ~/.cache/kokoro-onnx.
+    """
+    base = os.environ.get("HF_HOME") or os.environ.get("HF_HUB_CACHE")
+    if base:
+        d = Path(base) / "kokoro-onnx"
+    else:
+        d = Path.home() / ".cache" / "kokoro-onnx"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _download_if_missing(url: str, dest: Path) -> Path:
+    """Download *url* to *dest* if it doesn't exist yet, with progress logging."""
+    if dest.exists():
+        return dest
+    log.info("downloading %s → %s …", url, dest)
+    tmp = dest.with_suffix(".tmp")
+    try:
+        def _reporthook(block, block_size, total):
+            if total > 0 and block % 500 == 0:
+                pct = min(100, block * block_size * 100 // total)
+                log.info("  … %d%%", pct)
+
+        urllib.request.urlretrieve(url, str(tmp), reporthook=_reporthook)
+        tmp.rename(dest)
+        log.info("saved %s (%.1f MB)", dest.name, dest.stat().st_size / 1_048_576)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return dest
+
 
 def _get_tts():
     global TTS
     if TTS is None:
-        log.info("downloading Kokoro model files from HuggingFace (first run only)…")
-        try:
-            from huggingface_hub import hf_hub_download
-            onnx  = hf_hub_download(repo_id="hexgrad/Kokoro-82M", filename="kokoro-v0_19.onnx")
-            voices = hf_hub_download(repo_id="hexgrad/Kokoro-82M", filename="voices.bin")
-        except Exception as exc:
-            log.error("model download failed: %s", exc)
-            raise
+        cache = _model_cache_dir()
+        onnx   = _download_if_missing(_MODEL_URL,  cache / "kokoro-v1.0.int8.onnx")
+        voices = _download_if_missing(_VOICES_URL, cache / "voices-v1.0.bin")
         from kokoro_onnx import Kokoro  # noqa: PLC0415
-        TTS = Kokoro(onnx, voices)
+        TTS = Kokoro(str(onnx), str(voices))
         log.info("Kokoro model ready")
     return TTS
 

@@ -656,12 +656,15 @@ function _voiceForSpeaker(name) {
 
 // Speaker portrait map — defaults from static assets, updated by SSE meta portrait events.
 // '__player__' is the player's avatar (SVG inline, no file needed).
+// Canonical portraits live in web/assets/characters/ (tracked in git, !web/assets/** in .gitignore).
 const _PLAYER_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='8' r='4' fill='%2364b5f6' opacity='0.75'/%3E%3Cpath d='M4 21v-1a8 8 0 0 1 16 0v1' fill='%2364b5f6' opacity='0.5'/%3E%3C/svg%3E";
 
 const _portraitMap = {
   'Narrator':     '/game/assets/the-remnant-portrait.png',
-  'The Fortress': '/game/assets/fortress-interior.jpg',
+  'The Fortress': '/game/assets/characters/the-fortress.png',
   'The Remnant':  '/game/assets/the-remnant-portrait.png',
+  'Sherri':       '/game/assets/characters/sherri.png',
+  'Jeremy Smythe':'/game/assets/characters/jeremy-smythe.png',
   '__player__':   _PLAYER_AVATAR,
 };
 
