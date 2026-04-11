@@ -12,10 +12,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT     = Path(__file__).parent.parent.resolve()
-LAUNCHER = ROOT / "executable" / "remnant_launcher.py"
-HARDWARE = ROOT / "executable" / "hardware.py"
-DIST     = ROOT / "dist"
+ROOT         = Path(__file__).parent.parent.resolve()
+LAUNCHER     = ROOT / "executable" / "remnant_launcher.py"
+HARDWARE     = ROOT / "executable" / "hardware.py"
+VERSION_JSON = ROOT / "version.json"
+DIST         = ROOT / "dist"
 
 cmd = [
     sys.executable, "-m", "PyInstaller",
@@ -23,6 +24,7 @@ cmd = [
     "--name", "Remnant",
     "--console",                               # keep console window (log output)
     "--add-data", f"{HARDWARE};.",             # hardware.py at root of _MEIPASS (Windows: ;)
+    *([f"--add-data", f"{VERSION_JSON};."] if VERSION_JSON.exists() else []),
     "--hidden-import", "psutil",
     "--hidden-import", "psutil._pswindows",
     "--hidden-import", "psutil._psutil_windows",

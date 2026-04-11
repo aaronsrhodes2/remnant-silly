@@ -6,7 +6,7 @@
 #   scripts/native-up.sh    # start everything, leave running in foreground
 #   (Ctrl+C to stop)        # or scripts/native-down.sh in another shell
 #
-#   Then:   http://localhost:1580/
+#   Then:   http://localhost:1582/
 #
 # ARCHITECTURE
 # ------------
@@ -20,7 +20,7 @@
 #   Started by THIS script:
 #     SillyTavern        127.0.0.1:8001   (node server.js from your ST install)
 #     diag sidecar       127.0.0.1:8700   (python docker/diag/app.py)
-#     nginx              0.0.0.0:1580     (native nginx, installed via winget)
+#     nginx              0.0.0.0:1582     (native nginx, installed via winget)
 #                        reverse-proxies to 127.0.0.1:{5000,8001,8700,11434}
 #                        serves splash + diagnostics static HTML
 #
@@ -48,14 +48,14 @@ cd "$REPO_ROOT"
 # Config — override any of these with env vars if needed.
 # ---------------------------------------------------------------
 ST_DIR="${ST_DIR:-/c/Users/aaron/SillyTavern}"
-ST_PORT="${ST_PORT:-1581}"          # egress: 1580=nginx 1581=ST 1582=docker-nginx
+ST_PORT="${ST_PORT:-1590}"          # internal: matches docker convention (was 1581)
 DIAG_PORT="${DIAG_PORT:-1591}"      # internal 159x sequence (was 8700)
 FLASK_SD_PORT="${FLASK_SD_PORT:-1592}"  # internal 159x sequence (was 5000)
 OLLAMA_PORT="${OLLAMA_PORT:-1593}"  # internal 159x sequence (was 11434)
 TTS_PORT="${TTS_PORT:-1594}"        # internal 159x sequence (was 8880) — optional, not auto-started
 STT_PORT="${STT_PORT:-1595}"        # internal 159x sequence (was 9000) — optional, not auto-started
 FLASK_MUSIC_PORT="${FLASK_MUSIC_PORT:-1596}"  # MusicGen service — optional, not auto-started
-NGINX_PORT="${NGINX_PORT:-1580}"    # egress
+NGINX_PORT="${NGINX_PORT:-1582}"    # egress: all three build modes (dev/docker/exe) use 1582
 # Language model — qwen2.5:14b has 32k context, required for the 36k-char system prompt.
 # The diag's _ollama_model() will auto-prefer large-context models even without this set,
 # but pinning it here avoids surprises on systems with many models installed.

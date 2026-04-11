@@ -91,6 +91,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="http://localhost:1582", help="Nginx gateway URL (default: http://localhost:1582)")
     parser.add_argument("--diag", default="", help="Direct diag URL (optional, skips nginx for diag-only checks)")
+    parser.add_argument("--expected-composite", default="",
+                        help="If given, fail if composite_sha256 doesn't match this value")
     args = parser.parse_args()
 
     base = args.base.rstrip("/")
@@ -182,6 +184,15 @@ def main():
             else:
                 print(f"    {_warn('⚠')} {short:<42} {fstatus}")
 
+        # Cross-build parity check — only when orchestrated by release-sanity.py
+        if args.expected_composite and composite:
+            match = composite == args.expected_composite
+            r.check(
+                "composite matches source of truth",
+                match,
+                f"got {composite[:16]}…  expected {args.expected_composite[:16]}…",
+            )
+
     # ── 5. Player input round-trip ────────────────────────────────────────────
     print(_bold("\n5. Player input round-trip"))
     code, resp = _post(f"{base}/player-input", {"text": "hello, sanity check"}, timeout=10.0)
@@ -234,6 +245,86 @@ def main():
     r.check("/api/music/health reachable", code == 200,
             f"HTTP {code}" + (" (music service may not be in docker stack)" if code != 200 else ""),
             critical=False, warn_only=True)
+
+    # ── 10. AI pipeline trace ─────────────────────────────────────────────────
+    # Sends a known probe input and captures what actually appears on screen:
+    # [system prompt] → [first_mes] → [player input] → [screen text / image / audio]
+    print(_bold("\n10. AI pipeline trace"))
+
+    # Record narrator-turn count before probe (to detect new turns afterwards)
+    turns_url = f"{base}/diagnostics/narrator-turns?n=50"
+
+    def _get_turns() -> list:
+        """Fetch narrator turns — endpoint returns {"turns":[...]} or a list."""
+        _, raw = _get(turns_url, timeout=5.0)
+        if isinstance(raw, dict):
+            return raw.get("turns", [])
+        return raw if isinstance(raw, list) else []
+
+    pre_turns = _get_turns()
+    pre_count = len(pre_turns)
+
+    # Show prompt-layer hashes from the already-fetched signature
+    if isinstance(sig, dict):
+        files = sig.get("files", {})
+        _sig_files = {f.split("/")[-1]: info for f, info in files.items()}
+        sp_info  = _sig_files.get("fortress_system_prompt.txt", {})
+        fm_info  = _sig_files.get("fortress_first_mes.txt", {})
+        sp_hash  = (sp_info.get("sha256") or "")[:12]
+        fm_hash  = (fm_info.get("sha256") or "")[:12]
+        sp_size  = sp_info.get("size_bytes", 0)
+        fm_size  = fm_info.get("size_bytes", 0)
+        print(f"    {_dim('── Prompt layers ────────────────────────────────────────')}")
+        print(f"    {_dim('system_prompt:')}  hash={sp_hash or '?':12}  {sp_size:,}b")
+        print(f"    {_dim('first_mes:')}      hash={fm_hash or '?':12}  {fm_size:,}b")
+
+    # Send probe player input
+    probe = "describe the world around me"
+    code2, resp2 = _post(f"{base}/player-input", {"text": probe}, timeout=15.0)
+    intent2 = resp2.get("intent", "") if isinstance(resp2, dict) else ""
+    print(f"    {_dim('player:')}         {probe}")
+    print(f"    {_dim('intent:')}         {intent2 or '—'}")
+    r.check("probe input accepted", code2 == 200, f"HTTP {code2}", warn_only=True)
+
+    # Poll narrator-turns for the screen-visible response (up to 60s)
+    narrator_text = ""
+    transforms: list[str] = []
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        post_turns = _get_turns()
+        if len(post_turns) > pre_count:
+            # Find the first new non-player turn
+            for t in post_turns[pre_count:]:
+                if not t.get("is_player"):
+                    blocks = t.get("parsed_blocks", [])
+                    for b in blocks:
+                        if b.get("senseType") in ("SIGHT", "SOUND", "TASTE", "SMELL", "TOUCH", "ENVIRONMENT"):
+                            pass  # sense tags are embedded in prose; don't duplicate
+                        if b.get("channel") in ("narrator", "character") and b.get("text"):
+                            narrator_text += b["text"] + " "
+                    # Detect transforms: image/audio triggers
+                    raw = t.get("raw_text", "")
+                    if "[SIGHT]" in raw or "[ENVIRONMENT]" in raw:
+                        transforms.append("image generated")
+                    if "[SOUND]" in raw:
+                        transforms.append("audio generated")
+                    break
+            if narrator_text:
+                break
+        time.sleep(2.0)
+
+    r.check("narrator responded within 30s", bool(narrator_text),
+             "no narrator turn appeared", warn_only=True)
+
+    print(f"    {_dim('── Screen output ────────────────────────────────────────')}")
+    if narrator_text:
+        preview = narrator_text.strip()[:300]
+        print(f"    {_ok(preview)}{'…' if len(narrator_text.strip()) > 300 else ''}")
+    else:
+        print(f"    {_warn('(no response yet)')}")
+    for t in transforms:
+        print(f"    {_dim('→')} [{t}]")
+    print(f"    {_dim('─' * 60)}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = time.time() - overall_start

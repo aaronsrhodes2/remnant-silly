@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent.resolve()
-LAUNCHER = ROOT / "launcher" / "remnant_launcher.py"
+LAUNCHER = ROOT / "executable" / "remnant_launcher.py"
 SANITY   = ROOT / "scripts" / "docker-sanity.py"
 PORT     = 1582
 STARTUP_TIMEOUT_S = 90   # nginx is fast; services take longer but nginx is all we need
@@ -114,6 +114,14 @@ def main() -> int:
         "--base", default=f"http://localhost:{PORT}",
         help=f"Gateway URL to test against (default: http://localhost:{PORT})",
     )
+    parser.add_argument(
+        "--leave-up", action="store_true",
+        help="Leave native stack running after tests (don't stop launcher)",
+    )
+    parser.add_argument(
+        "--expected-composite",
+        help="If given, fail if composite_sha256 doesn't match this value",
+    )
     args = parser.parse_args()
 
     print(_bold(f"\n=== Remnant Native Launcher Sanity Test ==="))
@@ -174,17 +182,20 @@ def main() -> int:
     print(_bold("\nRunning sanity suite (docker-sanity.py)"))
     print(_dim(f"  (same 9-section checks as docker sanity)\n"))
 
-    result = subprocess.run(
-        [sys.executable, "-X", "utf8", str(SANITY), "--base", args.base],
-        cwd=ROOT,
-        env=launcher_env,
-    )
+    sanity_cmd = [sys.executable, "-X", "utf8", str(SANITY), "--base", args.base]
+    if args.expected_composite:
+        sanity_cmd += ["--expected-composite", args.expected_composite]
+    result = subprocess.run(sanity_cmd, cwd=ROOT, env=launcher_env)
     sanity_code = result.returncode
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
-    print(_bold("\nShutting down native stack"))
-    _stop_launcher(proc)
-    print(f"  {_ok('✓')} launcher stopped")
+    if args.leave_up:
+        print(_bold("\nLeaving native stack running (--leave-up)"))
+        print(f"  {_ok('✓')} stack running at {args.base}")
+    else:
+        print(_bold("\nShutting down native stack"))
+        _stop_launcher(proc)
+        print(f"  {_ok('✓')} launcher stopped")
 
     # ── Final verdict ─────────────────────────────────────────────────────────
     print()
