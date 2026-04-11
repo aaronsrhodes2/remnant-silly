@@ -1205,7 +1205,7 @@ connect();
 const inputEl = document.getElementById('player-input');
 const hintEl  = document.getElementById('input-hint');
 
-const AUTO_SEND_MS = 30000;
+const AUTO_SEND_MS = 5000;
 let _autoTimer = null;
 let _countdown = 0;
 let _tickTimer = null;
@@ -1227,7 +1227,7 @@ function _startCountdown() {
   _tickTimer = setInterval(() => {
     _countdown--;
     hintEl.textContent = _countdown > 0 ? _countdown + 's' : '';
-    if (_countdown <= 10) hintEl.classList.add('urgent');
+    if (_countdown <= 3) hintEl.classList.add('urgent');
   }, 1000);
   _autoTimer = setTimeout(() => {
     const text = inputEl.value.trim();
@@ -1344,7 +1344,7 @@ async function _startRecording() {
       if (!res.ok) throw new Error(`STT ${res.status}`);
       const data = await res.json();
       const text = (data.text || '').trim();
-      if (text) { inputEl.value = text; sendInput(); }
+      if (text) { inputEl.value = text; _startCountdown(); }
       else _micHint('no speech detected');
     } catch (err) {
       console.error('[STT]', err);
