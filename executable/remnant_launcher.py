@@ -6,6 +6,7 @@ Configuration-free entry point for the Remnant AI game.
 Manages all native services without requiring Docker:
   ollama      :1593  language model (LLM)
   flask-sd    :1592  image generation
+  flask-stt   :1595  speech-to-text (Whisper)
   flask-music :1596  ambient music (MusicGen)
   sillytavern :1590  chat/narrative engine
   diag        :1591  diagnostics sidecar
@@ -60,6 +61,7 @@ PORTS = {
     "diag":        1591,
     "flask-sd":    1592,
     "ollama":      1593,
+    "flask-stt":   1595,
     "flask-music": 1596,
 }
 
@@ -432,8 +434,9 @@ def run_setup(args) -> bool:
     # 5. Python Flask service deps
     python = _find_python()
     flask_sd_reqs  = REPO_ROOT / "docker" / "flask-sd"  / "requirements.txt"
+    flask_stt_reqs = REPO_ROOT / "docker" / "flask-stt" / "requirements.txt"
     flask_mus_reqs = REPO_ROOT / "docker" / "flask-music" / "requirements.txt"
-    for label, reqs in [("flask-sd", flask_sd_reqs), ("flask-music", flask_mus_reqs)]:
+    for label, reqs in [("flask-sd", flask_sd_reqs), ("flask-stt", flask_stt_reqs), ("flask-music", flask_mus_reqs)]:
         if reqs.exists():
             log(f"installing Python deps for {label}...", "head")
             subprocess.run(
@@ -712,6 +715,26 @@ class ServiceManager:
         else:
             log(f"flask-music already on :{PORTS['flask-music']}", "ok")
 
+        # ── flask-stt ────────────────────────────────────────────────────────
+        if not port_open(PORTS["flask-stt"]):
+            flask_stt_app = REPO_ROOT / "docker" / "flask-stt" / "app.py"
+            if flask_stt_app.exists():
+                log("starting flask-stt (speech-to-text)...", "head")
+                p = ManagedProcess(
+                    "flask-stt",
+                    [str(python), str(flask_stt_app)],
+                    env={
+                        **env_base,
+                        "LISTEN_PORT": str(PORTS["flask-stt"]),
+                    },
+                )
+                p.start()
+                self._procs.append(p)
+            else:
+                log("flask-stt/app.py not found — speech-to-text unavailable", "warn")
+        else:
+            log(f"flask-stt already on :{PORTS['flask-stt']}", "ok")
+
         # ── nginx (foreground, needed for port 1582) ─────────────────────────
         log("starting nginx gateway on :1582...", "head")
         conf_path = self._build_nginx_conf(nginx)
@@ -970,7 +993,7 @@ def main():
     sm = ServiceManager()
 
     # Write pending status so splash shows something immediately
-    for svc in ["flask-sd", "ollama"]:
+    for svc in ["flask-sd", "flask-stt", "ollama"]:
         _stamp_status(f"{svc}.json", "pending", "starting…")
 
     ok = sm.start_all()
@@ -983,9 +1006,10 @@ def main():
     for name, port in [("diag", PORTS["diag"]), ("sillytavern", PORTS["sillytavern"])]:
         _wait_for_port(port, name, timeout=60)
 
-    # Stamp flask-sd / ollama status
-    _stamp_status("flask-sd.json", "ready" if port_open(PORTS["flask-sd"]) else "pending")
-    _stamp_status("ollama.json",   "ready" if port_open(PORTS["ollama"])   else "pending")
+    # Stamp flask-sd / flask-stt / ollama status
+    _stamp_status("flask-sd.json",  "ready" if port_open(PORTS["flask-sd"])  else "pending")
+    _stamp_status("flask-stt.json", "ready" if port_open(PORTS["flask-stt"]) else "pending")
+    _stamp_status("ollama.json",    "ready" if port_open(PORTS["ollama"])    else "pending")
 
     # Service status summary
     url = f"http://localhost:{PORTS['nginx']}/splash.html"
