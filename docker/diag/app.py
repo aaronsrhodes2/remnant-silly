@@ -2133,7 +2133,6 @@ def _build_ai_snapshot() -> dict:
             "status_dir": str(STATUS_DIR),
             "flask_sd_url": FLASK_SD_URL,
             "ollama_url": OLLAMA_URL,
-            "sillytavern_url": SILLYTAVERN_URL,
         },
         "notes_for_ai": [
             "This snapshot is self-contained — all data you need to diagnose should be in this payload.",
