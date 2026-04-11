@@ -1077,8 +1077,9 @@ _CHARACTER_RE = re.compile(
 # Tags to strip from displayed narrator prose (keep raw_text intact for processing).
 # Covers all structured narrator tags that are machine-readable directives, not prose.
 _STRIP_DISPLAY_TAGS_RE = re.compile(
-    r'\[(?:GENERATE_IMAGE|INTRODUCE|ITEM|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
-    r'|PLAYER_TRAIT|UPDATE_PLAYER|PERMANENCE|LOCATION|NPC|ENTITY|META)[^\]]*\]'
+    r'\[/?(?:GENERATE_IMAGE|INTRODUCE|ITEM|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
+    r'|PLAYER_TRAIT|UPDATE_PLAYER|PERMANENCE|LOCATION|NPC|ENTITY|META'
+    r'|MOOD|SOUND|SIGHT|SMELL|TASTE|TOUCH|ENVIRONMENT)[^\]]*\]'
     r'(?:\s*:\s*"[^"]*")?',
     re.DOTALL | re.IGNORECASE,
 )
