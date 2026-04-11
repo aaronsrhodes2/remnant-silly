@@ -1,112 +1,168 @@
-/* Remnant splash — dark parchment theme, matches the in-game UI vibe. */
+/* Remnant splash — The Fortress speaks. Dark void + amber-ember theme. */
 
 :root {
-    --bg:        #0a0a0f;
-    --bg-panel:  #14141c;
-    --fg:        #e8e4d8;
-    --fg-dim:    #8a8577;
-    --accent:    #d4a84b;       /* ember gold */
-    --accent-dim:#6e5624;
-    --ok:        #6ebf62;
-    --err:       #c85050;
-    --bar-bg:    #1f1f2a;
-    --border:    #2a2a36;
-    --mono:      ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --void:        #04040a;
+    --bg-panel:    rgba(8, 8, 18, 0.82);
+    --fg:          #e8e4d8;
+    --fg-dim:      #9a9285;
+    --accent:      #d4a84b;
+    --accent-dim:  #7a5c28;
+    --accent-glow: rgba(212, 168, 75, 0.18);
+    --ok:          #6ebf62;
+    --ok-glow:     rgba(110, 191, 98, 0.15);
+    --err:         #c85050;
+    --bar-bg:      rgba(255,255,255,0.06);
+    --border:      rgba(212, 168, 75, 0.20);
+    --border-ready:rgba(110, 191, 98, 0.45);
+    --mono:        ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
-    margin: 0;
-    padding: 0;
-    background: var(--bg);
+    min-height: 100vh;
+    background-color: var(--void);
     color: var(--fg);
     font-family: Georgia, "Times New Roman", serif;
-    min-height: 100vh;
 }
 
+/* ── Full-bleed fortress background ────────────────────────────────────────── */
+
+body {
+    background-image: url('/game/assets/fortress-interior.jpg');
+    background-size: cover;
+    background-position: center top;
+    background-attachment: fixed;
+}
+
+/* Dark void overlay — keeps text readable over the image */
+.void-bg {
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(
+        180deg,
+        rgba(4, 4, 10, 0.88) 0%,
+        rgba(4, 4, 10, 0.78) 40%,
+        rgba(4, 4, 10, 0.92) 100%
+    );
+    z-index: 0;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+
 main#splash {
-    max-width: 780px;
+    position: relative;
+    z-index: 1;
+    max-width: 720px;
     margin: 0 auto;
-    padding: 48px 32px;
+    padding: 56px 32px 48px;
+}
+
+/* ── Header / Fortress voice ─────────────────────────────────────────────────── */
+
+.fortress-sigil {
+    font-size: 28px;
+    color: var(--accent);
+    text-shadow: 0 0 24px rgba(212, 168, 75, 0.7), 0 0 6px rgba(212, 168, 75, 0.9);
+    margin-bottom: 10px;
+    animation: sigil-pulse 3s ease-in-out infinite;
+}
+
+@keyframes sigil-pulse {
+    0%, 100% { opacity: 0.8; text-shadow: 0 0 16px rgba(212,168,75,0.5); }
+    50%       { opacity: 1.0; text-shadow: 0 0 32px rgba(212,168,75,0.9), 0 0 8px rgba(212,168,75,1); }
 }
 
 header h1 {
-    font-size: 48px;
+    font-size: 52px;
     font-weight: 400;
-    letter-spacing: 0.15em;
-    margin: 0 0 4px 0;
+    letter-spacing: 0.22em;
     color: var(--accent);
     text-transform: uppercase;
+    text-shadow:
+        0 0 40px rgba(212, 168, 75, 0.5),
+        0 0 12px rgba(212, 168, 75, 0.3),
+        0 2px 4px rgba(0,0,0,0.8);
+    margin-bottom: 24px;
 }
 
-header .subtitle {
-    font-size: 18px;
+.fortress-voice {
+    font-size: 16px;
     font-style: italic;
+    line-height: 1.7;
     color: var(--fg-dim);
-    margin: 0 0 16px 0;
+    max-width: 58ch;
+    margin-bottom: 36px;
+    padding-left: 18px;
+    border-left: 2px solid var(--accent-dim);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
 }
 
-header .explainer {
-    font-size: 15px;
-    line-height: 1.5;
-    color: var(--fg);
-    max-width: 62ch;
-    margin: 0 0 32px 0;
-}
+/* ── Systems section label ──────────────────────────────────────────────────── */
 
-/* Hardware performance estimate — shown when Windows launcher writes
-   hardware-profile.json. Hidden (empty) in Docker mode. */
-#hw-perf {
+#systems-label {
     font-family: var(--mono);
-    font-size: 13px;
-    color: var(--accent);
-    margin: 0 0 8px 0;
-    letter-spacing: 0.04em;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    color: var(--accent-dim);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
 }
-#hw-perf:empty { display: none; }
 
-#hw-gpu {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--fg-dim);
-    margin: 0 0 24px 0;
-}
-#hw-gpu:empty { display: none; }
+/* ── Service cards ──────────────────────────────────────────────────────────── */
 
 #services {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
+    margin-bottom: 32px;
 }
 
 article.service {
     background: var(--bg-panel);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 3px;
     padding: 16px 20px;
+    backdrop-filter: blur(4px);
+    transition: border-color 0.5s ease, box-shadow 0.5s ease;
+}
+
+article.service.pending {
+    opacity: 0.60;
+}
+
+article.service.ready {
+    border-color: var(--border-ready);
+    box-shadow: 0 0 20px var(--ok-glow), inset 0 0 12px rgba(110,191,98,0.04);
+}
+
+article.service.error {
+    border-color: var(--err);
 }
 
 article.service h2 {
-    margin: 0 0 4px 0;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 400;
     color: var(--accent);
     display: flex;
     justify-content: space-between;
     align-items: baseline;
+    margin-bottom: 4px;
+    text-shadow: 0 0 12px rgba(212,168,75,0.3);
 }
 
 article.service h2 .phase {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.14em;
     color: var(--fg-dim);
 }
 
-article.service.ready h2 .phase  { color: var(--ok); }
-article.service.error h2 .phase  { color: var(--err); }
+article.service.ready  h2 .phase { color: var(--ok); }
+article.service.error  h2 .phase { color: var(--err); }
 
 article.service ul.models {
     list-style: none;
@@ -117,9 +173,7 @@ article.service ul.models {
     gap: 10px;
 }
 
-article.service li.model {
-    font-size: 13px;
-}
+article.service li.model { font-size: 13px; }
 
 .model-head {
     display: flex;
@@ -128,26 +182,13 @@ article.service li.model {
     margin-bottom: 4px;
 }
 
-.model-name {
-    font-family: var(--mono);
-    color: var(--fg);
-}
-
-.model-license {
-    font-size: 11px;
-    color: var(--fg-dim);
-    font-style: italic;
-}
-
-.model-bytes {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--fg-dim);
-}
+.model-name    { font-family: var(--mono); color: var(--fg); }
+.model-license { font-size: 11px; color: var(--fg-dim); font-style: italic; }
+.model-bytes   { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
 
 .progress {
     width: 100%;
-    height: 8px;
+    height: 6px;
     background: var(--bar-bg);
     border-radius: 2px;
     overflow: hidden;
@@ -157,13 +198,38 @@ article.service li.model {
     height: 100%;
     width: 0%;
     background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    box-shadow: 0 0 8px rgba(212,168,75,0.5);
     transition: width 0.4s ease;
 }
 
+.error-msg {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(200, 80, 80, 0.06);
+    border-left: 2px solid var(--err);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--err);
+    white-space: pre-wrap;
+}
+
+.detail-msg {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(212, 168, 75, 0.05);
+    border-left: 2px solid var(--accent-dim);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--fg-dim);
+    font-style: italic;
+    white-space: pre-wrap;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────────── */
+
 footer {
-    margin-top: 32px;
-    padding-top: 24px;
     border-top: 1px solid var(--border);
+    padding-top: 24px;
 }
 
 #overall {
@@ -171,14 +237,14 @@ footer {
     grid-template-columns: 80px 1fr 60px;
     gap: 12px;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 20px;
 }
 
 .overall-label {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.14em;
     color: var(--fg-dim);
 }
 
@@ -189,44 +255,35 @@ footer {
     color: var(--accent);
 }
 
-.fineprint {
+/* ── Hardware profile (Windows launcher) ───────────────────────────────────── */
+
+#hw-block {
+    margin-bottom: 20px;
+}
+
+#hw-perf {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+}
+#hw-perf:empty { display: none; }
+
+#hw-gpu {
+    font-family: var(--mono);
     font-size: 11px;
     color: var(--fg-dim);
-    line-height: 1.5;
-    margin: 0;
 }
+#hw-gpu:empty { display: none; }
 
-article.service.pending {
-    opacity: 0.55;
-}
+/* ── Fine print (Fortress voice) ────────────────────────────────────────────── */
 
-article.service.error {
-    border-color: var(--err);
-}
-
-.error-msg {
-    margin-top: 8px;
-    padding: 8px 12px;
-    background: rgba(200, 80, 80, 0.08);
-    border-left: 2px solid var(--err);
-    font-family: var(--mono);
+.fortress-fineprint {
     font-size: 12px;
-    color: var(--err);
-    white-space: pre-wrap;
-}
-
-/* Neutral in-progress detail line (probing, verifying, etc.). Used
-   when the splash wants to show liveness during a long operation
-   that isn't a byte-progress download — shares the box treatment
-   with .error-msg but uses the calm accent-dim palette so it
-   doesn't read as a failure. */
-.detail-msg {
-    margin-top: 8px;
-    padding: 8px 12px;
-    background: rgba(212, 168, 75, 0.06);
-    border-left: 2px solid var(--accent-dim);
-    font-family: var(--mono);
-    font-size: 12px;
+    font-style: italic;
     color: var(--fg-dim);
-    white-space: pre-wrap;
+    line-height: 1.6;
+    max-width: 60ch;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
 }

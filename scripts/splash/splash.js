@@ -23,8 +23,8 @@
 // image — so it's not gated through the splash; nginx proxies to it
 // after this splash redirects.
 const SERVICES = [
-    { id: "flask-sd", label: "Image backend (Stable Diffusion + IP-Adapter)" },
-    { id: "ollama",   label: "Text backend (Ollama + Mistral)" },
+    { id: "flask-sd", label: "The Sight-Kiln — vision and memory" },
+    { id: "ollama",   label: "The Lexicon Engine — language and will" },
 ];
 
 const POLL_INTERVAL_MS = 1000;
@@ -125,7 +125,7 @@ function render(states) {
         if ((state.models || []).length === 0) {
             const li = document.createElement("li");
             li.className = "model";
-            li.innerHTML = `<div class="model-head"><span class="model-name">(waiting for downloader to start)</span></div>`;
+            li.innerHTML = `<div class="model-head"><span class="model-name" style="font-style:italic;opacity:0.6">The forge is cold. Awaiting the heat of matter…</span></div>`;
             ul.appendChild(li);
         }
         article.appendChild(ul);
