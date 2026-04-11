@@ -818,6 +818,7 @@ def _run_webview(url: str, sm: "ServiceManager"):
     """Open a frameless WebView2 window. Blocks on the main thread until closed."""
     import webview  # pywebview — requires WebView2 (pre-installed on Win10/11)
 
+    ico = REPO_ROOT / "web" / "assets" / "favicon.ico"
     win = webview.create_window(
         "The Remnant",
         url,
@@ -825,6 +826,7 @@ def _run_webview(url: str, sm: "ServiceManager"):
         easy_drag=True,
         resizable=True,
         min_size=(1024, 768),
+        icon=str(ico) if ico.exists() else None,
     )
 
     def on_closed():
