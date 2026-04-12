@@ -1129,7 +1129,13 @@ def _load_seed_world() -> None:
         if not title or status == "disabled":
             continue
 
-        lines = [f"\n[PILOT QUEST — {title.upper()}]"]
+        lines = [
+            "\n[INTERNAL STORY NOTES — DO NOT OUTPUT, LIST, SUMMARIZE, OR REFERENCE "
+            "THESE PHASES, PATHS, OR KEY BEATS IN YOUR RESPONSE. "
+            "This is background knowledge for you alone — the player discovers the "
+            "quest organically through play. Never print a phase list or option menu.]\n"
+            f"[PILOT QUEST — {title.upper()}]"
+        ]
         if quest.get("threat_summary"):
             lines.append(f"Threat: {quest['threat_summary']}")
         if quest.get("tone"):
@@ -1546,10 +1552,12 @@ def _build_messages() -> list[dict]:
                 short  = m["text"][:400].replace("\n", " ").strip()
                 lines.append(f"  [{ts}] {prefix}: {short}")
             system += (
-                "\n\n[RECALLED MEMORIES — Relevant events from earlier in the session, "
-                "retrieved by semantic similarity to the current moment:]\n"
+                "\n\n[INTERNAL CONTEXT — READ ONLY. DO NOT REPRODUCE, QUOTE, LIST, SUMMARIZE, "
+                "OR REFERENCE ANY PART OF THIS BLOCK IN YOUR OUTPUT. "
+                "USE ONLY AS SILENT BACKGROUND KNOWLEDGE TO INFORM YOUR NARRATION.]\n"
+                "[RECALLED MEMORIES — Relevant events retrieved by semantic similarity:]\n"
                 + "\n".join(lines)
-                + "\n[END RECALLED MEMORIES]"
+                + "\n[END RECALLED MEMORIES — END INTERNAL CONTEXT]"
             )
         active_turns = recent_turns
     else:
@@ -1624,6 +1632,60 @@ def _clean_narrator_prose(text: str) -> str:
     # Collapse multiple blank lines left by removed tags
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
+
+
+def _strip_context_bleed(text: str) -> str:
+    """Remove injected context blocks that the model accidentally echoed in output.
+
+    Handles: [RECALLED MEMORIES] dumps, [PILOT QUEST] regurgitation,
+    markdown-formatted key-beat lists, numbered option menus, third-person
+    player references, and AI-assistant opt-in phrasing.
+    """
+    # Strip [RECALLED MEMORIES] / [INTERNAL CONTEXT] full blocks
+    text = re.sub(
+        r"\[(?:INTERNAL (?:CONTEXT|STORY NOTES)[^\]]*|RECALLED MEMORIES[^\]]*)\]"
+        r".*?"
+        r"\[END (?:RECALLED MEMORIES|INTERNAL CONTEXT)[^\]]*\]",
+        "", text, flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Strip any lingering individual recalled-memory timestamp lines
+    text = re.sub(
+        r"(?m)^\s*\[20\d\d-\d\d-\d\dT\d\d:\d\d\]\s+(?:Player|Narrator):.*$",
+        "", text, flags=re.IGNORECASE,
+    )
+    # Strip [PILOT QUEST] / [END PILOT QUEST] blocks if echoed
+    text = re.sub(
+        r"\[(?:INTERNAL STORY NOTES[^\]]*\]\s*\n?\s*\[)?PILOT QUEST[^\]]*\]"
+        r".*?"
+        r"\[END PILOT QUEST[^\]]*\]",
+        "", text, flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Strip markdown-formatted context dump sections (bold headers + bullet lists)
+    text = re.sub(
+        r"\*\*(?:Recalled Memories|Phase \d+[^*]*Key Beats?|Next Steps?|Current Objective|Phases?)[^*]*\*\*"
+        r"[:\s]*(?:\n\s*[-*•\d].*?)*",
+        "", text, flags=re.IGNORECASE | re.MULTILINE,
+    )
+    # Strip "--- " section dividers the model sometimes outputs from the quest injection
+    text = re.sub(r"(?m)^---\s*$", "", text)
+    # Strip option-menu closing questions
+    text = re.sub(
+        r"(?i)which (?:path|option|approach|route|direction)(?:\s+would you like to (?:pursue|take|choose))?.*?\?",
+        "", text,
+    )
+    # Strip numbered option lists at line-start (classic "1. Continue... 2. Insult...")
+    text = re.sub(
+        r"(?m)^\d+\.\s+(?:Continue|Proceed|Insult|Trace|Follow|Work with|Go to|Head to|Try|Visit|Ask|Use)\b.*$",
+        "", text, flags=re.IGNORECASE,
+    )
+    # Strip third-person player references ("The player takes a moment to...")
+    text = re.sub(
+        r"(?i)\bthe player (?:takes?|feels?|notices?|turns?|pauses?|considers?|reflects?|stands?|seems?|moves?|heads?)\b[^.!?]*[.!?]",
+        "", text,
+    )
+    # Collapse excess blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _parse_narrator_blocks(text: str) -> list[dict]:
@@ -1797,6 +1859,11 @@ def _generate_narrator_turn() -> None:
             if not _is_truncated(full_text):
                 break
 
+        if not full_text.strip():
+            return
+
+        # Scrub any context blocks the model accidentally echoed before storing/broadcasting
+        full_text = _strip_context_bleed(full_text)
         if not full_text.strip():
             return
 
