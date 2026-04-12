@@ -203,5 +203,150 @@
       "triggers": ["the_foundry"],
       "loop": true
     }
+  ],
+
+  "sfx": [
+    {
+      "id": "hydraulic-hiss",
+      "title": "Hydraulic Hiss",
+      "file": "/game/assets/sfx/hydraulic-hiss.wav",
+      "category": "industrial",
+      "description": "Sharp pressurized steam release followed by a heavy metallic clunk — a robotic arm locking into place.",
+      "loop": false,
+      "locations": ["fabrication_bay", "the_gantry"]
+    },
+    {
+      "id": "magnetic-thrum",
+      "title": "Magnetic Thrum",
+      "file": "/game/assets/sfx/magnetic-thrum.wav",
+      "category": "industrial",
+      "description": "Low-frequency oscillating buzz that vibrates the floor — the anti-gravity stabilizers keeping the internal shell at equilibrium. Plays as a constant global ambient loop at very low volume (3-4%).",
+      "loop": true,
+      "global_ambient": true,
+      "gain": 0.04
+    },
+    {
+      "id": "master-lathe",
+      "title": "The Master Lathe",
+      "file": "/game/assets/sfx/master-lathe.wav",
+      "category": "industrial",
+      "description": "High-pitched rhythmic whir of spinning metal being shaved by a laser, with occasional tinking of brass shavings.",
+      "loop": false,
+      "locations": ["fabrication_bay", "quality_inspection"]
+    },
+    {
+      "id": "conveyor-rattle",
+      "title": "Conveyor Rattle",
+      "file": "/game/assets/sfx/conveyor-rattle.wav",
+      "category": "industrial",
+      "description": "Distant echoing sound of a heavy-duty chain-link belt moving large components across the Fabrication Bay.",
+      "loop": true,
+      "locations": ["fabrication_bay"]
+    },
+    {
+      "id": "arc-weld-sizzle",
+      "title": "Arc Welding Sizzle",
+      "file": "/game/assets/sfx/arc-weld-sizzle.wav",
+      "category": "industrial",
+      "description": "Crackling electric spit followed by low electrical drone as Sherri fuses metal plates.",
+      "loop": false,
+      "locations": ["fabrication_bay", "the_foundry"]
+    },
+    {
+      "id": "null-space-wind",
+      "title": "The Null-Space Wind",
+      "file": "/game/assets/sfx/null-space-wind.wav",
+      "category": "void",
+      "description": "Ghostly hollow whoosh like air rushing through a vacuum — heard near the massive viewports looking into null space.",
+      "loop": false,
+      "locations": ["sleeping_quarters", "dimensional_observation"]
+    },
+    {
+      "id": "crystalline-chime",
+      "title": "Crystalline Chime",
+      "file": "/game/assets/sfx/crystalline-chime.wav",
+      "category": "void",
+      "description": "Sharp melodic ping like glass vibrating — The Remnant's shifting 4D geometry.",
+      "loop": false,
+      "locations": ["the_nexus"]
+    },
+    {
+      "id": "portal-ripple",
+      "title": "Portal Ripple",
+      "file": "/game/assets/sfx/portal-ripple.wav",
+      "category": "void",
+      "description": "Wet swirling whoosh like heavy liquid being stirred — the sound of a dimensional door opening.",
+      "loop": false,
+      "locations": ["portal_chamber"]
+    },
+    {
+      "id": "static-discharge",
+      "title": "Static Discharge",
+      "file": "/game/assets/sfx/static-discharge.wav",
+      "category": "void",
+      "description": "Dying lightning strike — short sharp pops and crackling hum lingering near the Nexus pulpit.",
+      "loop": false,
+      "locations": ["the_nexus"]
+    },
+    {
+      "id": "gravitational-moan",
+      "title": "Gravitational Moan",
+      "file": "/game/assets/sfx/gravitational-moan.wav",
+      "category": "void",
+      "description": "Deep groaning metal like a tectonic plate shifting — the immense pressure of the chiral foams outside.",
+      "loop": false,
+      "locations": ["dimensional_observation", "sleeping_quarters"]
+    },
+    {
+      "id": "automaton-footfalls",
+      "title": "Automaton Footfalls",
+      "file": "/game/assets/sfx/automaton-footfalls.wav",
+      "category": "domestic",
+      "description": "Rhythmic metallic clinks on hollow metal floor — the sound of Sherri walking through the corridors.",
+      "loop": false
+    },
+    {
+      "id": "galley-whir",
+      "title": "The Galley Whir",
+      "file": "/game/assets/sfx/galley-whir.wav",
+      "category": "domestic",
+      "description": "Mechanical food dispenser processing — clicks followed by the soft warm hum of a heating element.",
+      "loop": false,
+      "locations": ["the_galley"]
+    },
+    {
+      "id": "fabric-rustle",
+      "title": "Fabric Rustle",
+      "file": "/game/assets/sfx/fabric-rustle.wav",
+      "category": "domestic",
+      "description": "Crisp clean sound of heavy industrial linens being folded in the Sleeping Quarters.",
+      "loop": false,
+      "locations": ["sleeping_quarters"]
+    },
+    {
+      "id": "echoing-drip",
+      "title": "Echoing Drip",
+      "file": "/game/assets/sfx/echoing-drip.wav",
+      "category": "domestic",
+      "description": "Slow rhythmic plink of condensation hitting a metal pipe — the vast lonely silence of unused corridors.",
+      "loop": false
+    },
+    {
+      "id": "barrier-warning",
+      "title": "The Barrier Warning",
+      "file": "/game/assets/sfx/barrier-warning.wav",
+      "category": "emergency",
+      "description": "Low-frequency pulse like a heartbeat — the anti-matter barrier at maximum capacity.",
+      "loop": true
+    },
+    {
+      "id": "data-terminal-chatter",
+      "title": "Data Terminal Chatter",
+      "file": "/game/assets/sfx/data-terminal-chatter.wav",
+      "category": "system",
+      "description": "Rapid-fire mechanical clicking and high-pitched digital chirps as the station AI processes information.",
+      "loop": false,
+      "locations": ["dimensional_observation"]
+    }
   ]
 }

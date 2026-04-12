@@ -1065,6 +1065,9 @@ function connect() {
       // Startup music: play intro theme then crossfade to Sherri's Routine.
       // Small delay so the page is visually settled before audio starts.
       setTimeout(_playStartupSequence, 800);
+      // Magnetic Thrum: station ambient hum starts slightly after music,
+      // fades in slowly over 6s at 4% gain.
+      setTimeout(_startMagneticThrum, 2000);
     } catch (_) {}
   });
 
@@ -1625,25 +1628,121 @@ async function _onMoodEvent(moodText) {
 }
 
 // ── Sound effects engine ──────────────────────────────────────────────────
+// ── Permanent world SFX (static files, bypasses MusicGen) ────────────────
+// Keyword lookup: if a narrator SOUND description contains any of these
+// words/phrases, serve the pre-generated static WAV instead of generating.
+const _STATIC_SFX = {
+  'hydraulic-hiss':       '/game/assets/sfx/hydraulic-hiss.wav',
+  'magnetic-thrum':       '/game/assets/sfx/magnetic-thrum.wav',
+  'master-lathe':         '/game/assets/sfx/master-lathe.wav',
+  'conveyor-rattle':      '/game/assets/sfx/conveyor-rattle.wav',
+  'arc-weld-sizzle':      '/game/assets/sfx/arc-weld-sizzle.wav',
+  'null-space-wind':      '/game/assets/sfx/null-space-wind.wav',
+  'crystalline-chime':    '/game/assets/sfx/crystalline-chime.wav',
+  'portal-ripple':        '/game/assets/sfx/portal-ripple.wav',
+  'static-discharge':     '/game/assets/sfx/static-discharge.wav',
+  'gravitational-moan':   '/game/assets/sfx/gravitational-moan.wav',
+  'automaton-footfalls':  '/game/assets/sfx/automaton-footfalls.wav',
+  'galley-whir':          '/game/assets/sfx/galley-whir.wav',
+  'fabric-rustle':        '/game/assets/sfx/fabric-rustle.wav',
+  'echoing-drip':         '/game/assets/sfx/echoing-drip.wav',
+  'barrier-warning':      '/game/assets/sfx/barrier-warning.wav',
+  'data-terminal-chatter':'/game/assets/sfx/data-terminal-chatter.wav',
+};
+
+const _SFX_KEYWORDS = [
+  { id: 'hydraulic-hiss',       keys: ['hydraulic', 'steam release', 'robotic arm', 'pressurized hiss'] },
+  { id: 'magnetic-thrum',       keys: ['magnetic thrum', 'stabilizer', 'anti-gravity', 'floor vibrat'] },
+  { id: 'master-lathe',         keys: ['lathe', 'brass shaving', 'laser cut', 'metal spinning'] },
+  { id: 'conveyor-rattle',      keys: ['conveyor', 'chain-link belt', 'chain link belt'] },
+  { id: 'arc-weld-sizzle',      keys: ['welding', 'weld sizzle', 'arc weld', 'metal fus'] },
+  { id: 'null-space-wind',      keys: ['null-space wind', 'null space wind', 'viewport wind', 'vacuum whoosh'] },
+  { id: 'crystalline-chime',    keys: ['crystalline chime', 'crystal chime', 'remnant chime', '4d chime', 'glass ping'] },
+  { id: 'portal-ripple',        keys: ['portal ripple', 'portal open', 'dimensional door', 'hoop open'] },
+  { id: 'static-discharge',     keys: ['static discharge', 'nexus static', 'lightning crack', 'pulpit crackle'] },
+  { id: 'gravitational-moan',   keys: ['gravitational moan', 'chiral foam', 'structural moan', 'tectonic groan'] },
+  { id: 'automaton-footfalls',  keys: ['automaton footfall', 'sherri footstep', 'robot footstep', 'metallic footfall'] },
+  { id: 'galley-whir',          keys: ['galley whir', 'food dispenser', 'heating element', 'galley hum'] },
+  { id: 'fabric-rustle',        keys: ['fabric rustle', 'linen fold', 'linen rustl', 'cloth fold'] },
+  { id: 'echoing-drip',         keys: ['echoing drip', 'condensation drip', 'corridor drip', 'pipe drip'] },
+  { id: 'barrier-warning',      keys: ['barrier warning', 'anti-matter barrier', 'equilibrium warning', 'barrier pulse'] },
+  { id: 'data-terminal-chatter',keys: ['terminal chatter', 'data terminal', 'terravore data', 'station ai chatter'] },
+];
+
+function _matchStaticSfx(description) {
+  if (!description) return null;
+  const lower = description.toLowerCase();
+  for (const { id, keys } of _SFX_KEYWORDS) {
+    if (keys.some(k => lower.includes(k))) return id;
+  }
+  return null;
+}
+
+// ── Magnetic Thrum — global ambient loop ─────────────────────────────────
+// The station's constant low-level hum. Starts when audio is first enabled,
+// loops forever at 4% gain — barely perceptible, just felt.
+let _thrumSource = null;
+let _thrumGain   = null;
+
+async function _startMagneticThrum() {
+  if (_thrumSource || !_sense.audio) return;
+  try {
+    const res = await fetch(_STATIC_SFX['magnetic-thrum']);
+    if (!res.ok) return;
+    const ctx = _ensureAudioCtx();
+    const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+    _thrumGain = ctx.createGain();
+    _thrumGain.gain.setValueAtTime(0, ctx.currentTime);
+    _thrumGain.gain.linearRampToValueAtTime(0.04, ctx.currentTime + 6);
+    _thrumGain.connect(ctx.destination);
+    _thrumSource = ctx.createBufferSource();
+    _thrumSource.buffer = buf;
+    _thrumSource.loop   = true;
+    _thrumSource.connect(_thrumGain);
+    _thrumSource.start();
+    console.log('[sfx] magnetic thrum started');
+  } catch (e) {
+    console.warn('[sfx] thrum failed:', e);
+  }
+}
+
 // SFX play at lower volume on a separate gain node.
 // Looping SFX (engines, fans, etc.) are stored so they can be stopped
 // when a new turn starts with a different scene.
 async function _onSfxEvent(description) {
   try {
-    const res = await fetch('/api/music/sfx', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt: description, duration: 4}),
-    });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data.audio) return;
+    let audioBuffer, shouldLoop;
 
-    const bytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+    // Static SFX shortcut — serve pre-generated file, skip MusicGen
+    const staticId = _matchStaticSfx(description);
+    if (staticId && _STATIC_SFX[staticId]) {
+      const res = await fetch(_STATIC_SFX[staticId]);
+      if (res.ok) {
+        const ctx = _ensureAudioCtx();
+        audioBuffer  = await ctx.decodeAudioData(await res.arrayBuffer());
+        // Looping SFX: conveyor, magnetic-thrum (if triggered explicitly), barrier-warning
+        shouldLoop = ['conveyor-rattle','barrier-warning'].includes(staticId);
+        console.log(`[sfx] static: ${staticId} loop=${shouldLoop}`);
+      }
+    }
+
+    if (!audioBuffer) {
+      // Dynamic generation via MusicGen
+      const res = await fetch('/api/music/sfx', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({prompt: description, duration: 4}),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.audio) return;
+      const bytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+      const ctx = _ensureAudioCtx();
+      audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+      shouldLoop  = !!data.loops;
+    }
+
     const ctx = _ensureAudioCtx();
-    const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
-
-    const shouldLoop = !!data.loops;
 
     // Stop any previous looping SFX with the same description
     if (shouldLoop && _sfxSources.has(description)) {
