@@ -2542,12 +2542,18 @@ def _stream_ollama_chat(
             delta = (chunk.get("message") or {}).get("content", "")
             full_text += delta
 
-            # Progressive sentence streaming — only before the first [CHARACTER tag
+            # Progressive sentence streaming — only before the first CHARACTER tag.
+            # Check for both bracketed "[CHARACTER" and drift variant "CHARACTER("
+            # so bracket-less tags don't flow into TTS as narrator prose.
             if on_prose_sentence and not prose_ended:
                 prose_buf += delta
-                if "[CHARACTER" in prose_buf:
+                _char_sentinel = next(
+                    (tok for tok in ("[CHARACTER", "CHARACTER(") if tok in prose_buf),
+                    None,
+                )
+                if _char_sentinel:
                     prose_ended = True
-                    pre = prose_buf[:prose_buf.index("[CHARACTER")]
+                    pre = prose_buf[:prose_buf.index(_char_sentinel)]
                     if pre.strip():
                         _flush_prose(pre)
                 else:
@@ -2580,13 +2586,62 @@ _CHARACTER_RE = re.compile(
 
 # Tags to strip from displayed narrator prose (keep raw_text intact for processing).
 # Covers all structured narrator tags that are machine-readable directives, not prose.
+# NOTE: raw_text is intentionally preserved with tags intact and sent back to Ollama
+# in _build_messages() so the model sees its own previous output in canonical form.
+# Only parsed_blocks (cleaned) is shown to the player or read by TTS.
 _STRIP_DISPLAY_TAGS_RE = re.compile(
-    r'\[/?(?:GENERATE_IMAGE|INTRODUCE|ITEM|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
+    r'\[/?(?:GENERATE_IMAGE|INTRODUCE|ITEM|LORE|SFX|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
     r'|PLAYER_TRAIT|UPDATE_PLAYER|PERMANENCE|LOCATION|NPC|ENTITY|META'
     r'|MOOD|SOUND|SIGHT|SMELL|TASTE|TOUCH|ENVIRONMENT)[^\]]*\]'
     r'(?:\s*:\s*"[^"]*")?',
     re.DOTALL | re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# Tag normalizer — bracket-tolerant regexes that canonicalise LLM tag drift
+# ---------------------------------------------------------------------------
+# The LLM sometimes emits tags without [ ] delimiters (e.g. CHARACTER(X): "y"
+# instead of [CHARACTER(X): "y"]).  These patterns match both forms and always
+# output the canonical bracketed version.  Running this before _inject_missing_tags
+# ensures _CHARACTER_RE in _parse_narrator_blocks() reliably extracts dialogue,
+# and _STRIP_DISPLAY_TAGS_RE reliably removes all machine tags from display.
+# Storing the normalized form in raw_text also means the model's own conversation
+# history shows correct format — creating a positive reinforcement loop.
+
+_NORM_CHARACTER_RE = re.compile(
+    r'\[?CHARACTER\(([^)\]]+)\)\s*:\s*"([^"]+)"\]?',
+    re.DOTALL,
+)
+_NORM_LORE_RE = re.compile(
+    r'\[?LORE\(([^)\]]+)\)\s*:\s*"([^"]+)"\]?',
+    re.DOTALL | re.IGNORECASE,
+)
+_NORM_ITEM_RE = re.compile(
+    r'\[?ITEM\(([^)\]]+)\)\s*:\s*"([^"]+)"\]?',
+    re.DOTALL | re.IGNORECASE,
+)
+_NORM_INTRODUCE_RE = re.compile(
+    r'\[?INTRODUCE\(([^)\]]+)\)\s*:\s*"([^"]+)"\]?',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _normalize_narrator_output(text: str) -> str:
+    """Normalize LLM tag-format drift to canonical bracketed form.
+
+    Handles the most common drift patterns:
+      - Missing [ ] delimiters:  CHARACTER(X): "y"   → [CHARACTER(X): "y"]
+      - Missing close bracket:   [CHARACTER(X): "y"  → [CHARACTER(X): "y"]
+      - Missing open bracket:    CHARACTER(X): "y"]  → [CHARACTER(X): "y"]
+
+    All four normalizers are idempotent — already-correct tags are unchanged.
+    Call after _strip_context_bleed() and before _inject_missing_tags().
+    """
+    text = _NORM_CHARACTER_RE.sub(r'[CHARACTER(\1): "\2"]', text)
+    text = _NORM_LORE_RE.sub(r'[LORE(\1): "\2"]', text)
+    text = _NORM_ITEM_RE.sub(r'[ITEM(\1): "\2"]', text)
+    text = _NORM_INTRODUCE_RE.sub(r'[INTRODUCE(\1): "\2"]', text)
+    return text
 
 
 def _clean_narrator_prose(text: str) -> str:
@@ -2986,6 +3041,11 @@ def _generate_narrator_turn() -> None:
         full_text = _strip_context_bleed(full_text)
         if not full_text.strip():
             return
+
+        # Normalize tag format drift (bracket-less tags → canonical [TAG(x): "y"] form).
+        # Must run before inject so _inject_missing_tags sees properly bracketed existing tags
+        # and before raw_text is stored so the model's history always shows canonical form.
+        full_text = _normalize_narrator_output(full_text)
 
         # Inject any machine tags the model forgot to emit (MOOD, INTRODUCE, LORE).
         # Must run after context-bleed removal so we operate on clean prose.
