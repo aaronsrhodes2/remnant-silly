@@ -2994,6 +2994,69 @@ def _enqueue_image_generation(narrator_text: str) -> None:
     ).start()
 
 
+def _prewarm_visuals() -> None:
+    """Splash pre-warm: generate the current location image in the background.
+
+    Called when the frontend sends a prewarm=true player-input.  Uses the
+    Sorting Hat to retrieve the current location's sd_prompt from world_knowledge,
+    then fires flask-sd.  Narrator-yielding: waits 5s idle before the SD call.
+    """
+    # Yield to any active narrator generation first
+    idle_since: float | None = None
+    for _ in range(30):                 # up to 30s total wait
+        if _generating or _classifying:
+            idle_since = None
+            time.sleep(1)
+            continue
+        if idle_since is None:
+            idle_since = time.time()
+            time.sleep(1)
+            continue
+        if time.time() - idle_since < 5.0:
+            time.sleep(1)
+            continue
+        break
+
+    # Retrieve location-specific sd_prompt from world_knowledge
+    hint = ""
+    try:
+        if _chroma_knowledge and _chroma_knowledge.count() > 0:
+            # Query using player's last known location or generic "current scene"
+            locs = [e for e in _world.get("entities", {}).values()
+                    if e.get("type") == "location"]
+            loc_id = locs[-1].get("id", "portal_bay") if locs else "portal_bay"
+            qr = _chroma_knowledge.query(
+                query_texts=[f"location {loc_id} sight scene"],
+                n_results=3,
+                where={"service_target": "flask-sd"},
+                include=["documents"],
+            )
+            docs = (qr.get("documents") or [[]])[0]
+            hint = " ".join(docs)[:400].strip()
+    except Exception:
+        pass
+
+    if not hint:
+        hint = "ancient space station interior, dark sci-fi, atmospheric"
+
+    sd_prompt = _SD_STYLE_PREFIX + hint
+    gen_payload = json.dumps({"prompt": sd_prompt, "width": 768, "height": 512}).encode("utf-8")
+    try:
+        img_code, img_resp, _ = _http(
+            "POST", f"{FLASK_SD_URL}/api/generate",
+            body=gen_payload, timeout=120.0,
+        )
+        if img_code == 200:
+            data = json.loads(img_resp)
+            img_url = data.get("image_url") or data.get("url") or ""
+            if img_url:
+                _sse_broadcast("scene_image", {"image": img_url, "kind": "location",
+                                               "description": "pre-warmed scene"})
+                print(f"[diag/prewarm] location image ready: {img_url}")
+    except Exception as exc:
+        print(f"[diag/prewarm] flask-sd prewarm failed: {exc}")
+
+
 def _do_image_generation(narrator_text: str) -> None:
     global _latest_scene_image
     markers = _GENERATE_IMAGE_RE.findall(narrator_text)
@@ -4045,6 +4108,68 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/actions":
             self._send_json(200, {"actions": _action_catalog()})
             return
+
+        if path == "/session-state":
+            # Fast — no Ollama call. Used by the splash screen to decide mode.
+            locs = [e for e in _world.get("entities", {}).values()
+                    if e.get("type") == "location"]
+            last_loc = locs[-1].get("id", "") if locs else ""
+            chunks = 0
+            try:
+                if _chroma_knowledge is not None:
+                    chunks = _chroma_knowledge.count()
+            except Exception:
+                pass
+            self._send_json(200, {
+                "mode": "continue" if _narrator_turns else "new",
+                "turns": len(_narrator_turns),
+                "npcs_met": sorted(_introduced_this_session),
+                "last_location": last_loc,
+                "sorting_hat_ready": chunks > 0,
+                "world_chunks": chunks,
+                "player_dressed": _player_dressed,
+            })
+            return
+
+        if path == "/session-summary":
+            # Blocking — calls Ollama to produce a 2-3 sentence catch-up summary.
+            # Only called on "continue" sessions; 20s timeout.
+            if not _narrator_turns:
+                self._send_json(200, {"summary": "", "mode": "new"})
+                return
+            recent = list(_narrator_turns)[-20:]
+            story_digest = "\n".join(
+                t.get("raw_text", "")[:150].replace("\n", " ").strip()
+                for t in recent
+                if not t.get("is_player") and t.get("raw_text", "").strip()
+            )[:1200]
+            prompt = (
+                "You are The Fortress — the ancient, sardonic narrator of a dark sci-fi story "
+                "set aboard a self-aware station drifting between dimensions. "
+                "In 2-3 vivid sentences, remind the returning player what has happened so far. "
+                "Be evocative, atmospheric, and in character. "
+                "Start with 'When you left...' or 'Last time, you...' or similar.\n\n"
+                f"STORY SO FAR:\n{story_digest}\n\nReminder (2-3 sentences):"
+            )
+            s_payload = json.dumps({
+                "model": _ollama_model(),
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": 140, "temperature": 0.65},
+            }).encode("utf-8")
+            code, resp, _ = _http(
+                "POST", f"{OLLAMA_URL}/api/generate",
+                body=s_payload, timeout=20.0,
+            )
+            summary = ""
+            if code == 200:
+                try:
+                    summary = json.loads(resp).get("response", "").strip()
+                except Exception:
+                    pass
+            self._send_json(200, {"summary": summary, "mode": "continue"})
+            return
+
         if path == "/narrator-turns":
             qs = parse_qs(urlparse(self.path).query)
             n = int(qs.get("n", ["50"])[0])
@@ -4240,6 +4365,15 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length else b""
             try:
                 payload = json.loads(raw.decode("utf-8")) if raw else {}
+
+                # Splash pre-warm: fire location image only, no narrator turn
+                if payload.get("prewarm"):
+                    threading.Thread(
+                        target=_prewarm_visuals, daemon=True, name="splash-prewarm",
+                    ).start()
+                    self._send_json(200, {"ok": True, "prewarm": True})
+                    return
+
                 text = payload.get("text", "").strip()
                 if not text:
                     self._send_json(400, {"ok": False, "error": "empty text"})

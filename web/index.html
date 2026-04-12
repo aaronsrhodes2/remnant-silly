@@ -662,6 +662,68 @@ html, body {
   margin-left: 6px;
 }
 
+/* ── Discovery notes — slide-in entity cards ── */
+#discovery-notes {
+  position: fixed;
+  right: 16px;
+  top: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 900;
+  pointer-events: none;
+  width: 270px;
+}
+.disc-note {
+  background: #111118;
+  border: 1px solid rgba(0,200,255,0.28);
+  border-radius: 6px;
+  padding: 8px 10px;
+  pointer-events: auto;
+  cursor: pointer;
+  animation: discSlideIn 0.3s ease;
+  transition: opacity 0.6s;
+  user-select: none;
+}
+.disc-note:hover { border-color: rgba(0,200,255,0.55); }
+.disc-note.fading { opacity: 0; }
+.disc-note .dn-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.disc-note .dn-keyword {
+  font-size: 12px;
+  font-weight: bold;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.04em;
+}
+.disc-note .dn-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: rgba(0,200,255,0.14);
+  color: rgba(100,220,255,0.75);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.disc-note .dn-prose {
+  font-size: 10px;
+  color: rgba(200,220,240,0.5);
+  line-height: 1.4;
+}
+.disc-note .dn-hint {
+  font-size: 9px;
+  color: rgba(100,200,255,0.35);
+  margin-top: 4px;
+}
+@keyframes discSlideIn {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
 /* ── Item / Inventory continuation chooser ── */
 #item-chooser {
   position: absolute;
@@ -738,9 +800,61 @@ html, body {
 /* Continuation stage indicator on textarea */
 #player-input[data-cont="awaiting_item"]  { border-color: rgba(255,200,50,0.70); box-shadow: 0 0 0 2px rgba(255,200,50,0.10); }
 #player-input[data-cont="awaiting_rest"]  { border-color: rgba(100,255,150,0.60); box-shadow: 0 0 0 2px rgba(100,255,150,0.10); }
+
+/* ── Splash overlay ── */
+#splash-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: #070710;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.9s ease;
+}
+#splash-overlay.splash-hidden { opacity: 0; pointer-events: none; }
+.splash-inner {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px; max-width: 520px; width: 90%; text-align: center;
+}
+.splash-logo {
+  font-size: 2.4rem; letter-spacing: 0.35em; color: #c8a96e;
+  font-weight: 300; text-transform: uppercase; margin-bottom: 6px;
+}
+#splash-mode-label {
+  font-size: 0.72rem; letter-spacing: 0.25em; color: #556; text-transform: uppercase;
+  margin-bottom: 18px;
+}
+#splash-mode-label.mode-continue { color: #7fa; }
+.splash-steps { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.splash-step {
+  font-size: 0.8rem; color: #444; transition: color 0.4s, opacity 0.4s;
+  opacity: 0.5; letter-spacing: 0.05em;
+}
+.splash-step.s-active  { color: #c8a96e; opacity: 1; }
+.splash-step.s-done    { color: #4a9; opacity: 0.8; }
+.splash-step.s-done::before { content: '✓ '; }
+#splash-summary {
+  margin-top: 22px; min-height: 56px; max-width: 460px;
+  color: #a0a0b8; font-style: italic; font-size: 0.88rem;
+  line-height: 1.65; opacity: 0;
+  transition: opacity 0.6s ease 0.2s;
+}
+#splash-summary.visible { opacity: 1; }
 </style>
 </head>
 <body>
+
+<!-- ── Splash overlay — shown on every page load and after world reset ── -->
+<div id="splash-overlay">
+  <div class="splash-inner">
+    <div class="splash-logo">The Fortress</div>
+    <div id="splash-mode-label">INITIALISING…</div>
+    <div class="splash-steps">
+      <div class="splash-step" id="step-services">Warming up The Fortress…</div>
+      <div class="splash-step" id="step-memories">Reviewing memories…</div>
+      <div class="splash-step" id="step-visuals">Preparing visuals…</div>
+    </div>
+    <div id="splash-summary"></div>
+  </div>
+</div>
+
 <div id="app">
 
   <!-- ── Status bar: simple face (click→dev) / dev face (click hide→simple) ── -->
@@ -755,7 +869,7 @@ html, body {
     <!-- Dev face: star trek lights + hide button -->
     <div id="status-dev">
       <div class="light-cluster" id="all-lights">
-        <div class="light-wrap" id="light-story" data-tip="Story — Ollama · SillyTavern · always on">
+        <div class="light-wrap" id="light-story" data-tip="Story — Ollama · diag · always on">
           <div class="light-dot"></div><span class="light-label">story</span></div>
         <div class="light-wrap toggleable" id="light-image" data-tip="Image — SD scenes &amp; portraits · click to toggle">
           <div class="light-dot"></div><span class="light-label">image</span></div>
@@ -1002,6 +1116,8 @@ function renderTurn(turn, instant) {
     }
     // Extract NPC introductions from raw text
     _extractIntroductions(turn.raw_text || '');
+    // Fire discovery notes for any known entity mentioned in this narrator turn
+    _scanNarratorTextForDiscovery(turn.raw_text || '');
   }
 
   // Build entries and TTS segment list in a single pass so each DOM element
@@ -1121,6 +1237,16 @@ function renderMetaEvent(data) {
     // Sherri finished outfitting — replace SVG placeholder with real SD portrait
     _portraitMap['__player__'] = data.url;
     _lastSpeaker = ''; // force re-render with new avatar on next player turn
+  }
+
+  if (data.type === 'reset' && (data.level === 'world' || data.level === 'all')) {
+    // World reset — clear discovery note session state so entities can re-fire
+    _discoveryFired.clear();
+    // Remove any lingering discovery note cards from previous session
+    const dn = document.getElementById('discovery-notes');
+    if (dn) dn.innerHTML = '';
+    // Re-show splash briefly to signal the fresh start
+    _showResetSplash(data.level);
   }
 
   const label = data.type === 'reset'           ? 'RESET:' + (data.level || 'scene').toUpperCase()
@@ -1459,6 +1585,11 @@ function connect() {
     loadLatestSceneImage();
     _pollServiceStatus();
     _pollSystemMetrics();
+    // Signal splash that The Fortress is connected
+    if (window._splashServicesDone) {
+      window._splashServicesDone();
+      window._splashServicesDone = null;
+    }
   };
 
   es.onerror = () => {
@@ -2123,7 +2254,132 @@ async function _onSfxEvent(description) {
 
 setInterval(_pollServiceStatus, 3000);
 setInterval(_pollSystemMetrics, 4000);
-connect();
+
+// ── Splash screen ──────────────────────────────────────────────────────────
+const _SPLASH_MIN_MS = 6000;
+
+function _stepSplash(id, state) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('s-active', 's-done');
+  if (state) el.classList.add(state);
+}
+
+function _showResetSplash(level) {
+  // Re-show a brief splash after world/story reset
+  let overlay = document.getElementById('splash-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'splash-overlay';
+    overlay.innerHTML = `
+      <div class="splash-inner">
+        <div class="splash-logo">The Fortress</div>
+        <div id="splash-mode-label" class="splash-mode-label">NEW JOURNEY</div>
+        <div class="splash-steps">
+          <div class="splash-step s-done" id="step-services">World resetting…</div>
+          <div class="splash-step s-active" id="step-memories">Clearing memories…</div>
+          <div class="splash-step" id="step-visuals">Preparing opening scene…</div>
+        </div>
+        <div id="splash-summary"></div>
+      </div>`;
+    document.body.prepend(overlay);
+  } else {
+    overlay.classList.remove('splash-hidden');
+    const lbl = overlay.querySelector('#splash-mode-label');
+    if (lbl) { lbl.textContent = 'NEW JOURNEY'; lbl.className = 'splash-mode-label'; }
+    _stepSplash('step-services', 's-done');
+    _stepSplash('step-memories', 's-active');
+    _stepSplash('step-visuals', '');
+    const sumEl = overlay.querySelector('#splash-summary');
+    if (sumEl) { sumEl.textContent = ''; sumEl.classList.remove('visible'); }
+  }
+  setTimeout(() => {
+    _stepSplash('step-memories', 's-done');
+    _stepSplash('step-visuals', 's-active');
+  }, 800);
+  setTimeout(() => {
+    _stepSplash('step-visuals', 's-done');
+  }, 1800);
+  setTimeout(() => {
+    const ov = document.getElementById('splash-overlay');
+    if (ov) {
+      ov.classList.add('splash-hidden');
+      setTimeout(() => { if (ov.parentNode) ov.parentNode.removeChild(ov); }, 900);
+    }
+  }, 3200);
+}
+
+async function initSplash() {
+  const overlay   = document.getElementById('splash-overlay');
+  if (!overlay) { connect(); return; }
+  const modeLabel = document.getElementById('splash-mode-label');
+  const summaryEl = document.getElementById('splash-summary');
+
+  const startedAt = Date.now();
+
+  // Step 1: fetch session state (fast, no Ollama)
+  _stepSplash('step-services', 's-active');
+  let session = { mode: 'new', sorting_hat_ready: false, turns: 0 };
+  try {
+    const r = await fetch('/session-state');
+    if (r.ok) session = await r.json();
+  } catch (_) {}
+
+  if (modeLabel) {
+    if (session.mode === 'continue') {
+      modeLabel.textContent = 'CONTINUING YOUR JOURNEY';
+      modeLabel.classList.add('mode-continue');
+    } else {
+      modeLabel.textContent = 'NEW JOURNEY';
+    }
+  }
+
+  // Step 2: SSE connection (connect() fires in parallel — signals via _splashServicesDone)
+  window._splashServicesDone = () => _stepSplash('step-services', 's-done');
+  connect();  // start SSE connection now; splash stays up over it
+
+  _stepSplash('step-services', 's-done');
+
+  // Step 3: memories — only fetch summary if continuing
+  _stepSplash('step-memories', 's-active');
+  let summary = '';
+  if (session.mode === 'continue' && session.turns > 2) {
+    try {
+      const r = await fetch('/session-summary');
+      if (r.ok) {
+        const data = await r.json();
+        summary = (data.summary || '').trim();
+      }
+    } catch (_) {}
+  }
+  _stepSplash('step-memories', 's-done');
+  if (summary && summaryEl) {
+    summaryEl.textContent = summary;
+    summaryEl.classList.add('visible');
+  }
+
+  // Step 4: visuals — fire prewarm request (fire-and-forget)
+  _stepSplash('step-visuals', 's-active');
+  fetch('/player-input', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: '__prewarm__', prewarm: true }),
+  }).catch(() => {});
+  await new Promise(r => setTimeout(r, 900));
+  _stepSplash('step-visuals', 's-done');
+
+  // Enforce minimum splash duration
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < _SPLASH_MIN_MS) {
+    await new Promise(r => setTimeout(r, _SPLASH_MIN_MS - elapsed));
+  }
+
+  // Dismiss
+  overlay.classList.add('splash-hidden');
+  setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 950);
+}
+
+initSplash();
 
 // ── Player input ──
 const inputEl = document.getElementById('player-input');
@@ -2275,6 +2531,63 @@ function _scanPlayerTextForEntities(spanEl) {
     html = html.replace(re, `<span class="entity-ref" data-tip="${tip}">$1</span>`);
   }
   spanEl.innerHTML = html;
+}
+
+// ── Discovery Notes ──────────────────────────────────────────────────────────
+// Slide-in entity jot cards that appear when the narrator introduces or
+// significantly mentions a known entity.  Click to prefill "Tell me about X".
+
+const _discoveryFired = new Set(); // entity IDs fired this session
+
+function _fireDiscoveryNote(entity, noteText) {
+  if (_discoveryFired.has(entity.id)) return;
+  _discoveryFired.add(entity.id);
+
+  const container = document.getElementById('discovery-notes');
+  if (!container) return;
+
+  const el = document.createElement('div');
+  el.className = 'disc-note';
+  el.innerHTML =
+    '<div class="dn-header">' +
+      '<span class="dn-keyword">' + esc(entity.canonical_name) + '</span>' +
+      (entity.type ? '<span class="dn-badge">' + esc(entity.type) + '</span>' : '') +
+    '</div>' +
+    '<div class="dn-prose">' + esc(noteText || entity.canonical_name + ' encountered') + '</div>' +
+    '<div class="dn-hint">click to ask</div>';
+
+  // Click → prefill textarea with "Tell me about [Name]" (don't auto-submit)
+  el.addEventListener('click', () => {
+    if (inputEl) {
+      inputEl.value = 'Tell me about ' + entity.canonical_name;
+      inputEl.focus();
+    }
+    el.remove();
+  });
+
+  container.appendChild(el);
+
+  // Auto-dismiss after 5 seconds
+  setTimeout(() => {
+    el.classList.add('fading');
+    setTimeout(() => { try { el.remove(); } catch (_) {} }, 650);
+  }, 5000);
+}
+
+function _scanNarratorTextForDiscovery(rawText) {
+  // Fire a discovery note for every known entity mentioned in narrator prose
+  // that hasn't been fired yet this session.
+  if (!rawText || !_entityIndex.size) return;
+  const tl = rawText.toLowerCase();
+  for (const [nameLc, entity] of _entityIndex) {
+    if (nameLc.length < 3) continue;
+    if (_discoveryFired.has(entity.id)) continue;
+    if (tl.includes(nameLc)) {
+      // Build a short note from the entity's stored description (first sentence)
+      const desc = (entity.desc || '').split(/[.!?]/)[0].trim();
+      _fireDiscoveryNote(entity, desc || entity.canonical_name + ' mentioned in The Fortress');
+    }
+  }
 }
 
 // Autocomplete suggest dropdown
@@ -2814,5 +3127,9 @@ _initVAD();
 document.addEventListener('click', () => _initVAD(), { once: true });
 document.addEventListener('keydown', () => _initVAD(), { once: true });
 </script>
+
+<!-- Discovery notes — fixed-position slide-in entity cards -->
+<div id="discovery-notes"></div>
+
 </body>
 </html>
