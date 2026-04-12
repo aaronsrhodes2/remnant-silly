@@ -288,6 +288,66 @@ html, body {
   pointer-events: none;
 }
 
+/* ── Comic speech bubble ── */
+#speech-bubble {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 2px solid #1a1a2e;
+  border-radius: 14px;
+  padding: 10px 14px;
+  max-width: 84%;
+  max-height: 38%;
+  overflow-y: auto;
+  color: #111;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 2px 4px 14px rgba(0,0,0,0.65);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  z-index: 20;
+  scrollbar-width: none;
+  white-space: pre-wrap;
+}
+#speech-bubble.visible { opacity: 1; }
+#speech-bubble.fading  { opacity: 0; transition: opacity 0.5s ease; }
+#speech-bubble::-webkit-scrollbar { display: none; }
+#bubble-speaker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #555;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+/* bubble tail — outer dark border */
+#speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 9px solid transparent;
+  border-top-color: #1a1a2e;
+  pointer-events: none;
+}
+/* bubble tail — inner white fill */
+#speech-bubble::before {
+  content: '';
+  position: absolute;
+  bottom: -15px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 8px solid transparent;
+  border-top-color: #fff;
+  z-index: 1;
+  pointer-events: none;
+}
+
 /* ── NPC presence strip ── */
 #npc-presence {
   display: none;
@@ -903,6 +963,10 @@ html, body {
       <div id="gallery-current">
         <img id="gallery-img" src="/game/assets/fortress-interior.jpg" alt="Current scene">
         <div id="gallery-status"></div>
+        <div id="speech-bubble" role="status" aria-live="polite" aria-atomic="true">
+          <div id="bubble-speaker"></div>
+          <div id="bubble-text"></div>
+        </div>
       </div>
       <div id="npc-presence"></div>
       <div id="gallery-thumbs"></div>
@@ -970,6 +1034,69 @@ const _portraitMap = {
   'Sherri':       '/game/assets/characters/sherri-galley.jpg',
   '__player__':   _PLAYER_AVATAR,
 };
+
+// Scene image URL saved before a character portrait swaps in, so we can restore it.
+let _preSpeakerImg = null;
+
+// ── Comic speech bubble helpers ──────────────────────────────────────────────
+
+function _showCharacterBubble(speakerName, text) {
+  const portrait = _portraitMap[speakerName];
+
+  // Crossfade gallery to character portrait (save scene image on first swap per turn)
+  if (portrait) {
+    const currentSrc = galleryImg.src || '';
+    // Only save if it's not already a character portrait (avoids overwriting on multi-char turns)
+    if (!_preSpeakerImg && !currentSrc.includes('/characters/')) {
+      _preSpeakerImg = currentSrc;
+    }
+    if (galleryImg.getAttribute('data-speaker') !== speakerName) {
+      galleryImg.style.opacity = '0';
+      setTimeout(() => {
+        galleryImg.src = portrait;
+        galleryImg.setAttribute('data-speaker', speakerName);
+        galleryImg.style.opacity = '1';
+      }, 180);
+      // Add portrait to gallery thumbnail history
+      if (_galleryHistory && typeof _renderGalleryThumbs === 'function') {
+        _galleryHistory.unshift({dataUrl: portrait, ts: Date.now(), kind: 'character', description: speakerName});
+        if (_galleryHistory.length > 20) _galleryHistory.pop();
+        _renderGalleryThumbs();
+      }
+    }
+  }
+
+  // Fill and show the bubble
+  const bubble = document.getElementById('speech-bubble');
+  document.getElementById('bubble-speaker').textContent = speakerName;
+  document.getElementById('bubble-text').textContent = text;
+  bubble.classList.remove('fading');
+  bubble.classList.add('visible');
+}
+
+function _hideCharacterBubble(restoreScene) {
+  const bubble = document.getElementById('speech-bubble');
+  bubble.classList.remove('visible');
+  bubble.classList.add('fading');
+  setTimeout(() => bubble.classList.remove('fading'), 520);
+
+  if (restoreScene && _preSpeakerImg) {
+    const prev = _preSpeakerImg;
+    _preSpeakerImg = null;
+    // Brief portrait linger (600ms) before restoring scene image
+    setTimeout(() => {
+      galleryImg.style.opacity = '0';
+      galleryImg.removeAttribute('data-speaker');
+      setTimeout(() => {
+        galleryImg.src = prev;
+        galleryImg.style.opacity = '1';
+      }, 200);
+    }, 600);
+  } else if (restoreScene) {
+    galleryImg.removeAttribute('data-speaker');
+    _preSpeakerImg = null;
+  }
+}
 
 // Current player name — set by player_alias / player_switch meta events.
 let _playerName = 'You';
@@ -1159,14 +1286,22 @@ function renderTurn(turn, instant) {
     added++;
 
     // Collect TTS segments — only non-player, non-sense lines are spoken.
-    // Character lines dissolve after spoken; narrator prose persists.
+    // Character lines appear in BOTH the text feed (permanent) and the comic
+    // speech bubble overlaid on the character portrait (transient, tied to TTS).
     if (!b.isPlayer && !b.senseType) {
-      const voice = b.channel === 'character'
+      const isCharSeg = b.channel === 'character';
+      const voice = isCharSeg
         ? _voiceForSpeaker(b.speaker || 'NPC')
         : 'am_michael';
-      // Only NPC character lines fade after spoken; narrator prose stays.
-      const fadeAfter = !instant && (b.channel === 'character');
-      segments.push({text, voice, el: div, fadeAfter});
+      // Character lines stay in the feed permanently (bubble is the transient visual).
+      // Pass speakerName so _ttsNext() knows to drive the portrait + bubble.
+      segments.push({
+        text,
+        voice,
+        el: isCharSeg ? null : div,        // fadeEl only for non-character entries
+        fadeAfter: false,                   // never fade character feed entries
+        speakerName: isCharSeg ? (b.speaker || 'NPC') : null,
+      });
     }
   }
 
@@ -1183,16 +1318,16 @@ function renderTurn(turn, instant) {
 
     if (_sense.audio && segments.length) {
       if (wasStreamed) {
-        // Prose already enqueued via chunk events; only add character dialogue.
-        // Dedup in _ttsEnqueue prevents narrator prose from double-playing.
-        const charSegs = segments.filter(s => s.fadeAfter);
+        // Prose already enqueued via chunk events; only add character dialogue here.
+        // Character segments are identified by having speakerName (not fadeAfter — that's gone).
+        const charSegs = segments.filter(s => s.speakerName);
         charSegs.forEach(seg =>
-          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el));
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el, seg.speakerName));
       } else {
         // Non-streamed: clear stale audio and enqueue everything fresh.
         _ttsClearTurn();
         segments.forEach(seg =>
-          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el));
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el, seg.speakerName));
       }
       // Sentinel: fires ttsReady once all this turn's audio has played.
       _ttsQ.push({_cb: () => {
@@ -1756,11 +1891,17 @@ let _ttsGenId  = 0;   // incremented each turn; old speech loops stop when stale
 // _ttsNext     — drain loop (one active instance at a time)
 // _ttsClearTurn — stop current audio, drain queue, reset dedup
 
-function _ttsEnqueue(text, voice, ttsGen, fadeEl) {
+function _ttsEnqueue(text, voice, ttsGen, fadeEl, speakerName) {
   const key = `${voice || 'am_michael'}:${text}`;
   if (!text || !text.trim() || _ttsSeenTexts.has(key)) return;
   _ttsSeenTexts.add(key);
-  _ttsQ.push({text, voice: voice || 'am_michael', ttsGen: ttsGen || 0, fadeEl: fadeEl || null});
+  _ttsQ.push({
+    text,
+    voice: voice || 'am_michael',
+    ttsGen: ttsGen || 0,
+    fadeEl: fadeEl || null,
+    speakerName: speakerName || null,
+  });
   if (!_ttsActive) _ttsNext();
 }
 
@@ -1772,12 +1913,25 @@ async function _ttsNext() {
     if (_ttsLoopGen !== myGen) break; // superseded by _ttsClearTurn
     const item = _ttsQ.shift();
     if (item._cb) { item._cb(); continue; }
-    const {text, voice, ttsGen, fadeEl} = item;
+    const {text, voice, ttsGen, fadeEl, speakerName} = item;
     if (!_sense.audio) continue;
     if (ttsGen && _ttsGenId !== ttsGen) continue; // stale turn
-    await _speakTTS(text, voice);
-    if (_ttsLoopGen !== myGen) break; // cleared while we were awaiting
-    if (fadeEl) setTimeout(() => fadeEl.classList.add('fading-out'), 1800);
+
+    if (speakerName) {
+      // Comic bubble path: show portrait + bubble, speak, hide bubble after.
+      // Peek ahead: if the next item is also a character line, keep the portrait
+      // and only restore the scene image after the LAST speaker in this turn.
+      const nextItem = _ttsQ.length > 0 ? _ttsQ[0] : null;
+      const nextIsChar = nextItem && !nextItem._cb && nextItem.speakerName;
+      _showCharacterBubble(speakerName, text);
+      await _speakTTS(text, voice);
+      if (_ttsLoopGen !== myGen) break;
+      _hideCharacterBubble(/*restoreScene=*/ !nextIsChar);
+    } else {
+      await _speakTTS(text, voice);
+      if (_ttsLoopGen !== myGen) break;
+      if (fadeEl) setTimeout(() => fadeEl.classList.add('fading-out'), 1800);
+    }
   }
   if (_ttsLoopGen === myGen) _ttsActive = false;
 }
