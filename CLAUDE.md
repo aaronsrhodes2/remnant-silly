@@ -60,6 +60,8 @@ python -X utf8 scripts/dev.py status
 |---|---|
 | `scripts/release-sanity.py` | Full three-phase release check (native → docker → exe) |
 | `scripts/docker-sanity.py` | Warm sanity suite (9 sections + AI trace) — runs against any :1582 stack |
+| `scripts/story-test.py` | 100-turn narrative beat test — drives pilot quest arc, measures richness score |
+| `scripts/model-bench.py` | Benchmarks narrator models against 5 structured prompts — grades tags + quality |
 | `executable/native-sanity.py` | Starts native stack, runs sanity, optionally leaves up |
 | `scripts/tag-version.py` | Stamps version.json from live /signature composite |
 | `executable/build.py` | Builds dist/Remnant.exe via PyInstaller |
@@ -95,6 +97,47 @@ MCP tools also available when stack is running:
 **Seed file:** `docker/diag/seed/world.json` — edit this to add/modify permanent locations, NPCs, and lore. Loaded at startup and after every Reset World. Restart diag to pick up changes (no Docker rebuild needed).
 
 **3D mesh assets** — store as reference PNGs in `web/assets/characters/NAME-mesh.png`. The `physical_spec` and `sd_prompt` fields in the seed JSON lock the appearance for Stable Diffusion generation. Future: 3D awareness will be added to world entities as they are interacted with.
+
+## Story arc test (v4.0.0 readiness gate)
+
+```bash
+# Run the 100-turn pilot quest story arc test (takes 30–60 min, uses live stack)
+python -X utf8 scripts/story-test.py --player-name "Kael"
+
+# Skip world reset (use existing game state)
+python -X utf8 scripts/story-test.py --player-name "Kael" --skip-reset
+
+# Benchmark narrator model candidates
+python -X utf8 scripts/model-bench.py --pull
+```
+
+**What a "beat" is:** A beat is the smallest complete unit of narrative progression — a scripted checkpoint where something specific must happen (e.g. "player wakes in pod bay", "player names themselves", "Sherri fabricates clothes"). Derived from screenwriting. Each beat has pass/fail criteria (tags generated, NPCs introduced, timeouts, etc.).
+
+**v4.0.0 milestone = all 15 beats pass AND richness score hits all targets:**
+- ≥16 images, ≥14 moods, ≥20 SFX, ≥12 sensory moments, ≥30 dialogue lines
+- ≥5 lore tags, ≥1 lore whisper, ≥3 NPCs introduced, ≥2 new NPCs, ≥3 items
+
+## Visual style golden rules
+
+**SD images:** ALL Stable Diffusion prompts MUST prepend `_SD_STYLE_PREFIX` before sending to flask-sd:
+```python
+_SD_STYLE_PREFIX = (
+    "dark sci-fi concept art, painterly illustration, cinematic composition, "
+    "dramatic lighting, highly detailed, "
+)
+styled = _SD_STYLE_PREFIX + description
+```
+Never send a bare description. Negative prompt must exclude `photorealistic, photograph, real photo, modern earth`.
+
+**Sense labels:** `Sight:`, `Smell:`, `Sound:`, `Touch:`, `Taste:`, `Environment:` are machine-protocol tags — NEVER visible in prose. The `_clean_narrator_prose()` function strips them; the system prompt forbids them. Both layers must stay in place for any new narrator integration.
+
+## Music golden rules
+
+Music is driven by **world state** (motion tier, threat score, NPC emotions), NOT by narrator prose.
+- `[MOOD:...]` tags from the narrator = dramatic punctuation only (not ambient triggers)
+- Fortress and Remnant are NEVER pinned to locations — they are the ambient layer itself (they ARE the music through The Fold)
+- Re-generate music only on meaningful state delta, not every narrator turn
+- Target aesthetic: metallic machinery + tribal percussion + alien vocals, EVE Online timelessness
 
 ## Release verification sequence
 
