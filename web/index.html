@@ -457,6 +457,33 @@ html, body {
   to   { opacity: 1; transform: none; }
 }
 
+/* Spoken/converted media dissolve — text fades and collapses after TTS */
+.fading-out {
+  opacity: 0 !important;
+  max-height: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 2.5s ease,
+              max-height 1.8s ease 1.8s,
+              margin 1.8s ease 1.8s,
+              padding 1.8s ease 1.8s;
+}
+
+/* Lore whisper — The Fortress narrating history during quiet moments */
+.entry.lore-whisper {
+  border-left: 2px solid rgba(255,200,80,0.25);
+  padding-left: 16px;
+  color: rgba(255,200,80,0.5);
+  font-style: italic;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.lore-icon { margin-right: 6px; opacity: 0.35; }
+
 /* ── Input bar ── */
 #bottombar {
   flex-shrink: 0;
@@ -824,6 +851,9 @@ function renderTurn(turn, instant) {
     _extractIntroductions(turn.raw_text || '');
   }
 
+  // Build entries and TTS segment list in a single pass so each DOM element
+  // can be paired with its audio segment for post-speech dissolve.
+  const segments = []; // {text, voice, el, fadeAfter}
   for (const b of blocks) {
     const text = (b.text || '').trim();
     if (!text) continue;
@@ -856,6 +886,17 @@ function renderTurn(turn, instant) {
 
     feed.appendChild(div);
     added++;
+
+    // Collect TTS segments — only non-player, non-sense lines are spoken.
+    // Character lines dissolve after spoken; narrator prose persists.
+    if (!b.isPlayer && !b.senseType) {
+      const voice = b.channel === 'character'
+        ? _voiceForSpeaker(b.speaker || 'NPC')
+        : 'am_michael';
+      // Only NPC character lines fade after spoken; narrator prose stays.
+      const fadeAfter = !instant && (b.channel === 'character');
+      segments.push({text, voice, el: div, fadeAfter});
+    }
   }
 
   if (added) {
@@ -863,37 +904,24 @@ function renderTurn(turn, instant) {
     feed.scrollTop = feed.scrollHeight;
   }
 
-  // Speak narrator + NPC text for new (non-history) turns.
-  // Each block is spoken sequentially with its own voice:
-  //   narrator prose  → am_michael (The Fortress)
-  //   character lines → deterministic NPC voice from _voiceForSpeaker()
+  // Speak narrator + NPC text for new (non-history) turns, then dissolve
+  // character lines from the feed once their audio has finished playing.
   if (!instant && isNarratorTurn) {
-    if (_sense.audio) {
-      const segments = [];
-      for (const b of blocks) {
-        if (b.isPlayer || b.senseType) continue;
-        const text = (b.text || '').trim();
-        if (!text) continue;
-        const voice = b.channel === 'character'
-          ? _voiceForSpeaker(b.speaker || 'NPC')
-          : 'am_michael';
-        segments.push({text, voice});
-      }
-      if (segments.length) {
-        const myGen = ++_ttsGenId;
-        (async () => {
-          for (const seg of segments) {
-            if (!_sense.audio || _ttsGenId !== myGen) break;
-            await _speakTTS(seg.text, seg.voice);
+    if (_sense.audio && segments.length) {
+      const myGen = ++_ttsGenId;
+      (async () => {
+        for (const seg of segments) {
+          if (!_sense.audio || _ttsGenId !== myGen) break;
+          await _speakTTS(seg.text, seg.voice);
+          if (seg.fadeAfter) {
+            // Slight pause so user can register the speaker, then dissolve.
+            setTimeout(() => seg.el.classList.add('fading-out'), 1800);
           }
-          if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
-        })();
-      } else {
-        _turnState.ttsReady = true;   // no speakable text — mark done
-        _checkTurnComplete();
-      }
+        }
+        if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+      })();
     } else {
-      _turnState.ttsReady = true;     // audio sense disabled — mark done
+      _turnState.ttsReady = true;
       _checkTurnComplete();
     }
 
@@ -902,7 +930,7 @@ function renderTurn(turn, instant) {
     const hasImageTag = (turn.raw_text || '').toUpperCase().includes('[GENERATE_IMAGE');
     if (!hasImageTag) {
       _turnState.imageReady = true;
-      _flushPendingMood();            // fire any buffered mood prompt now
+      _flushPendingMood();
       _checkTurnComplete();
     }
   }
@@ -1176,6 +1204,41 @@ function connect() {
       div.innerHTML = `<span class="sense-tag">[${data.channel.toUpperCase()}]</span> <span class="sense-body">${data.text}</span>`;
       feed.appendChild(div);
       feed.scrollTop = feed.scrollHeight;
+      // Sense info is transient — dissolve after 14s so it doesn't clutter the feed
+      setTimeout(() => div.classList.add('fading-out'), 14000);
+    } catch (_) {}
+  });
+
+  es.addEventListener('lore_whisper', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (!data.text) return;
+      const el = document.createElement('div');
+      el.className = 'entry lore-whisper arriving';
+      el.innerHTML = '<span class="lore-icon">📖</span><span class="entry-text">' + esc(data.text) + '</span>';
+      feed.appendChild(el);
+      feed.scrollTop = feed.scrollHeight;
+      if (_sense.audio) {
+        _speakTTS(data.text, 'bf_alice').then(() => {
+          setTimeout(() => el.classList.add('fading-out'), 4000);
+        });
+      } else {
+        setTimeout(() => el.classList.add('fading-out'), 18000);
+      }
+    } catch (_) {}
+  });
+
+  es.addEventListener('npc_greeting', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (!data.text || !_sense.audio) return;
+      // Play greeting in the NPC's voice after a short pause for dramatic effect.
+      // No text entry — pure audio. This fires after the main turn TTS finishes
+      // because SSE events are processed in order and TTS is async.
+      setTimeout(() => {
+        const voice = _PINNED_VOICES[data.name] || _voiceForSpeaker(data.name);
+        _speakTTS(data.text, voice);
+      }, 800);
     } catch (_) {}
   });
 

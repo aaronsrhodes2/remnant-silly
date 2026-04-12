@@ -626,6 +626,19 @@ point of shift, but no more than two per response.
 
 The [MOOD] tag is silent to the player — they hear music, not words.
 
+Mandatory MOOD shift triggers — always emit a new [MOOD] when the scene enters one of these states. Place it at the moment of shift, not at the top:
+
+  Combat / active threat:     [MOOD: "urgent percussion, brass stabs, fast tempo, danger close"]
+  Running / chase / athletic: [MOOD: "fast electronic pulse, kinetic, driving rhythm, no melody"]
+  Calming / resolution:       [MOOD: "slow exhale, soft strings, release of tension, warmth returning"]
+  Sleep / rest:               [MOOD: "deep space drone, near silence, slow breath, dark stillness"]
+  Waking / new day / ready:   [MOOD: "quiet rise, gentle synth, soft optimism, morning light"]
+  New NPC first encounter:    [MOOD: "curious strings, cautious wonder, character theme emerging"]
+  Arriving at a new location: [MOOD matching that location's established atmosphere]
+  Emotional reveal / twist:   [MOOD: "held breath, low rumble, swelling tension, suspended"]
+  Triumph / victory:          [MOOD: "bright swell, resolved harmony, earned warmth, relief"]
+  Loss / grief / sacrifice:   [MOOD: "sparse piano, minor key, slow, hollow space, ache"]
+
 
 
 

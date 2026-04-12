@@ -95,6 +95,11 @@ _first_mes: str = ""                   # Loaded from fortress_first_mes.txt at s
 _metrics_cache: dict = {}
 _metrics_cache_time: float = 0.0
 
+# Lore idle narration — The Fortress speaks lore aloud during quiet moments.
+_last_player_ts: float = time.time()  # reset on every player-input
+_spoken_lore_keys: set = set()        # avoid re-reading recently narrated lore
+LORE_IDLE_SECS = 50                   # seconds of silence before lore fires
+
 def _sse_broadcast(event_type: str, data: object) -> None:
     """Push one SSE event to every connected client. Drops slow/dead clients."""
     raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
@@ -347,6 +352,16 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
             "turn_id": turn_id,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
+        # Broadcast a greeting so the frontend can voice the NPC's first words
+        npc_ent = _world["entities"].get(npc_id, {})
+        sig_quote = npc_ent.get("signature_quote", "")
+        npc_voice = npc_ent.get("voice", "am_michael")
+        if sig_quote:
+            _sse_broadcast("npc_greeting", {
+                "name": npc_name,
+                "text": sig_quote,
+                "voice": npc_voice,
+            })
 
     # ── Player trait / name alias tracking ────────────────────────────
     # [PLAYER_TRAIT(name): "Frank Rizzo"] — update the player entity
@@ -1225,6 +1240,87 @@ def _load_seed_world() -> None:
     lores  = len(seed.get("lore", []))
     quests = len(seed.get("quests", []))
     print(f"[diag/seed] loaded — {locs} locations, {npcs} NPCs, {lores} lore entries, {quests} quests from {SEED_PATH}")
+
+
+# ---------------------------------------------------------------------------
+# Lore idle narration — The Fortress speaks lore during quiet moments
+# ---------------------------------------------------------------------------
+
+def _pick_unseen_lore() -> dict | None:
+    """Return the first lore entry not recently spoken, or None if none available."""
+    global _spoken_lore_keys
+    candidates: list[dict] = []
+
+    # Collect from FOREVER_LOG (seed + narrator-added lore)
+    if FOREVER_LOG.exists():
+        for line in FOREVER_LOG.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                if rec.get("key") and rec.get("text"):
+                    candidates.append({"key": rec["key"], "text": rec["text"]})
+            except Exception:
+                pass
+
+    unseen = [c for c in candidates if c["key"] not in _spoken_lore_keys]
+    if not unseen:
+        # All lore has been spoken — reset the set and start the cycle again
+        _spoken_lore_keys.clear()
+        unseen = candidates
+    return unseen[0] if unseen else None
+
+
+def _prettify_lore(raw_text: str) -> str:
+    """Ask Ollama to render a lore entry as a warm story-telling aside."""
+    prompt = (
+        "You are The Fortress of Eternal Sentinel — a vast, ancient, kindly space station. "
+        "Speak this lore entry aloud to your guest as a warm, story-telling aside: "
+        "2-3 sentences, present-tense narration, no technical jargon, no bullet points. "
+        "Open with a soft preamble like 'Did you know...' or 'I have always found it remarkable...' "
+        "or similar. Write as if sharing a quiet history lesson with someone you are fond of.\n\n"
+        "Lore:\n" + raw_text[:600]
+    )
+    payload = json.dumps({
+        "model": _ollama_model(),
+        "prompt": prompt,
+        "stream": False,
+        "options": {"num_predict": 120, "temperature": 0.7},
+    }).encode()
+    try:
+        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=20.0)
+        if code == 200:
+            text = json.loads(resp).get("response", "").strip()
+            return text if len(text) > 20 else ""
+    except Exception as exc:
+        print(f"[diag/lore] prettify failed: {exc}")
+    return ""
+
+
+def _lore_idle_loop() -> None:
+    """Daemon thread: after LORE_IDLE_SECS of player silence, read a lore entry aloud."""
+    global _last_player_ts, _spoken_lore_keys
+    while True:
+        time.sleep(10)
+        try:
+            if time.time() - _last_player_ts < LORE_IDLE_SECS:
+                continue
+            if _generating:
+                continue
+            entry = _pick_unseen_lore()
+            if not entry:
+                continue
+            prettified = _prettify_lore(entry["text"])
+            if not prettified:
+                continue
+            _sse_broadcast("lore_whisper", {"key": entry["key"], "text": prettified})
+            _spoken_lore_keys.add(entry["key"])
+            # Keep set bounded
+            if len(_spoken_lore_keys) > 20:
+                _spoken_lore_keys.pop()
+            # Reset timer — don't fire again immediately
+            _last_player_ts = time.time()
+            print(f"[diag/lore] narrated: {entry['key']!r}")
+        except Exception as exc:
+            print(f"[diag/lore] idle loop error: {exc}")
 
 
 def _init_chroma() -> None:
@@ -3056,6 +3152,8 @@ class Handler(BaseHTTPRequestHandler):
                                          daemon=True, name="narrator").start()
                     return
 
+                global _last_player_ts
+                _last_player_ts = time.time()  # reset idle lore timer
                 wrapped = _wrap_player_text(intent, text)
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 turn = {
@@ -3195,6 +3293,8 @@ def main() -> None:
     _chroma_backfill_async()  # seed index from restored turn history
     _replay_world_log()
     _load_seed_world()        # permanent assets; always applied on top of runtime state
+    # Start lore idle narration daemon — fires after LORE_IDLE_SECS of silence
+    threading.Thread(target=_lore_idle_loop, daemon=True, name="lore-idle").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:

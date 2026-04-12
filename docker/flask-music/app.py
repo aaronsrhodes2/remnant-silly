@@ -45,6 +45,26 @@ _sample_rate = 32000
 _model_lock  = threading.Lock()
 
 
+def _crossfade_loop(audio_np, sr: int, fade_secs: float = 2.5):
+    """Crossfade the tail of a clip back into its head for seamless looping.
+
+    Creates a clean loop point by blending the last `fade_secs` of audio
+    into the first `fade_secs`, then trimming the tail. The result is
+    slightly shorter but loops without a hard cut.
+    """
+    import numpy as np
+    fade_len = int(sr * fade_secs)
+    if len(audio_np) < fade_len * 3:
+        return audio_np  # clip too short to crossfade safely
+    fade_out = np.linspace(1.0, 0.0, fade_len, dtype=audio_np.dtype)
+    fade_in  = np.linspace(0.0, 1.0, fade_len, dtype=audio_np.dtype)
+    result = audio_np.copy()
+    # Blend the tail (at fade_out window) into the head (fade_in window)
+    result[:fade_len] = audio_np[:fade_len] * fade_in + audio_np[-fade_len:] * fade_out
+    # Trim the redundant tail (now baked into the head)
+    return result[:-fade_len]
+
+
 def _get_model():
     global _model, _processor, _device, _sample_rate
     if _model is not None:
@@ -110,6 +130,8 @@ def generate():
 
         # audio_values: [batch=1, channels=1, samples]
         audio_np = audio_values[0, 0].cpu().float().numpy()
+        # Crossfade tail into head so the clip loops without a hard cut
+        audio_np = _crossfade_loop(audio_np, _sample_rate)
 
         buf = io.BytesIO()
         sf.write(buf, audio_np, _sample_rate, format="WAV", subtype="PCM_16")
