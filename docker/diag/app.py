@@ -516,6 +516,11 @@ _lore_injected_this_session: set = set()
 _image_locations_fired: set = set()  # location keys for already-injected images this session
 _item_given_this_session: set = set()  # item keys already injected this session
 
+# Pre-Quirkify — low-priority background entity enrichment
+# Triggered by INTRODUCE tags + location entry; processed by _quirkify_loop daemon.
+_quirkify_queue: collections.deque = collections.deque(maxlen=40)
+_quirkified_this_session: set = set()  # entity IDs enriched this session (skip re-processing)
+
 # Characters that are permanent crew — never get a spurious INTRODUCE tag.
 # Intentionally EMPTY: Sherri, The Remnant, and The Fortress are introduced
 # as formal characters on first CHARACTER-tag encounter each session.
@@ -1412,6 +1417,9 @@ def _handle_meta_command(text: str, sub: str) -> dict:
             _lore_injected_this_session.clear()
             _image_locations_fired.clear()
             _item_given_this_session.clear()
+            # Reset pre-quirkify state — entities will be re-introduced and re-enriched
+            _quirkify_queue.clear()
+            _quirkified_this_session.clear()
             # Clear ChromaDB semantic index — stale memories from prior sessions
             # would pollute the narrator context for new players/runs, and would
             # also trigger unnecessary embed calls in _chroma_query_relevant.
@@ -1923,6 +1931,152 @@ def _lore_idle_loop() -> None:
             print(f"[diag/lore] narrated: {entry['key']!r}")
         except Exception as exc:
             print(f"[diag/lore] idle loop error: {exc}")
+
+
+def _get_entity_text(entity_id: str) -> str:
+    """Retrieve and concatenate all world_knowledge chunks for an entity.
+
+    Searches by doc ID prefix: npc_{entity_id}_* and loc_{entity_id}_*.
+    Returns empty string if _chroma_knowledge is unavailable or entity not found.
+    """
+    if _chroma_knowledge is None:
+        return ""
+    try:
+        # Retrieve all docs whose IDs start with the entity prefix
+        prefixes = [f"npc_{entity_id}", f"loc_{entity_id}"]
+        all_docs = []
+        for prefix in prefixes:
+            # ChromaDB doesn't support prefix queries natively — get all then filter
+            result = _chroma_knowledge.get(include=["documents", "ids"])
+            if result:
+                for doc_id, doc in zip(result.get("ids", []), result.get("documents", [])):
+                    if doc_id.startswith(prefix) and doc:
+                        all_docs.append(doc.strip())
+        return " ".join(all_docs)
+    except Exception as exc:
+        print(f"[quirkify] _get_entity_text error: {exc}")
+        return ""
+
+
+def _upsert_entity_enrichment(entity_id: str, enriched_text: str) -> None:
+    """Replace all world_knowledge chunks for an entity with enriched text.
+
+    Deletes old npc_/loc_ prefixed chunks, re-adds new chunks from enriched_text
+    with source='quirkified'. Uses the same _chunk_text() as _index_world_knowledge.
+    """
+    if _chroma_knowledge is None:
+        return
+    try:
+        # Find existing IDs for this entity
+        result = _chroma_knowledge.get(include=["ids"])
+        old_ids = [
+            doc_id for doc_id in result.get("ids", [])
+            if doc_id.startswith(f"npc_{entity_id}_")
+            or doc_id.startswith(f"loc_{entity_id}_")
+        ]
+        if old_ids:
+            _chroma_knowledge.delete(ids=old_ids)
+
+        # Re-index enriched text
+        chunks = _chunk_text(enriched_text)
+        new_docs, new_ids, new_metas = [], [], []
+        for i, chunk in enumerate(chunks):
+            new_docs.append(chunk)
+            new_ids.append(f"npc_{entity_id}_q{i:03d}")
+            new_metas.append({
+                "source": "quirkified",
+                "entity_id": entity_id,
+                "chunk_index": i,
+                "sense_type": "character",
+                "service_target": "ollama",
+            })
+        if new_docs:
+            _chroma_knowledge.add(documents=new_docs, ids=new_ids, metadatas=new_metas)
+            print(f"[quirkify] {entity_id!r}: {len(old_ids)} old → {len(new_docs)} new chunks")
+    except Exception as exc:
+        print(f"[quirkify] _upsert_entity_enrichment error: {exc}")
+
+
+def _quirkify_loop() -> None:
+    """Daemon thread: low-priority accumulate-and-summarize enrichment of entity descriptions.
+
+    When an NPC is introduced or a location is entered, their entity_id is added
+    to _quirkify_queue. This loop processes the queue when the narrator is idle,
+    calling Ollama to add 1-2 sensory details and summarize to ≤150 words, then
+    upserts the enriched text back into world_knowledge so future Sorting Hat
+    retrievals return richer context.
+
+    Narrator-yielding: waits 10s of continuous idle before each Ollama call.
+    """
+    while True:
+        time.sleep(15)
+        try:
+            if not _quirkify_queue:
+                continue
+            entity_id = _quirkify_queue[0]
+            if entity_id in _quirkified_this_session:
+                _quirkify_queue.popleft()
+                continue
+
+            # Narrator-yielding: 10s of continuous idle before Ollama call
+            idle_since: float | None = None
+            while True:
+                if _generating or _classifying:
+                    idle_since = None
+                    time.sleep(2)
+                    continue
+                if idle_since is None:
+                    idle_since = time.time()
+                    time.sleep(2)
+                    continue
+                if time.time() - idle_since < 10.0:
+                    time.sleep(2)
+                    continue
+                break
+
+            existing_text = _get_entity_text(entity_id)
+            if not existing_text or len(existing_text) < 20:
+                _quirkify_queue.popleft()
+                continue
+
+            prompt = (
+                "You are a world-builder for a dark sci-fi interactive story set aboard an ancient "
+                "self-aware space station called The Fortress. Given this entity description, add "
+                "exactly 1-2 new non-conflicting sensory details (smell, sound, texture, or lore), "
+                "then rewrite the whole thing as a single coherent paragraph of ≤150 words. "
+                "Preserve all existing details. Output only the enriched paragraph — no labels, "
+                "no preamble.\n\n"
+                f"ENTITY: {entity_id}\nCURRENT DESCRIPTION:\n{existing_text[:800]}\n\nEnriched:"
+            )
+            payload = json.dumps({
+                "model": _ollama_model(),
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": 220, "temperature": 0.72},
+            }).encode("utf-8")
+            code, resp, _ = _http(
+                "POST", f"{OLLAMA_URL}/api/generate",
+                body=payload, timeout=28.0,
+            )
+            if code == 200:
+                try:
+                    enriched = json.loads(resp).get("response", "").strip()
+                except Exception:
+                    enriched = ""
+                if enriched and len(enriched) > 20:
+                    _upsert_entity_enrichment(entity_id, enriched)
+                    _quirkified_this_session.add(entity_id)
+                    print(f"[quirkify] enriched {entity_id!r}: {len(existing_text)}→{len(enriched)} chars")
+            else:
+                print(f"[quirkify] Ollama error {code} for {entity_id!r} — will retry")
+                time.sleep(30)
+                continue
+
+            _quirkify_queue.popleft()
+
+        except Exception as exc:
+            print(f"[quirkify] loop error: {exc}")
+            time.sleep(30)
 
 
 def _init_chroma() -> None:
@@ -2513,6 +2667,10 @@ def _inject_missing_tags(narrator_text: str) -> str:
                 and f'[INTRODUCE({name})' not in result):
             result = f'[INTRODUCE({name}): "Character present in The Fortress"]\n' + result
         _introduced_this_session.add(name)
+        # Queue this NPC for pre-quirkify enrichment (low-priority background pass)
+        entity_id = name.lower().replace(" ", "_")
+        if entity_id not in _quirkified_this_session:
+            _quirkify_queue.append(entity_id)
 
     return result
 
@@ -4602,6 +4760,7 @@ def main() -> None:
     ).start()
     # Start lore idle narration daemon — fires after LORE_IDLE_SECS of silence
     threading.Thread(target=_lore_idle_loop, daemon=True, name="lore-idle").start()
+    threading.Thread(target=_quirkify_loop, daemon=True, name="quirkify").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:
