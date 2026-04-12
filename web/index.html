@@ -661,6 +661,83 @@ html, body {
   color: rgba(100,200,255,0.45);
   margin-left: 6px;
 }
+
+/* ── Item / Inventory continuation chooser ── */
+#item-chooser {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: #0f0f18;
+  border: 1px solid rgba(100,200,255,0.30);
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 2px;
+  z-index: 500;
+  display: none;
+  flex-direction: column;
+  max-height: 260px;
+  overflow: hidden;
+}
+#item-chooser.open { display: flex; }
+#item-chooser-title {
+  padding: 6px 12px 4px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  font-weight: bold;
+  color: rgba(100,200,255,0.55);
+  border-bottom: 1px solid rgba(100,200,255,0.12);
+  flex-shrink: 0;
+}
+#item-chooser-title span {
+  font-weight: normal;
+  font-style: italic;
+  color: rgba(200,240,255,0.40);
+  margin-left: 6px;
+}
+#item-chooser-filter {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(100,200,255,0.12);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  outline: none;
+}
+#item-chooser-filter::placeholder { color: rgba(255,255,255,0.20); }
+#item-chooser-list {
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+}
+#item-chooser-list li {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: rgba(200,240,255,0.85);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+#item-chooser-list li:hover,
+#item-chooser-list li.active {
+  background: rgba(100,200,255,0.10);
+  color: rgba(200,240,255,1);
+}
+#item-chooser-list li .ic-name { flex: 1; }
+#item-chooser-list li .ic-type {
+  font-size: 10px;
+  color: rgba(100,200,255,0.40);
+}
+#item-chooser-list li .ic-key {
+  font-size: 10px;
+  color: rgba(255,255,255,0.18);
+  font-family: monospace;
+}
+/* Continuation stage indicator on textarea */
+#player-input[data-cont="awaiting_item"]  { border-color: rgba(255,200,50,0.70); box-shadow: 0 0 0 2px rgba(255,200,50,0.10); }
+#player-input[data-cont="awaiting_rest"]  { border-color: rgba(100,255,150,0.60); box-shadow: 0 0 0 2px rgba(100,255,150,0.10); }
 </style>
 </head>
 <body>
@@ -720,7 +797,14 @@ html, body {
 
   <!-- ── Input bar ── -->
   <div id="bottombar" style="position:relative;">
+    <!-- Entity autocomplete suggest (small, appears while typing) -->
     <ul id="entity-suggest"></ul>
+    <!-- Item / Inventory continuation chooser (full-width, multi-stage voice input) -->
+    <div id="item-chooser">
+      <div id="item-chooser-title">CHOOSE ITEM <span>↑↓ or speak · Tab cycles · Enter/click selects · Esc cancels</span></div>
+      <input id="item-chooser-filter" type="text" placeholder="filter…" autocomplete="off" spellcheck="false">
+      <ul id="item-chooser-list"></ul>
+    </div>
     <textarea id="player-input" rows="2" placeholder="Speak, act, or perceive…"></textarea>
     <span id="input-hint"></span>
   </div>
@@ -2082,6 +2166,7 @@ async function sendInput(overrideText) {
   _sending = true;
   _clearTimers();
   suggestEl.style.display = 'none';
+  if (_contMode) _icClose();
   inputEl.value = '';
 
   const { channel, wrapped } = _localWrap(text);
@@ -2270,8 +2355,23 @@ inputEl.addEventListener('keydown', e => {
     if (_suggestActiveIdx >= 0) all[_suggestActiveIdx].classList.add('active');
     return;
   }
-  if (e.key === 'Escape' && suggestOpen) {
+  if (e.key === 'Escape') {
+    if (_contMode) { _icClose(); return; }
     suggestEl.style.display = 'none';
+    return;
+  }
+  // Chooser open: delegate Tab/Arrow/Enter to chooser
+  if (_contMode === 'awaiting_item') {
+    if (e.key === 'Tab' || e.key === 'ArrowDown') { e.preventDefault(); _icSetActive(_icActive + 1); return; }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); _icSetActive(_icActive - 1); return; }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const active = icListEl.children[_icActive];
+      if (active) _icSelect(active.dataset.name); else icFilterEl.focus();
+      return;
+    }
+    // Any other key: redirect typing into the filter
+    if (e.key.length === 1) { icFilterEl.focus(); }
     return;
   }
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -2373,6 +2473,155 @@ function _vadEndRecord() {
   _setStatus('transcribing', true);
 }
 
+// ── Item / Inventory Continuation Mode ───────────────────────────────────────
+// When the player types or speaks a sentence containing a continuation token
+// (item / items / inventory), we pause before submitting and pop open the item
+// chooser.  The player then speaks/types the item name to continue, then speaks
+// the rest of the sentence.  The full sentence is assembled silently and sent
+// when the player finishes speaking or the auto-send countdown expires.
+//
+// State:
+//   null            — not in continuation mode (normal flow)
+//   'awaiting_item' — showing chooser, waiting for item selection
+//   'awaiting_rest' — item chosen, waiting for rest of sentence
+//
+// _contBase  = text before the chosen item slot
+// _contAfter = text after the slot (if trigger was mid-sentence)
+
+let _contMode  = null;
+let _contBase  = '';
+let _contAfter = '';
+
+const _CONT_TOKEN_RE = /\b(item|items|inventory)\b/i;
+
+const icEl       = document.getElementById('item-chooser');
+const icFilterEl = document.getElementById('item-chooser-filter');
+const icListEl   = document.getElementById('item-chooser-list');
+let _icActive    = -1;  // active list index
+
+function _icFilteredEntities(filterText) {
+  const fl = (filterText || '').toLowerCase().trim();
+  const seen = new Set();
+  const results = [];
+  for (const [, e] of _entityIndex) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    if (!fl || e.canonical_name.toLowerCase().includes(fl)) results.push(e);
+    if (results.length >= 20) break;
+  }
+  return results;
+}
+
+function _icRender(filterText) {
+  const items = _icFilteredEntities(filterText);
+  icListEl.innerHTML = '';
+  _icActive = -1;
+  for (const [i, e] of items.entries()) {
+    const li = document.createElement('li');
+    li.dataset.name = e.canonical_name;
+    li.dataset.idx  = i;
+    li.innerHTML =
+      `<span class="ic-name">${esc(e.canonical_name)}</span>` +
+      (e.type ? `<span class="ic-type">${esc(e.type)}</span>` : '') +
+      `<span class="ic-key">${i < 9 ? i+1 : ''}</span>`;
+    li.addEventListener('mousedown', ev => { ev.preventDefault(); _icSelect(e.canonical_name); });
+    icListEl.appendChild(li);
+  }
+}
+
+function _icSetActive(idx) {
+  const items = icListEl.querySelectorAll('li');
+  if (_icActive >= 0 && items[_icActive]) items[_icActive].classList.remove('active');
+  _icActive = Math.max(-1, Math.min(items.length - 1, idx));
+  if (_icActive >= 0 && items[_icActive]) {
+    items[_icActive].classList.add('active');
+    items[_icActive].scrollIntoView({block: 'nearest'});
+  }
+}
+
+function _icSelect(name) {
+  _icClose();
+  // Assemble: base + selected name + after-text
+  const assembled = (_contBase + name + _contAfter).trimEnd();
+  inputEl.value = assembled;
+  inputEl.dataset.cont = 'awaiting_rest';
+  _contMode  = 'awaiting_rest';
+  _contBase  = assembled + ' ';   // next VAD chunk appends here
+  _contAfter = '';
+  // Restart auto-send countdown — player may keep speaking the rest
+  _startCountdown(4000);
+  inputEl.focus();
+}
+
+function _icClose() {
+  icEl.classList.remove('open');
+  icFilterEl.value = '';
+  inputEl.dataset.cont = '';
+  _contMode  = null;
+  _contBase  = '';
+  _contAfter = '';
+  inputEl.focus();
+}
+
+function _icOpen(base, after) {
+  _contMode  = 'awaiting_item';
+  _contBase  = base;
+  _contAfter = after;
+  inputEl.dataset.cont = 'awaiting_item';
+  inputEl.value = base.trimEnd() + '…';  // show hint in textarea
+  _clearTimers();                          // hold auto-send
+  _icRender('');
+  icEl.classList.add('open');
+  icFilterEl.value = '';
+  icFilterEl.focus();
+}
+
+// Keyboard nav inside the chooser filter input
+icFilterEl.addEventListener('keydown', e => {
+  if (e.key === 'Escape')    { e.preventDefault(); _icClose(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); _icSetActive(_icActive + 1); return; }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); _icSetActive(_icActive - 1); return; }
+  if (e.key === 'Tab')       { e.preventDefault(); _icSetActive((_icActive + 1) % Math.max(1, icListEl.children.length)); return; }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const active = icListEl.children[_icActive];
+    if (active) _icSelect(active.dataset.name);
+    return;
+  }
+  // Number shortcut 1-9
+  if (/^[1-9]$/.test(e.key)) {
+    const li = icListEl.children[parseInt(e.key) - 1];
+    if (li) { e.preventDefault(); _icSelect(li.dataset.name); }
+  }
+});
+icFilterEl.addEventListener('input', () => _icRender(icFilterEl.value));
+
+// Check if STT text contains a continuation trigger.
+// Returns {base, after, token} if found, else null.
+function _detectContinuation(text) {
+  const m = _CONT_TOKEN_RE.exec(text);
+  if (!m) return null;
+  const pre  = text.slice(0, m.index).trimEnd() + ' ';
+  const post = text.slice(m.index + m[0].length).trimStart();
+  return {base: pre, after: post ? ' ' + post : '', token: m[0]};
+}
+
+// Try to fuzzy-match a spoken item name against the entity index.
+// Returns the canonical name if a confident match is found, else null.
+function _matchItemFromSpeech(text) {
+  const tl = text.toLowerCase().trim();
+  // Exact match first
+  if (_entityIndex.has(tl)) return _entityIndex.get(tl).canonical_name;
+  // StartsWith / includes match (prefer longer matches)
+  let best = null, bestLen = 0;
+  for (const [key, e] of _entityIndex) {
+    if (tl.includes(key) || key.includes(tl)) {
+      if (key.length > bestLen) { best = e.canonical_name; bestLen = key.length; }
+    }
+  }
+  return best;
+}
+
 // ── UI Voice Commands ──────────────────────────────────────────────────────
 // Intercepts STT transcriptions before they reach the game.
 // If a phrase matches, the UI action fires and the text is swallowed.
@@ -2386,6 +2635,12 @@ const _UI_VOICE_CMDS = [
     action: () => document.querySelector('[data-tab="map"]')?.click() },
   { pattern: /\b(open log|show log|show journal)\b/i,
     action: () => document.querySelector('[data-tab="log"]')?.click() },
+  // Status bar toggles
+  { pattern: /\bshow star trek\b/i,   action: () => _flipToDev() },
+  { pattern: /\bhide the madness\b/i, action: () => _flipToSimple() },
+  // Page refresh
+  { pattern: /\b(refresh view|refresh the view|reload)\b/i,
+    action: () => window.location.reload() },
 ];
 
 function _interceptVoiceCmd(text) {
@@ -2417,10 +2672,41 @@ async function _vadProcess() {
       if (_interceptVoiceCmd(text)) {
         // UI command handled — don't propagate to game input
         inputEl.dataset.vadState = '';
-      } else {
-        inputEl.value = text;
+
+      } else if (_contMode === 'awaiting_item') {
+        // Chooser is open — try to match spoken text to an entity name
+        const match = _matchItemFromSpeech(text);
+        if (match) {
+          _icSelect(match);
+          inputEl.dataset.vadState = 'ready';
+        } else {
+          // No entity match — update filter text so player can refine
+          icFilterEl.value = text;
+          _icRender(text);
+          inputEl.dataset.vadState = '';
+        }
+
+      } else if (_contMode === 'awaiting_rest') {
+        // Item was already chosen — append the rest of the sentence
+        const full = (_contBase + text).trim();
+        inputEl.value = full;
+        inputEl.dataset.cont = '';
+        _contMode = null;
+        _contBase = '';
         inputEl.dataset.vadState = 'ready';
         _startCountdown(2500);
+
+      } else {
+        // Normal flow — check for continuation trigger first
+        const cont = _detectContinuation(text);
+        if (cont) {
+          _icOpen(cont.base, cont.after);
+          inputEl.dataset.vadState = '';
+        } else {
+          inputEl.value = text;
+          inputEl.dataset.vadState = 'ready';
+          _startCountdown(2500);
+        }
       }
     } else {
       inputEl.dataset.vadState = '';
