@@ -170,5 +170,38 @@
       "key": "the_hoop",
       "text": "The abduction hoop appears as a luminous teal vortex — a spiral portal with blue crystal fragments of The Remnant's attention orbiting at the center. The color and texture vary by run. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not. Two hoops exist aboard the Fortress, housed in the Central Containment Bays at both ends of the oblong sphere."
     }
+  ],
+
+  "music": [
+    {
+      "id": "heart-of-null-space",
+      "title": "The Heart of Null Space",
+      "role": "intro",
+      "file": "/game/assets/music/heart-of-null-space.wav",
+      "description": "The 'Wide Shot' theme — played when the scale of The Fortress first hits the player. Opens with a low sub-bass hum that mimics the anti-pressure of null space, felt rather than heard. A lonely crystalline synth melody emerges, reminiscent of The Remnant's paradoxical form. Fortress Percussion enters — slow, massive metallic clangs like a giant hammer striking a hollow world. A pipe organ swells with ancient, almost religious gravity. The full orchestral arrangement arrives: soaring brass for Terravore, strings spiraling downward for the black hole accretion discs. Fades back to the mechanical thrum of the equilibrium barrier.",
+      "generation_prompt": "Deep resonant sub-bass hum felt as physical vibration, lonely crystalline synth melody paradoxical and otherworldly, slow massive hollow metallic percussion like a hammer striking a hollow world, swelling ancient pipe organ religious gravity, soaring cinematic brass section vast and triumphant, spiraling descending strings representing swirling black hole accretion discs, epic orchestral sci-fi score, 65bpm, sense of infinite Dyson sphere scale",
+      "triggers": ["portal_chamber", "the_nexus", "dimensional_observation", "sleeping_quarters"],
+      "loop": true
+    },
+    {
+      "id": "sherris-routine",
+      "title": "Sherri's Routine",
+      "role": "relaxed",
+      "file": "/game/assets/music/sherris-routine.wav",
+      "description": "Background music for the industrious, whimsical spaces of the Fortress — the Galley, Fabrication Bay, Gantry, and Inspection Suite. Ambient industrial lo-fi with mechanical tinkering, rhythmic plucked strings, warm analog synths, and clockwork percussion. Cozy but metallic. Science fiction workshop atmosphere.",
+      "generation_prompt": "Ambient industrial, lo-fi mechanical tinkering, rhythmic plucked strings, warm analog synths, mid-tempo 90bpm, cozy but metallic, clockwork percussion, science fiction workshop atmosphere",
+      "triggers": ["the_galley", "fabrication_bay", "the_gantry", "quality_inspection"],
+      "loop": true
+    },
+    {
+      "id": "breach-chiral-foam",
+      "title": "Breach in the Chiral Foam",
+      "role": "action",
+      "file": "/game/assets/music/breach-chiral-foam.wav",
+      "description": "High-intensity action music for dangerous, urgent moments aboard the Fortress — threats, breaches, dimensional anomalies. Cinematic with industrial metal drums, distorted electric cello, glitchy 4-dimensional sound effects. Fast-paced, dark, claustrophobic.",
+      "generation_prompt": "Cinematic action, industrial metal drums, distorted electric cello, glitchy 4-dimensional sound effects, fast-paced 140bpm, dark atmospheric sci-fi, intense and claustrophobic",
+      "triggers": ["the_foundry"],
+      "loop": true
+    }
   ]
 }

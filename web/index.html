@@ -1062,6 +1062,9 @@ function connect() {
       }
       _updateNarratorCount();
       feed.scrollTop = feed.scrollHeight;
+      // Startup music: play intro theme then crossfade to Sherri's Routine.
+      // Small delay so the page is visually settled before audio starts.
+      setTimeout(_playStartupSequence, 800);
     } catch (_) {}
   });
 
@@ -1352,10 +1355,37 @@ function _speakTTS(text, voice = 'am_michael') {
 let _audioCtx    = null;
 let _musicSource = null;
 let _musicGain   = null;
-let _currentMoodText = null;   // track active mood for bridge generation
+let _currentMoodText  = null;   // track active mood for bridge generation
+let _startupDone      = false;  // true after startup sequence completes/skips
 
 // SFX channel — looping SFX sources keyed by description (for dedup + stop)
 const _sfxSources = new Map();
+
+// ── Permanent world music tracks (static files, bypasses MusicGen) ────────
+// Generated once, stored in web/assets/music/, served from /game/assets/music/.
+// Canonical descriptions and generation prompts live in docker/diag/seed/world.json.
+const _STATIC_TRACKS = {
+  'heart-of-null-space': '/game/assets/music/heart-of-null-space.wav',
+  'sherris-routine':     '/game/assets/music/sherris-routine.wav',
+  'breach-chiral-foam':  '/game/assets/music/breach-chiral-foam.wav',
+};
+
+// Keyword matchers: if a mood text contains any of these, serve the static track
+// instead of generating via MusicGen.
+const _MOOD_TO_TRACK = [
+  { id: 'breach-chiral-foam',  keys: ['action', 'intense', 'breach', 'claustrophobic', 'danger', 'threat', 'primal fire', 'forge'] },
+  { id: 'heart-of-null-space', keys: ['cosmic', 'null space', 'crystalline resonance', 'awe', 'dimensional', 'arrival tension', 'black hole', 'void', 'vast'] },
+  { id: 'sherris-routine',     keys: ['kitchen', 'clockwork', 'workshop', 'mechanical tinkering', 'fabrication', 'inspection', 'cozy industrial', 'lo-fi mechanical'] },
+];
+
+function _matchStaticTrack(moodText) {
+  if (!moodText) return null;
+  const lower = moodText.toLowerCase();
+  for (const { id, keys } of _MOOD_TO_TRACK) {
+    if (keys.some(k => lower.includes(k))) return id;
+  }
+  return null;
+}
 
 function _ensureAudioCtx() {
   if (!_audioCtx) _audioCtx = new AudioContext();
@@ -1363,8 +1393,24 @@ function _ensureAudioCtx() {
   return _audioCtx;
 }
 
-// Fetch audio from flask-music and decode into an AudioBuffer.
+// Fetch audio and decode into an AudioBuffer.
+// For canonical mood texts that match a static track, serves the pre-generated
+// file directly; otherwise falls through to MusicGen generation.
 async function _fetchMusicBuffer(prompt, duration, endpoint = '/api/music/generate') {
+  // Static track shortcut — serve pre-generated WAV, skip MusicGen entirely
+  const staticId = _matchStaticTrack(prompt);
+  if (staticId && _STATIC_TRACKS[staticId]) {
+    try {
+      const res = await fetch(_STATIC_TRACKS[staticId]);
+      if (res.ok) {
+        const ctx = _ensureAudioCtx();
+        const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+        console.log(`[music] static: ${staticId}`);
+        return { buffer: buf, loops: true };
+      }
+    } catch (_) {}   // fall through to MusicGen on any fetch error
+  }
+  // Dynamic generation via MusicGen
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1378,6 +1424,43 @@ async function _fetchMusicBuffer(prompt, duration, endpoint = '/api/music/genera
   const ctx = _ensureAudioCtx();
   const buf = await ctx.decodeAudioData(bytes.buffer.slice(0));
   return {buffer: buf, loops};
+}
+
+// ── Startup music sequence ────────────────────────────────────────────────
+// Plays "The Heart of Null Space" as the opening theme, then crossfades into
+// "Sherri's Routine" when the intro finishes. Called once on first history load.
+async function _playStartupSequence() {
+  if (_startupDone || !_sense.audio) return;
+  _startupDone = true;
+  try {
+    // Fetch both tracks in parallel so the crossfade is seamless
+    const [introRes, relaxedRes] = await Promise.all([
+      fetch(_STATIC_TRACKS['heart-of-null-space']),
+      fetch(_STATIC_TRACKS['sherris-routine']),
+    ]);
+    if (!introRes.ok || !relaxedRes.ok) return;
+    const ctx = _ensureAudioCtx();
+    const [introBuf, relaxedBuf] = await Promise.all([
+      ctx.decodeAudioData(await introRes.arrayBuffer()),
+      ctx.decodeAudioData(await relaxedRes.arrayBuffer()),
+    ]);
+    // Start the intro theme
+    _playMusicBuffer(introBuf);
+    _currentMoodText = 'heart-of-null-space';
+    console.log('[music] intro: The Heart of Null Space');
+    // Schedule crossfade to Sherri's Routine 4s before the intro loop restarts,
+    // so the transition feels intentional rather than abrupt.
+    const fadeAt = Math.max((introBuf.duration - 4) * 1000, 5000);
+    setTimeout(() => {
+      if (_currentMoodText === 'heart-of-null-space') {
+        _playMusicBuffer(relaxedBuf);
+        _currentMoodText = 'sherris-routine';
+        console.log("[music] crossfade: Sherri's Routine");
+      }
+    }, fadeAt);
+  } catch (e) {
+    console.warn('[music] startup sequence failed:', e);
+  }
 }
 
 // Replace the looping ambient music track (crossfade over 4s).
@@ -1473,35 +1556,45 @@ async function _onMoodEvent(moodText) {
   _currentMoodText = moodText;
 
   try {
+    const isStaticNew = !!_matchStaticTrack(moodText);
+    const isStaticOld = !!_matchStaticTrack(oldMood);
+
     if (oldMood && oldMood !== moodText && _musicSource) {
-      // ── DJ transition: bridge + new preview in parallel ──────────────────
-      // Bridge prompt describes the transition between moods so the music
-      // flows like a DJ mix rather than cutting abruptly.
-      const bridgePrompt =
-        `smooth musical bridge, transitioning from: ${oldMood}, ` +
-        `gradually shifting into: ${moodText}, ` +
-        `seamless tempo and key continuity, 5 seconds`;
+      if (isStaticNew || isStaticOld) {
+        // ── Static track transition — crossfade directly, no MusicGen bridge ─
+        // Static tracks crossfade cleanly via _playMusicBuffer's 4s ramp.
+        const {buffer} = await _fetchMusicBuffer(moodText, 30);
+        _playMusicBuffer(buffer);
+      } else {
+        // ── DJ transition: bridge + new preview in parallel ──────────────────
+        // Bridge prompt describes the transition between moods so the music
+        // flows like a DJ mix rather than cutting abruptly.
+        const bridgePrompt =
+          `smooth musical bridge, transitioning from: ${oldMood}, ` +
+          `gradually shifting into: ${moodText}, ` +
+          `seamless tempo and key continuity, 5 seconds`;
 
-      // Request bridge (5s) and new preview (8s) simultaneously.
-      const [bridgeResult, previewResult] = await Promise.allSettled([
-        _fetchMusicBuffer(bridgePrompt, 5),
-        _fetchMusicBuffer(moodText, 8),
-      ]);
+        // Request bridge (5s) and new preview (8s) simultaneously.
+        const [bridgeResult, previewResult] = await Promise.allSettled([
+          _fetchMusicBuffer(bridgePrompt, 5),
+          _fetchMusicBuffer(moodText, 8),
+        ]);
 
-      // Fade current track down while bridge plays
-      if (_musicGain) {
-        const ctx = _ensureAudioCtx();
-        _musicGain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.8);
-      }
-      if (bridgeResult.status === 'fulfilled') {
-        await _playOnce(bridgeResult.value.buffer, {volume: 0.50});
-      }
-      if (previewResult.status === 'fulfilled') {
-        _playMusicBuffer(previewResult.value.buffer);
+        // Fade current track down while bridge plays
+        if (_musicGain) {
+          const ctx = _ensureAudioCtx();
+          _musicGain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.8);
+        }
+        if (bridgeResult.status === 'fulfilled') {
+          await _playOnce(bridgeResult.value.buffer, {volume: 0.50});
+        }
+        if (previewResult.status === 'fulfilled') {
+          _playMusicBuffer(previewResult.value.buffer);
+        }
       }
     } else {
-      // ── Fresh start — quick 8s preview ───────────────────────────────────
-      const {buffer} = await _fetchMusicBuffer(moodText, 8);
+      // ── Fresh start — serve static immediately, or quick 8s MusicGen preview
+      const {buffer} = await _fetchMusicBuffer(moodText, isStaticNew ? 60 : 8);
       _playMusicBuffer(buffer);
     }
 
@@ -1510,14 +1603,17 @@ async function _onMoodEvent(moodText) {
     _turnState.musicReady = true;
     _checkTurnComplete();
 
-    // ── Phase 2: upgrade to 30s loop in background ───────────────────────
+    // ── Phase 2: upgrade to 30s loop in background (dynamic moods only) ────
     // Generates while the 8s preview loops; swaps in seamlessly when ready.
-    _fetchMusicBuffer(moodText, 30).then(({buffer}) => {
-      if (_currentMoodText === moodText) {   // mood hasn't changed since we started
-        _playMusicBuffer(buffer);
-        console.log('[music] upgraded to 30s loop');
-      }
-    }).catch(() => {});
+    // Skipped for static tracks — they're already full-length.
+    if (!isStaticNew) {
+      _fetchMusicBuffer(moodText, 30).then(({buffer}) => {
+        if (_currentMoodText === moodText) {   // mood hasn't changed since we started
+          _playMusicBuffer(buffer);
+          console.log('[music] upgraded to 30s loop');
+        }
+      }).catch(() => {});
+    }
 
   } catch (e) {
     console.warn('[music]', e);
