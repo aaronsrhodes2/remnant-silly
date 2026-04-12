@@ -129,12 +129,12 @@ _RE_SMELL    = re.compile(r'\[SMELL\(')
 _RE_TASTE    = re.compile(r'\[TASTE\(')
 _RE_TOUCH    = re.compile(r'\[TOUCH\(')
 _RE_ENV      = re.compile(r'\[ENVIRONMENT\(')
-_RE_CHAR     = re.compile(r'\[CHARACTER\(([^)]+)\)\]')
-_RE_LORE     = re.compile(r'\[LORE\(([^)]+)\)\]')
-_RE_ITEM     = re.compile(r'\[ITEM\(([^)]+)\)\]')
+_RE_CHAR     = re.compile(r'\[CHARACTER\(([^)]+)\)\s*:')          # [CHARACTER(Name): "speech"
+_RE_LORE     = re.compile(r'\[LORE\(([^)]+)\)')                   # [LORE(key)  or [LORE(key): "..."]
+_RE_ITEM     = re.compile(r'\[ITEM\(([^)]+)\)')                   # [ITEM(name) or [ITEM(name): "..."]
 _RE_TRAIT    = re.compile(r'\[PLAYER_TRAIT\(')
-_RE_UPDATE   = re.compile(r'\[UPDATE_PLAYER\]')
-_RE_INTRO    = re.compile(r'\[INTRODUCE\(([^)]+)\)\]')
+_RE_UPDATE   = re.compile(r'\[UPDATE_PLAYER[\]:]')                # [UPDATE_PLAYER] or [UPDATE_PLAYER: ...]
+_RE_INTRO    = re.compile(r'\[INTRODUCE\(([^)]+)\)\s*:')
 _RE_WARN     = re.compile(r'(?i)(feel free to|as an ai|which path would|how can i help|let me know if|great question)', re.I)
 
 # Strip all system tags from prose
@@ -199,14 +199,24 @@ def _ingest_turn(turn: dict) -> None:
 
 
 def _snap_world_entities(base: str) -> dict:
-    """Return entities as a {id: entity} dict from /world-state."""
+    """Return entities as a {id: entity} dict from /world-state.
+
+    /world-state may return either:
+      - a list of entity objects (current diag API)
+      - a dict with an 'entities' key containing a list or dict
+    """
     code, data = _get(f"{base}/world-state", timeout=10.0)
-    if code != 200 or not isinstance(data, dict):
+    if code != 200:
         return {}
-    raw = data.get("entities", [])
-    if isinstance(raw, list):
-        return {e["id"]: e for e in raw if "id" in e}
-    return raw  # already a dict
+    if isinstance(data, list):
+        return {e["id"]: e for e in data if isinstance(e, dict) and "id" in e}
+    if isinstance(data, dict):
+        raw = data.get("entities", [])
+        if isinstance(raw, list):
+            return {e["id"]: e for e in raw if isinstance(e, dict) and "id" in e}
+        if isinstance(raw, dict):
+            return raw
+    return {}
 
 
 def _update_npcs_created(current_entities: dict, baseline_ids: set) -> None:
