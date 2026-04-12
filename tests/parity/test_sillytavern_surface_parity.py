@@ -1,13 +1,15 @@
 """Parity tests for SillyTavern's own HTTP surface.
 
-Unlike the diag sidecar tests, these exercise ST itself: the character
-roster, the world-info list, the configured API backend, the extension's
-static asset URLs, and whether an active character is pre-loaded so the
-welcome-screen gate at scripts/welcome-screen.js:175 does not fire.
+ARCHIVED — SillyTavern has been removed from the runtime stack.
+All narrative logic now runs directly in the diag sidecar via Ollama.
+These tests are skipped automatically to prevent CI failures.
 
-Requires REMNANT_TEST_NATIVE=1 and/or REMNANT_TEST_DOCKER=1 — same
-contract as the existing diag parity tests.
+Original: exercised ST character roster, world-info list, API backend,
+extension static asset URLs. ST ran at localhost:8000 — no longer started.
 """
+
+import pytest
+pytestmark = pytest.mark.skip(reason="SillyTavern removed from runtime stack (diag → Ollama direct)")
 
 from __future__ import annotations
 

@@ -120,11 +120,11 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:1593").rstrip("/")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "1591"))
 
 # Directory containing fortress_system_prompt.txt / fortress_first_mes.txt
-# (exported by update_fortress_card.py alongside the PNG).
+# (written by update_fortress_card.py; lives alongside world.json in seed/).
 # Default: repo-relative path works in both Docker and native modes.
 FORTRESS_CARD_DIR = Path(os.environ.get(
     "FORTRESS_CARD_DIR",
-    Path(__file__).parent.parent / "sillytavern" / "content" / "characters",
+    Path(__file__).parent / "seed",
 ))
 
 # ChromaDB — semantic memory / RAG retrieval for narrator context.

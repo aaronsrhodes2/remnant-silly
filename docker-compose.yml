@@ -23,7 +23,7 @@
 #                    bootstrap-* services attach here; they download
 #                    models into shared named volumes and exit.
 #   play-net       — internal: true, NO internet. All runtime
-#                    services (nginx, flask-sd, ollama, sillytavern)
+#                    services (nginx, flask-sd, ollama, diag)
 #                    attach here. Zero egress once bootstrap is done.
 #
 # Runtime services block at startup on per-service sentinel files in
@@ -34,7 +34,7 @@
 #
 # nginx is the ONLY service published to the host. It serves the
 # splash page during download and reverse-proxies /app/ to the
-# sillytavern service once everything is ready.
+# game UI (web/) served by the diag sidecar once everything is ready.
 
 services:
 

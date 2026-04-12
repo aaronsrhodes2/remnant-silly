@@ -9,8 +9,7 @@ Manages all native services without requiring Docker:
   flask-tts   :1594  text-to-speech (Kokoro)
   flask-stt   :1595  speech-to-text (Whisper)
   flask-music :1596  ambient music (MusicGen)
-  sillytavern :1590  chat/narrative engine
-  diag        :1591  diagnostics sidecar
+  diag        :1591  diagnostics sidecar + narrator (Ollama direct)
   nginx       :1582  reverse proxy (the only exposed port)
 
 Usage:
@@ -226,19 +225,6 @@ def _find_nginx() -> Optional[Path]:
     return _find_exe(["nginx", "nginx.exe"], extra_dirs=[BIN_DIR / "nginx"])
 
 
-def _find_st_dir() -> Optional[Path]:
-    """Locate SillyTavern installation directory."""
-    candidates = [
-        REPO_ROOT / "SillyTavern",                          # bundled
-        Path("C:/SillyTavern"),
-        Path(os.environ.get("USERPROFILE", "")) / "SillyTavern",
-        Path(os.environ.get("APPDATA", "")) / "SillyTavern",
-    ]
-    for c in candidates:
-        if (c / "server.js").exists():
-            return c
-    return None
-
 
 def _find_python() -> Optional[Path]:
     """Return a Python interpreter suitable for running Flask service scripts.
@@ -383,23 +369,7 @@ def run_setup(args) -> bool:
             log("winget not available — download Ollama from https://ollama.com/download", "error")
             ok = False
 
-    # 2. Node.js
-    node = _find_node()
-    if node:
-        log(f"Node.js found: {node}", "ok")
-    else:
-        log("Node.js not found", "warn")
-        try:
-            _winget("OpenJS.NodeJS.LTS", "Node.js LTS")
-            node = _find_node()
-            if not node:
-                log("Node.js still not found after install — restart and try again", "error")
-                ok = False
-        except FileNotFoundError:
-            log("winget not available — download Node.js from https://nodejs.org", "error")
-            ok = False
-
-    # 3. nginx
+    # 2. nginx
     nginx = _find_nginx()
     if nginx:
         log(f"nginx found: {nginx}", "ok")
@@ -424,31 +394,7 @@ def run_setup(args) -> bool:
             log("nginx setup failed — install via: winget install nginxinc.nginx", "error")
             ok = False
 
-    # 4. SillyTavern
-    st_dir = _find_st_dir()
-    if st_dir:
-        log(f"SillyTavern found: {st_dir}", "ok")
-        # Ensure npm deps are installed
-        if not (st_dir / "node_modules").exists():
-            log("installing SillyTavern dependencies (npm install)...", "head")
-            subprocess.run(["npm", "install"], cwd=st_dir, check=True)
-    else:
-        log("SillyTavern not found — cloning...", "warn")
-        st_target = REPO_ROOT / "SillyTavern"
-        try:
-            subprocess.run(
-                ["git", "clone", "--depth=1",
-                 "https://github.com/SillyTavern/SillyTavern.git",
-                 str(st_target)],
-                check=True,
-            )
-            subprocess.run(["npm", "install"], cwd=st_target, check=True)
-            log("SillyTavern installed", "ok")
-        except Exception as e:
-            log(f"SillyTavern install failed: {e}", "error")
-            ok = False
-
-    # 5. Python Flask service deps
+    # 3. Python Flask service deps
     python = _find_python()
     flask_sd_reqs  = REPO_ROOT / "docker" / "flask-sd"  / "requirements.txt"
     flask_tts_reqs = REPO_ROOT / "docker" / "flask-tts" / "requirements.txt"
@@ -478,18 +424,6 @@ def run_setup(args) -> bool:
 
 
 # ── Service lifecycle ──────────────────────────────────────────────────────────
-
-def _ensure_extension_junction(st_dir: Path):
-    """Junction ST's image-generator slot to repo extension/ dir (idempotent)."""
-    slot = st_dir / "public" / "scripts" / "extensions" / "image-generator"
-    src  = REPO_ROOT / "extension"
-    if not src.exists():
-        return
-    subprocess.run([
-        "powershell", "-NoProfile", "-NonInteractive", "-Command",
-        f"if (!(Test-Path '{slot}')) "
-        f"{{ New-Item -ItemType Junction -Path '{slot}' -Target '{src}' | Out-Null }}"
-    ], capture_output=True)
 
 
 class ManagedProcess:
@@ -570,7 +504,6 @@ class ServiceManager:
         conf_text = template.read_text(encoding="utf-8")
         replacements = {
             "{{NGINX_PORT}}":         str(PORTS["nginx"]),
-            "{{ST_UPSTREAM}}":        "127.0.0.1:1590",   # removed — nginx returns 404 for these routes
             "{{FLASK_SD_UPSTREAM}}":  f"127.0.0.1:{PORTS['flask-sd']}",
             "{{OLLAMA_UPSTREAM}}":    f"127.0.0.1:{PORTS['ollama']}",
             "{{DIAG_UPSTREAM}}":      f"127.0.0.1:{PORTS['diag']}",
@@ -599,16 +532,12 @@ class ServiceManager:
         """Start all services. Returns True if nginx comes up."""
         python = _find_python()
         ollama = _find_ollama()
-        node   = _find_node()
         nginx  = _find_nginx()
-        st_dir = _find_st_dir()
 
         missing = []
         if not python:  missing.append("Python 3.10+ (run: winget install Python.Python.3.12)")
         if not ollama:  missing.append("ollama (run: winget install Ollama.Ollama)")
-        if not node:    missing.append("Node.js (run: winget install OpenJS.NodeJS.LTS)")
         if not nginx:   missing.append("nginx (run: winget install nginxinc.nginx)")
-        if not st_dir:  missing.append("SillyTavern (run with --setup to auto-install)")
         if missing:
             log("missing prerequisites:", "error")
             for m in missing:
@@ -659,7 +588,7 @@ class ServiceManager:
         # ── diag ────────────────────────────────────────────────────────────
         if not port_open(PORTS["diag"]):
             log("starting diag sidecar...", "head")
-            fortress_card_dir = str(REPO_ROOT / "docker" / "sillytavern" / "content" / "characters")
+            fortress_card_dir = str(REPO_ROOT / "docker" / "diag" / "seed")
             p = ManagedProcess(
                 "diag",
                 [str(python), "-u", str(REPO_ROOT / "docker" / "diag" / "app.py")],

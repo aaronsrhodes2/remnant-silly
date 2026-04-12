@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-update_fortress_card.py — Single source of truth for The Fortress narrator card.
+update_fortress_card.py — Single source of truth for The Fortress narrator prompts.
 
-Reads The Fortress.png from the Docker seed path, applies canonical
-modifications to the system_prompt, then writes the updated card back to
-both the Docker seed PNG and the native SillyTavern characters directory.
+Reads The Fortress.png from the archive card path, applies canonical
+modifications to the system_prompt, then writes the updated plaintext
+prompt files to docker/diag/seed/ where the diag sidecar reads them.
+
+SillyTavern is no longer part of the runtime stack. The PNG card is kept
+as a reference format for structured prompt editing, but the diag sidecar
+reads only the exported .txt files in docker/diag/seed/.
 
 Usage:
     python scripts/update_fortress_card.py
 
-Run after any edit to the MODIFICATIONS section below. Commit both PNGs
-after running.
+Run after any edit to the MODIFICATIONS section below. Commit the updated
+.txt files in docker/diag/seed/ to propagate the change.
 
 PNG format: SillyTavern embeds card JSON in two tEXt chunks:
   chara  — base64(JSON)  spec v2  (includes character_book)
@@ -33,7 +37,11 @@ DOCKER_CARD = os.path.join(
     "docker", "sillytavern", "content", "characters", "The Fortress.png",
 )
 
-NATIVE_CARD = r"C:\Users\aaron\SillyTavern\data\default-user\characters\The Fortress.png"
+# Plaintext prompt files — where the diag sidecar reads them from.
+# SillyTavern is removed from the runtime; only these .txt files matter.
+SEED_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(__file__), "..", "docker", "diag", "seed",
+))
 
 # ---------------------------------------------------------------------------
 # PNG chunk helpers
@@ -608,43 +616,36 @@ def update_card_png(src_path, dst_path):
     write_png(dst_path, chunks)
     print(f"  [done] Written: {dst_path}")
 
-    # Export plain-text files alongside the PNG so the diag can load them
-    # without parsing PNG chunks. Only written once (to dst_path's directory).
-    text_dir = os.path.dirname(os.path.abspath(dst_path))
+    # Export plain-text files to docker/diag/seed/ — where the diag sidecar
+    # reads them. Written on every call so seed/ always matches the PNG card.
+    os.makedirs(SEED_DIR, exist_ok=True)
     try:
-        sp_out = os.path.join(text_dir, "fortress_system_prompt.txt")
+        sp_out = os.path.join(SEED_DIR, "fortress_system_prompt.txt")
         with open(sp_out, "w", encoding="utf-8") as f:
             f.write(sp)
-        print(f"  [done] Exported fortress_system_prompt.txt ({len(sp)} chars)")
+        print(f"  [done] Exported fortress_system_prompt.txt → seed/ ({len(sp)} chars)")
     except Exception as e:
         print(f"  [warn] Could not write fortress_system_prompt.txt: {e}")
     try:
-        fm_out = os.path.join(text_dir, "fortress_first_mes.txt")
+        fm_out = os.path.join(SEED_DIR, "fortress_first_mes.txt")
         with open(fm_out, "w", encoding="utf-8") as f:
             f.write(FABRICATION_BAY_FIRST_MES)
-        print(f"  [done] Exported fortress_first_mes.txt")
+        print(f"  [done] Exported fortress_first_mes.txt → seed/")
     except Exception as e:
         print(f"  [warn] Could not write fortress_first_mes.txt: {e}")
 
 
 def main():
-    docker_card = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", DOCKER_CARD))
-    # Use the Docker card as source (canonical on-disk version)
     src = os.path.normpath(DOCKER_CARD)
 
     print("=== update_fortress_card.py ===")
-    print(f"Source: {src}")
+    print(f"Source PNG: {src}")
+    print(f"Export dir: {SEED_DIR}")
 
-    # Update Docker seed card (in-place)
+    # Update the reference PNG card (in-place) and export plaintext to seed/
     update_card_png(src, src)
 
-    # Update native dev card if it exists
-    if os.path.exists(NATIVE_CARD):
-        update_card_png(src, NATIVE_CARD)
-    else:
-        print(f"\n[info] Native card not found, skipping: {NATIVE_CARD}")
-
-    print("\nDone. Commit both PNGs to propagate the change.")
+    print("\nDone. Commit docker/diag/seed/fortress_system_prompt.txt to propagate.")
 
 
 if __name__ == "__main__":
