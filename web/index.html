@@ -601,6 +601,66 @@ html, body {
   letter-spacing: 0;
   text-transform: none;
 }
+
+/* ── Entity keyword refs — highlighted entity names in player turns ── */
+.entity-ref {
+  color: rgba(100, 200, 255, 0.90);
+  border-bottom: 1px dotted rgba(100, 200, 255, 0.45);
+  cursor: default;
+  position: relative;
+}
+.entity-ref:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #15151e;
+  border: 1px solid rgba(100,200,255,0.25);
+  color: rgba(200,240,255,0.90);
+  font-size: 10px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 300;
+  pointer-events: none;
+  font-style: normal;
+}
+
+/* ── Entity autocomplete suggest dropdown ── */
+#entity-suggest {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: #15151e;
+  border: 1px solid rgba(100,200,255,0.25);
+  border-radius: 4px;
+  list-style: none;
+  margin-bottom: 4px;
+  z-index: 400;
+  overflow: hidden;
+  display: none;
+}
+#entity-suggest li {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: rgba(200,240,255,0.85);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#entity-suggest li:hover,
+#entity-suggest li.active { background: rgba(100,200,255,0.12); }
+#entity-suggest li .es-type {
+  font-size: 10px;
+  color: rgba(100,200,255,0.45);
+  margin-left: 6px;
+}
 </style>
 </head>
 <body>
@@ -659,7 +719,8 @@ html, body {
   </div>
 
   <!-- ── Input bar ── -->
-  <div id="bottombar">
+  <div id="bottombar" style="position:relative;">
+    <ul id="entity-suggest"></ul>
     <textarea id="player-input" rows="2" placeholder="Speak, act, or perceive…"></textarea>
     <span id="input-hint"></span>
   </div>
@@ -917,45 +978,27 @@ function renderTurn(turn, instant) {
   // Speak narrator + NPC text for new (non-history) turns, then dissolve
   // character lines from the feed once their audio has finished playing.
   if (!instant && isNarratorTurn) {
-    if (_sense.audio && segments.length) {
-      const myGen = ++_ttsGenId;
-      const wasStreamed = (_chunkTurnId === (turn.turn_id || ''));
+    const myTTSGen = ++_ttsGenId;
+    const wasStreamed = (_chunkTurnId === (turn.turn_id || ''));
 
+    if (_sense.audio && segments.length) {
       if (wasStreamed) {
-        // Prose was already streamed via "chunk" events and is playing now.
-        // Append only character dialogue to the chunk TTS promise chain so it
-        // plays naturally after all narrator prose finishes — no double-speaking.
-        const charSegs = segments.filter(s => s.channel === 'character');
-        _chunkTTSPromise = _chunkTTSPromise.then(async () => {
-          for (const seg of charSegs) {
-            if (!_sense.audio || _ttsGenId !== myGen) break;
-            await _speakTTS(_stripForTTS(seg.text), seg.voice);
-            if (seg.fadeAfter) {
-              setTimeout(() => seg.el.classList.add('fading-out'), 1800);
-            }
-          }
-          if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
-        });
-        // If there's no character dialogue the chain still needs to settle
-        if (!charSegs.length) {
-          _chunkTTSPromise = _chunkTTSPromise.then(() => {
-            if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
-          });
-        }
+        // Prose already enqueued via chunk events; only add character dialogue.
+        // Dedup in _ttsEnqueue prevents narrator prose from double-playing.
+        const charSegs = segments.filter(s => s.fadeAfter);
+        charSegs.forEach(seg =>
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el));
       } else {
-        // Normal (non-streamed) path — play all segments in order
-        (async () => {
-          for (const seg of segments) {
-            if (!_sense.audio || _ttsGenId !== myGen) break;
-            await _speakTTS(_stripForTTS(seg.text), seg.voice);
-            if (seg.fadeAfter) {
-              // Slight pause so user can register the speaker, then dissolve.
-              setTimeout(() => seg.el.classList.add('fading-out'), 1800);
-            }
-          }
-          if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
-        })();
+        // Non-streamed: clear stale audio and enqueue everything fresh.
+        _ttsClearTurn();
+        segments.forEach(seg =>
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el));
       }
+      // Sentinel: fires ttsReady once all this turn's audio has played.
+      _ttsQ.push({_cb: () => {
+        if (_ttsGenId === myTTSGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+      }});
+      if (!_ttsActive) _ttsNext();
     } else {
       _turnState.ttsReady = true;
       _checkTurnComplete();
@@ -1132,8 +1175,12 @@ function connect() {
   // hears the scene description within seconds instead of waiting for the full
   // response.  When the "turn" event arrives, character dialogue is appended to
   // the same sequential chain — narrator prose plays first, dialogue after.
-  let _chunkTurnId = null;       // turn_id of the turn currently being streamed
-  let _chunkTTSPromise = Promise.resolve();  // resolves when all chunk TTS is done
+  let _chunkTurnId = null;         // turn_id of the turn currently being streamed
+  // ── TTS governor state (replaces _chunkTTSPromise / async IIFE pattern) ──
+  const _ttsQ = [];                // pending items: {text,voice,ttsGen,fadeEl} | {_cb}
+  let _ttsActive   = false;        // true while _ttsNext loop owns the queue
+  const _ttsSeenTexts = new Set(); // dedup within a turn boundary
+  let _ttsLoopGen  = 0;            // incremented on clear; stale loops self-terminate
 
   es.addEventListener('chunk', e => {
     try {
@@ -1142,12 +1189,11 @@ function connect() {
       const text = _stripForTTS(c.text || '');
       if (!text) return;
       if (_chunkTurnId !== c.turn_id) {
-        // New turn starting — reset the chain (don't inherit stale promise)
+        // New streaming turn — stop old audio and reset dedup
         _chunkTurnId = c.turn_id;
-        _chunkTTSPromise = Promise.resolve();
+        _ttsClearTurn();
       }
-      // Chain this sentence onto the promise — plays in arrival order, no overlap
-      _chunkTTSPromise = _chunkTTSPromise.then(() => _speakTTS(text, 'am_michael'));
+      _ttsEnqueue(text, 'am_michael');
     } catch (_) {}
   });
 
@@ -1489,6 +1535,46 @@ function _formatText(text) {
 let _ttsSource = null;
 let _ttsAbort  = null;
 let _ttsGenId  = 0;   // incremented each turn; old speech loops stop when stale
+
+// ── TTS governor functions ──────────────────────────────────────────
+// _ttsEnqueue  — add one item to the queue; kick off loop if idle
+// _ttsNext     — drain loop (one active instance at a time)
+// _ttsClearTurn — stop current audio, drain queue, reset dedup
+
+function _ttsEnqueue(text, voice, ttsGen, fadeEl) {
+  const key = `${voice || 'am_michael'}:${text}`;
+  if (!text || !text.trim() || _ttsSeenTexts.has(key)) return;
+  _ttsSeenTexts.add(key);
+  _ttsQ.push({text, voice: voice || 'am_michael', ttsGen: ttsGen || 0, fadeEl: fadeEl || null});
+  if (!_ttsActive) _ttsNext();
+}
+
+async function _ttsNext() {
+  if (_ttsActive) return;           // another instance is already running
+  _ttsActive = true;
+  const myGen = ++_ttsLoopGen;
+  while (_ttsQ.length) {
+    if (_ttsLoopGen !== myGen) break; // superseded by _ttsClearTurn
+    const item = _ttsQ.shift();
+    if (item._cb) { item._cb(); continue; }
+    const {text, voice, ttsGen, fadeEl} = item;
+    if (!_sense.audio) continue;
+    if (ttsGen && _ttsGenId !== ttsGen) continue; // stale turn
+    await _speakTTS(text, voice);
+    if (_ttsLoopGen !== myGen) break; // cleared while we were awaiting
+    if (fadeEl) setTimeout(() => fadeEl.classList.add('fading-out'), 1800);
+  }
+  if (_ttsLoopGen === myGen) _ttsActive = false;
+}
+
+function _ttsClearTurn() {
+  _ttsQ.length = 0;
+  _ttsSeenTexts.clear();
+  if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
+  if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
+  _ttsActive = false;
+  _ttsLoopGen++; // invalidate any running loop
+}
 
 function _speakTTS(text, voice = 'am_michael') {
   // Cancel any in-flight TTS request and stop any playing speech
@@ -1995,6 +2081,7 @@ async function sendInput(overrideText) {
   if (!text) return;
   _sending = true;
   _clearTimers();
+  suggestEl.style.display = 'none';
   inputEl.value = '';
 
   const { channel, wrapped } = _localWrap(text);
@@ -2029,6 +2116,9 @@ async function sendInput(overrideText) {
         _pendingPlayerTexts.delete(wrapped);
         _pendingPlayerTexts.add(data.wrapped);
       }
+      // Highlight known entity names in the player's submitted text
+      const _playerTextSpan = optimEl.querySelector('.entry-text');
+      if (_playerTextSpan) _scanPlayerTextForEntities(_playerTextSpan);
       _removeThinking();
       const thinkEl = document.createElement('div');
       thinkEl.id = 'thinking-indicator';
@@ -2047,11 +2137,160 @@ async function sendInput(overrideText) {
   inputEl.focus();
 }
 
+// ── Entity Keyword Linking ────────────────────────────────────────────────
+// Polls /world-state every 10s to build an entity name index.
+// 1) Post-submission: scans player turn text and wraps known names in tooltips.
+// 2) Input: shows an autocomplete dropdown as the player types.
+
+let _entityIndex = new Map(); // name_lc → {id, canonical_name, type, desc}
+
+async function _pollEntityIndex() {
+  try {
+    const res = await fetch('/world-state');
+    if (!res.ok) return;
+    const data = await res.json();
+    const entities = Array.isArray(data) ? data
+      : (data.entities ? Object.values(data.entities) : []);
+    const next = new Map();
+    for (const e of entities) {
+      if (!e || !e.canonical_name) continue;
+      const key = e.canonical_name.toLowerCase();
+      const desc = (Array.isArray(e.senses) && e.senses[0] && e.senses[0].value)
+        || e.description || e.type || '';
+      const entry = {id: e.id || key, canonical_name: e.canonical_name,
+                     type: e.type || '', desc: String(desc).slice(0, 100)};
+      next.set(key, entry);
+      for (const alias of (e.aliases || [])) {
+        if (alias) next.set(String(alias).toLowerCase(), entry);
+      }
+    }
+    _entityIndex = next;
+  } catch (_) {}
+}
+setInterval(_pollEntityIndex, 10000);
+_pollEntityIndex();
+
+function _scanPlayerTextForEntities(spanEl) {
+  if (!_entityIndex.size) return;
+  const rawText = spanEl.textContent;
+  if (!rawText.trim()) return;
+  // Sort names longest-first so longer names match before their substrings
+  const names = [..._entityIndex.keys()].sort((a, b) => b.length - a.length);
+  let html = esc(rawText);
+  for (const name of names) {
+    if (name.length < 3) continue; // skip very short names
+    const e = _entityIndex.get(name);
+    const tip = esc(
+      e.canonical_name +
+      (e.type ? ' [' + e.type + ']' : '') +
+      (e.desc ? ' — ' + e.desc : '')
+    );
+    const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?<![a-z0-9_-])(${safe})(?![a-z0-9_-])`, 'gi');
+    html = html.replace(re, `<span class="entity-ref" data-tip="${tip}">$1</span>`);
+  }
+  spanEl.innerHTML = html;
+}
+
+// Autocomplete suggest dropdown
+const suggestEl = document.getElementById('entity-suggest');
+let _suggestActiveIdx = -1;
+
+function _getWordAtCursor() {
+  const val = inputEl.value;
+  const pos = inputEl.selectionStart;
+  const m = val.slice(0, pos).match(/\S+$/);
+  return m ? m[0] : '';
+}
+
+function _replaceWordAtCursor(word) {
+  const val = inputEl.value;
+  const pos = inputEl.selectionStart;
+  const before = val.slice(0, pos);
+  const after  = val.slice(pos);
+  const m = before.match(/\S+$/);
+  const start = m ? pos - m[0].length : pos;
+  inputEl.value = val.slice(0, start) + word + after;
+  inputEl.selectionStart = inputEl.selectionEnd = start + word.length;
+}
+
+function _showSuggest(matches) {
+  suggestEl.innerHTML = '';
+  _suggestActiveIdx = -1;
+  if (!matches.length) { suggestEl.style.display = 'none'; return; }
+  for (const e of matches) {
+    const li = document.createElement('li');
+    li.innerHTML = esc(e.canonical_name) +
+      (e.type ? `<span class="es-type">${esc(e.type)}</span>` : '');
+    li.dataset.name = e.canonical_name;
+    li.addEventListener('mousedown', ev => {
+      ev.preventDefault();
+      _replaceWordAtCursor(e.canonical_name);
+      suggestEl.style.display = 'none';
+      inputEl.focus();
+    });
+    suggestEl.appendChild(li);
+  }
+  suggestEl.style.display = 'block';
+}
+
+function _updateSuggest() {
+  const word = _getWordAtCursor();
+  if (word.length < 2) { suggestEl.style.display = 'none'; return; }
+  const wl = word.toLowerCase();
+  const seen = new Set();
+  const matches = [];
+  for (const [key, e] of _entityIndex) {
+    if (key.startsWith(wl) && !seen.has(e.id)) {
+      seen.add(e.id);
+      matches.push(e);
+      if (matches.length >= 5) break;
+    }
+  }
+  _showSuggest(matches);
+}
+
 inputEl.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInput(); }
+  const suggestOpen = suggestEl.style.display !== 'none';
+  const items = () => suggestEl.querySelectorAll('li');
+  if (e.key === 'ArrowDown' && suggestOpen) {
+    e.preventDefault();
+    items().forEach((li, i) => li.classList.toggle('active', i === _suggestActiveIdx));
+    const all = items();
+    if (_suggestActiveIdx >= 0) all[_suggestActiveIdx].classList.remove('active');
+    _suggestActiveIdx = Math.min(_suggestActiveIdx + 1, all.length - 1);
+    all[_suggestActiveIdx]?.classList.add('active');
+    return;
+  }
+  if (e.key === 'ArrowUp' && suggestOpen) {
+    e.preventDefault();
+    const all = items();
+    if (_suggestActiveIdx >= 0) all[_suggestActiveIdx].classList.remove('active');
+    _suggestActiveIdx = Math.max(_suggestActiveIdx - 1, -1);
+    if (_suggestActiveIdx >= 0) all[_suggestActiveIdx].classList.add('active');
+    return;
+  }
+  if (e.key === 'Escape' && suggestOpen) {
+    suggestEl.style.display = 'none';
+    return;
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    if (suggestOpen && _suggestActiveIdx >= 0) {
+      e.preventDefault();
+      const active = items()[_suggestActiveIdx];
+      if (active) { _replaceWordAtCursor(active.dataset.name); suggestEl.style.display = 'none'; }
+    } else {
+      e.preventDefault();
+      sendInput();
+    }
+  }
 });
 inputEl.addEventListener('input', () => {
   if (inputEl.value.trim()) _startCountdown(); else _clearTimers();
+  _updateSuggest();
+});
+inputEl.addEventListener('blur', () => {
+  setTimeout(() => { suggestEl.style.display = 'none'; }, 150);
 });
 
 // ── Always-on VAD (Voice Activity Detection) ──
@@ -2134,6 +2373,28 @@ function _vadEndRecord() {
   _setStatus('transcribing', true);
 }
 
+// ── UI Voice Commands ──────────────────────────────────────────────────────
+// Intercepts STT transcriptions before they reach the game.
+// If a phrase matches, the UI action fires and the text is swallowed.
+// Extend _UI_VOICE_CMDS as new panels / actions are added.
+const _UI_VOICE_CMDS = [
+  { pattern: /\b(reset|restart|reset world)\b/i,
+    action: () => fetch('/reset', {method: 'POST'}) },
+  { pattern: /\b(open gallery|show gallery)\b/i,
+    action: () => document.querySelector('[data-tab="gallery"]')?.click() },
+  { pattern: /\b(open map|show map)\b/i,
+    action: () => document.querySelector('[data-tab="map"]')?.click() },
+  { pattern: /\b(open log|show log|show journal)\b/i,
+    action: () => document.querySelector('[data-tab="log"]')?.click() },
+];
+
+function _interceptVoiceCmd(text) {
+  for (const cmd of _UI_VOICE_CMDS) {
+    if (cmd.pattern.test(text)) { cmd.action(); return true; }
+  }
+  return false;
+}
+
 async function _vadProcess() {
   if (!_vadChunks.length) {
     inputEl.dataset.vadState = '';
@@ -2153,9 +2414,14 @@ async function _vadProcess() {
     const data = await res.json();
     const text = (data.text || '').trim();
     if (text) {
-      inputEl.value = text;
-      inputEl.dataset.vadState = 'ready';
-      _startCountdown(2500);
+      if (_interceptVoiceCmd(text)) {
+        // UI command handled — don't propagate to game input
+        inputEl.dataset.vadState = '';
+      } else {
+        inputEl.value = text;
+        inputEl.dataset.vadState = 'ready';
+        _startCountdown(2500);
+      }
     } else {
       inputEl.dataset.vadState = '';
     }
