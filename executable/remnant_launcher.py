@@ -577,8 +577,9 @@ class ServiceManager:
             log("starting ollama...", "head")
             p = ManagedProcess("ollama", [str(ollama), "serve"],
                 env={**env_base,
-                     "OLLAMA_HOST":   f"127.0.0.1:{PORTS['ollama']}",
-                     "OLLAMA_MODELS": str(LOCAL_CACHE / "ollama-data" / "models")},
+                     "OLLAMA_HOST":   f"127.0.0.1:{PORTS['ollama']}"},
+                # OLLAMA_MODELS intentionally not set — use host's default ~/.ollama/models.
+                # Models pulled by the user (ollama pull llama3.1:8b etc.) live there.
                 log_file=RUN_DIR / "ollama.log")
             p.start()
             self._procs.append(p)
