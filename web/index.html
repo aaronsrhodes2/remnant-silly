@@ -473,6 +473,14 @@ html, body {
               padding 1.8s ease 1.8s;
 }
 
+/* Narrator [C=...] color tags — rendered inline by _formatText() */
+.c-gold     { color: rgba(255, 200, 80, 0.92); }
+.c-dim      { color: rgba(255, 255, 255, 0.38); }
+.c-blue     { color: rgba(100, 185, 255, 0.90); }
+.c-red      { color: rgba(255, 100,  80, 0.90); }
+.c-teal     { color: rgba( 80, 220, 200, 0.90); }
+.c-whisper  { color: rgba(255, 255, 255, 0.28); font-style: italic; }
+
 /* Lore whisper — The Fortress narrating history during quiet moments */
 .entry.lore-whisper {
   border-left: 2px solid rgba(255,200,80,0.25);
@@ -857,7 +865,9 @@ function renderTurn(turn, instant) {
   for (const b of blocks) {
     const text = (b.text || '').trim();
     if (!text) continue;
-    if (/^\[[A-Z_]/.test(text) && !b.isPlayer) continue;
+    // Skip blocks that are purely system tags (3+ uppercase chars after [).
+    // Short format tags like [B], [I], [BI], [C=...] are display tags — keep them.
+    if (/^\[[A-Z][A-Z_]{2,}/.test(text) && !b.isPlayer) continue;
 
     const div = document.createElement('div');
     div.className = 'entry';
@@ -882,7 +892,7 @@ function renderTurn(turn, instant) {
       '<img class="entry-avatar' + (!speakerChanged || !avatarUrl ? ' hidden' : '') + '" src="' +
       (avatarUrl ? esc(avatarUrl) : '') + '" alt="">' +
       '<span class="entry-speaker"' + (!speakerChanged ? ' style="visibility:hidden"' : '') + '>' + esc(speaker) + '</span>' +
-      '<span class="entry-text">' + esc(text) + '</span>';
+      '<span class="entry-text">' + _formatText(text) + '</span>';
 
     feed.appendChild(div);
     added++;
@@ -909,17 +919,43 @@ function renderTurn(turn, instant) {
   if (!instant && isNarratorTurn) {
     if (_sense.audio && segments.length) {
       const myGen = ++_ttsGenId;
-      (async () => {
-        for (const seg of segments) {
-          if (!_sense.audio || _ttsGenId !== myGen) break;
-          await _speakTTS(seg.text, seg.voice);
-          if (seg.fadeAfter) {
-            // Slight pause so user can register the speaker, then dissolve.
-            setTimeout(() => seg.el.classList.add('fading-out'), 1800);
+      const wasStreamed = (_chunkTurnId === (turn.turn_id || ''));
+
+      if (wasStreamed) {
+        // Prose was already streamed via "chunk" events and is playing now.
+        // Append only character dialogue to the chunk TTS promise chain so it
+        // plays naturally after all narrator prose finishes — no double-speaking.
+        const charSegs = segments.filter(s => s.channel === 'character');
+        _chunkTTSPromise = _chunkTTSPromise.then(async () => {
+          for (const seg of charSegs) {
+            if (!_sense.audio || _ttsGenId !== myGen) break;
+            await _speakTTS(_stripForTTS(seg.text), seg.voice);
+            if (seg.fadeAfter) {
+              setTimeout(() => seg.el.classList.add('fading-out'), 1800);
+            }
           }
+          if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+        });
+        // If there's no character dialogue the chain still needs to settle
+        if (!charSegs.length) {
+          _chunkTTSPromise = _chunkTTSPromise.then(() => {
+            if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+          });
         }
-        if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
-      })();
+      } else {
+        // Normal (non-streamed) path — play all segments in order
+        (async () => {
+          for (const seg of segments) {
+            if (!_sense.audio || _ttsGenId !== myGen) break;
+            await _speakTTS(_stripForTTS(seg.text), seg.voice);
+            if (seg.fadeAfter) {
+              // Slight pause so user can register the speaker, then dissolve.
+              setTimeout(() => seg.el.classList.add('fading-out'), 1800);
+            }
+          }
+          if (_ttsGenId === myGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+        })();
+      }
     } else {
       _turnState.ttsReady = true;
       _checkTurnComplete();
@@ -1090,6 +1126,31 @@ function connect() {
     if (el) el.textContent = `T${_narratorTurnCount}`;
   }
 
+  // ── Streaming prose chunks ─────────────────────────────────────────────────
+  // The backend streams narrator prose sentences as "chunk" SSE events while
+  // Ollama is still generating.  We queue them for sequential TTS so the player
+  // hears the scene description within seconds instead of waiting for the full
+  // response.  When the "turn" event arrives, character dialogue is appended to
+  // the same sequential chain — narrator prose plays first, dialogue after.
+  let _chunkTurnId = null;       // turn_id of the turn currently being streamed
+  let _chunkTTSPromise = Promise.resolve();  // resolves when all chunk TTS is done
+
+  es.addEventListener('chunk', e => {
+    try {
+      const c = JSON.parse(e.data);
+      if (!_sense.audio) return;
+      const text = _stripForTTS(c.text || '');
+      if (!text) return;
+      if (_chunkTurnId !== c.turn_id) {
+        // New turn starting — reset the chain (don't inherit stale promise)
+        _chunkTurnId = c.turn_id;
+        _chunkTTSPromise = Promise.resolve();
+      }
+      // Chain this sentence onto the promise — plays in arrival order, no overlap
+      _chunkTTSPromise = _chunkTTSPromise.then(() => _speakTTS(text, 'am_michael'));
+    } catch (_) {}
+  });
+
   es.addEventListener('history', e => {
     try {
       const turns = JSON.parse(e.data);
@@ -1215,11 +1276,11 @@ function connect() {
       if (!data.text) return;
       const el = document.createElement('div');
       el.className = 'entry lore-whisper arriving';
-      el.innerHTML = '<span class="lore-icon">📖</span><span class="entry-text">' + esc(data.text) + '</span>';
+      el.innerHTML = '<span class="lore-icon">📖</span><span class="entry-text">' + _formatText(data.text) + '</span>';
       feed.appendChild(el);
       feed.scrollTop = feed.scrollHeight;
       if (_sense.audio) {
-        _speakTTS(data.text, 'bf_alice').then(() => {
+        _speakTTS(_stripForTTS(data.text), 'bf_alice').then(() => {
           setTimeout(() => el.classList.add('fading-out'), 4000);
         });
       } else {
@@ -1237,7 +1298,7 @@ function connect() {
       // because SSE events are processed in order and TTS is async.
       setTimeout(() => {
         const voice = _PINNED_VOICES[data.name] || _voiceForSpeaker(data.name);
-        _speakTTS(data.text, voice);
+        _speakTTS(_stripForTTS(data.text), voice);
       }, 800);
     } catch (_) {}
   });
@@ -1381,6 +1442,48 @@ function _setStatus(key, active) {
 
 // Backward-compat shim: _setThinking used by _removeThinking and sendInput
 function _setThinking(active) { _setStatus('thinking', active); }
+
+// ── Text formatting helpers ───────────────────────────────────────────────────
+
+/**
+ * Strip all formatting and system tags from text before sending to TTS.
+ * The TTS engine reads [B], *, ** etc. aloud — strip them all.
+ */
+function _stripForTTS(text) {
+  return text
+    // Strip display-format tags: [B], [/B], [I], [/I], [BI], [/BI], [C=...], [/C]
+    .replace(/\[\/?(B|I|BI|C(?:=[^\]]*)?)\]/gi, '')
+    // Strip any remaining system tags like [MOOD(...)], [SOUND(...)] etc.
+    .replace(/\[[^\]]{1,80}\]/g, '')
+    // Strip markdown bold/italic: **word** → word, *word* → word
+    .replace(/\*{1,3}([^*\n]*?)\*{1,3}/g, '$1')
+    // Strip markdown underline: _word_ → word
+    .replace(/_{1,2}([^_\n]*?)_{1,2}/g, '$1')
+    // Strip stray unmatched markers
+    .replace(/[*_]/g, '')
+    // Collapse extra whitespace
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Format text for display: HTML-escape, then convert square-bracket
+ * formatting tags to HTML.  Also converts any leaked markdown to HTML
+ * as a fallback so it at least renders correctly rather than showing raw *.
+ */
+function _formatText(text) {
+  // 1. HTML-escape (handles &, <, >, ")
+  let s = esc(text);
+  // 2. Square-bracket display tags → HTML (order matters: BI before B/I)
+  s = s.replace(/\[BI\]([\s\S]*?)\[\/BI\]/gi, '<strong><em>$1</em></strong>');
+  s = s.replace(/\[B\]([\s\S]*?)\[\/B\]/gi,   '<strong>$1</strong>');
+  s = s.replace(/\[I\]([\s\S]*?)\[\/I\]/gi,   '<em>$1</em>');
+  s = s.replace(/\[C=([^\]]+)\]([\s\S]*?)\[\/C\]/gi, '<span class="c-$1">$2</span>');
+  // 3. Fallback: convert leaked markdown so it at least renders
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g,     '<em>$1</em>');
+  return s;
+}
 
 // ── TTS engine ──
 let _ttsSource = null;

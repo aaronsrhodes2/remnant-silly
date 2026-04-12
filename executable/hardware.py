@@ -86,32 +86,32 @@ _VRAM_TIERS: list[tuple[float, PerfTier]] = [
 # User-set env vars always override these recommendations.
 _MODEL_PROFILES: dict[str, dict[str, str]] = {
     "Excellent": {       # 24+ GB VRAM
-        "OLLAMA_MODEL":   "qwen2.5:32b",
+        "OLLAMA_MODEL":   "mistral:latest",    # llama3.1:70b when available
         "WHISPER_MODEL":  "large-v3",
         "MUSICGEN_MODEL": "facebook/musicgen-small",  # CPU-based; small = ~4x realtime vs medium 18x
     },
     "Great": {           # 16+ GB VRAM
-        "OLLAMA_MODEL":   "qwen2.5:14b",
+        "OLLAMA_MODEL":   "llama3.1:8b",        # 8B, ~4GB VRAM, 128K ctx — strong instruction following
         "WHISPER_MODEL":  "medium.en",
         "MUSICGEN_MODEL": "facebook/musicgen-small",  # CPU-based; small = ~4x realtime vs medium 18x
     },
     "Good": {            # 12+ GB VRAM
-        "OLLAMA_MODEL":   "qwen2.5:14b",
+        "OLLAMA_MODEL":   "mistral:latest",
         "WHISPER_MODEL":  "small.en",
         "MUSICGEN_MODEL": "facebook/musicgen-small",  # CPU-based; small = ~4x realtime vs medium 18x
     },
     "Moderate": {        # 8+ GB VRAM
-        "OLLAMA_MODEL":   "qwen2.5:7b",
+        "OLLAMA_MODEL":   "mistral:latest",
         "WHISPER_MODEL":  "base.en",
         "MUSICGEN_MODEL": "facebook/musicgen-small",
     },
     "Slow": {            # 6+ GB VRAM
-        "OLLAMA_MODEL":   "qwen2.5:3b",
+        "OLLAMA_MODEL":   "mistral:latest",
         "WHISPER_MODEL":  "base.en",
         "MUSICGEN_MODEL": "facebook/musicgen-small",
     },
     "CPU-only": {        # <6 GB VRAM
-        "OLLAMA_MODEL":   "qwen2.5:3b",
+        "OLLAMA_MODEL":   "mistral:latest",
         "WHISPER_MODEL":  "tiny.en",
         "MUSICGEN_MODEL": "facebook/musicgen-small",
     },

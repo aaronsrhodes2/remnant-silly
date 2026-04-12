@@ -220,6 +220,49 @@ def _ensure_entity(entity_id: str, name: str, etype: str, parent_id: str | None 
         _world["entities"][entity_id]["last_referenced"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     return _world["entities"][entity_id]
 
+# ── Dynamic NPC voice assignment ──────────────────────────────────────────────
+# Pool of unused Kokoro voices — assigned round-robin to new NPCs at introduction.
+# Seeded NPCs (from world.json) already carry a "voice" field and are never
+# touched by this pool.  Order is chosen for maximum timbral variety.
+_VOICE_POOL: list[str] = [
+    "am_fenrir",   # deep, slightly ominous male
+    "af_nova",     # clear, confident female
+    "bm_lewis",    # warm British male
+    "af_river",    # calm, thoughtful female
+    "am_orion",    # bright, expressive male
+    "am_puck",     # quick, mercurial male
+    "bf_emma",     # crisp British female
+    "bm_fable",    # storyteller British male
+    "af_sky",      # light, airy female
+    "am_liam",     # friendly, casual male
+    "bf_isabella", # warm British female
+    "af_heart",    # emotional, rich female
+]
+_voices_assigned: set[str] = set()
+
+
+def _assign_voice(entity: dict) -> str:
+    """Assign the next unused Kokoro voice to a new NPC entity.
+
+    No-ops if the entity already has a voice (seeded NPCs keep theirs).
+    Returns the assigned voice ID.
+    """
+    if entity.get("voice"):
+        return entity["voice"]
+    global _voices_assigned
+    for v in _VOICE_POOL:
+        if v not in _voices_assigned:
+            _voices_assigned.add(v)
+            entity["voice"] = v
+            return v
+    # Pool exhausted — restart rotation
+    _voices_assigned.clear()
+    v = _VOICE_POOL[0]
+    _voices_assigned.add(v)
+    entity["voice"] = v
+    return v
+
+
 def _add_alias(entity: dict, alias: str) -> None:
     for a in entity["aliases"]:
         if a["name"].lower() == alias.lower():
@@ -339,6 +382,8 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
         else:
             npc_id = _loc_id(npc_name)
             npc = _ensure_entity(npc_id, npc_name, "npc", parent_id=loc_id)
+            # Give brand-new NPCs a voice from the dynamic pool
+            _assign_voice(npc)
         new_layers = []
         if npc_desc and _add_sense_layer(npc, "SIGHT", npc_desc, turn_id):
             new_layers.append({"type": "SIGHT", "desc": npc_desc})
@@ -437,7 +482,7 @@ _TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava",
 
 # Models known to have large context windows (≥16k tokens) — preferred when
 # OLLAMA_MODEL is not explicitly set.
-_LARGE_CONTEXT_PREFER = ("qwen2.5", "qwen", "llama3.1", "llama3.2", "mistral-nemo",
+_LARGE_CONTEXT_PREFER = ("mistral", "llama3.1", "llama3.2", "mistral-nemo",
                           "mixtral", "command-r", "gemma2", "phi3")
 
 def _ollama_model() -> str:
@@ -1129,59 +1174,26 @@ def _load_seed_world() -> None:
         if not title or status == "disabled":
             continue
 
-        lines = [
-            "\n[INTERNAL STORY NOTES — DO NOT OUTPUT, LIST, SUMMARIZE, OR REFERENCE "
-            "THESE PHASES, PATHS, OR KEY BEATS IN YOUR RESPONSE. "
-            "This is background knowledge for you alone — the player discovers the "
-            "quest organically through play. Never print a phase list or option menu.]\n"
-            f"[PILOT QUEST — {title.upper()}]"
-        ]
-        if quest.get("threat_summary"):
-            lines.append(f"Threat: {quest['threat_summary']}")
-        if quest.get("tone"):
-            lines.append(f"Tone: {quest['tone']}")
-        if quest.get("faction"):
-            lines.append(f"Faction: {quest['faction']}")
-
-        for phase in quest.get("phases", []):
-            ptitle = phase.get("title", "")
-            pgoal  = phase.get("goal", "")
-            psit   = phase.get("situation", "")
-            lines.append(f"\n  Phase: {ptitle}")
-            if pgoal:
-                lines.append(f"    Goal: {pgoal}")
-            if psit:
-                lines.append(f"    Situation: {psit}")
-            if phase.get("entry"):
-                lines.append(f"    Entry: {phase['entry']}")
-            if phase.get("twist"):
-                lines.append(f"    Twist: {phase['twist']}")
-            for path in phase.get("paths", []):
-                pname = path.get("name", path.get("id", ""))
-                pdesc = path.get("description", "")
-                kbeat = path.get("key_beat", "")
-                lines.append(f"    - {pname}: {pdesc}")
-                if kbeat:
-                    lines.append(f"      Key beat: {kbeat}")
-            mc = phase.get("moral_choice", {})
-            if mc:
-                lines.append("    Moral choice (Phase 3 climax):")
-                for choice_key, choice in mc.items():
-                    cname = choice.get("name", choice_key)
-                    cdesc = choice.get("description", "")
-                    cout  = choice.get("outcome", "")
-                    lines.append(f"      {cname}: {cdesc}")
-                    if cout:
-                        lines.append(f"        Outcome: {cout}")
-
-        rewards = quest.get("rewards", {})
-        if rewards:
-            lines.append("\n  Rewards:")
-            for rkey, rval in rewards.items():
-                lines.append(f"    - {rkey}: {rval}")
-
-        lines.append(f"[END PILOT QUEST — {title.upper()}]")
-        quest_blocks.append("\n".join(lines))
+        # Only inject a brief awareness block — NOT the full phase/path/reward tree.
+        # Detailed phase names and path choices cause models to narrate quest structure
+        # verbatim instead of letting it emerge through play.
+        threat = quest.get("threat_summary", "")
+        tone   = quest.get("tone", "")
+        faction = quest.get("faction", "")
+        brief = (
+            "\n[INTERNAL STORY NOTES — PRIVATE BACKGROUND ONLY. "
+            "NEVER OUTPUT, LIST, SUMMARIZE, REFERENCE, OR NARRATE FROM THIS BLOCK. "
+            "The player discovers the quest entirely through organic play.]\n"
+            f"[PILOT QUEST — {title.upper()}]\n"
+        )
+        if threat:
+            brief += f"Awareness: {threat}\n"
+        if tone:
+            brief += f"Tone: {tone}\n"
+        if faction:
+            brief += f"Faction present: {faction}\n"
+        brief += f"[END PILOT QUEST — {title.upper()}]"
+        quest_blocks.append(brief)
 
     # ── System prompt injection — seed NPC personalities ──────────────────
     # Append a rich character bible block so the narrator voices each being
@@ -1572,15 +1584,44 @@ def _build_messages() -> list[dict]:
         text = turn.get("raw_text", "").strip()
         if text:
             msgs.append({"role": "user" if is_player else "assistant", "content": text})
+
+    # First turn: inject a synthetic trigger so the model starts in the portal chamber,
+    # not in an arbitrary scene derived from NPC profile details.
+    if not all_turns:
+        msgs.append({
+            "role": "user",
+            "content": (
+                "[OPENING SEQUENCE] A new run has begun. The player has just arrived "
+                "through the portal hoop into the pod bay antechamber. "
+                "Begin with the chamber arrival narration now. "
+                "The Remnant speaks only the ritual question: 'Who are you, being?'"
+            ),
+        })
+
     return msgs
 
 
-def _stream_ollama_chat(messages: list[dict], timeout: float = 180.0) -> str:
-    """POST to Ollama /api/chat with streaming; return the full response text."""
+def _stream_ollama_chat(
+    messages: list[dict],
+    timeout: float = 180.0,
+    on_prose_sentence=None,   # optional callback(text: str) — called per prose sentence
+) -> str:
+    """POST to Ollama /api/chat with streaming; return the full response text.
+
+    If *on_prose_sentence* is provided it is called with each complete sentence
+    of narrator prose as tokens arrive, stopping once a [CHARACTER tag appears.
+    This allows the frontend to start TTS within 2-5 s rather than waiting for
+    the full response (~20-40 s) before any audio plays.
+    """
     payload = json.dumps({
         "model": _ollama_model(),
         "messages": messages,
         "stream": True,
+        "options": {
+            # Explicit context window: the system prompt alone exceeds Ollama's
+            # 4096-token default.  Mistral 7B supports 32 K; set conservatively.
+            "num_ctx": 16384,
+        },
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
@@ -1589,6 +1630,15 @@ def _stream_ollama_chat(messages: list[dict], timeout: float = 180.0) -> str:
         method="POST",
     )
     full_text = ""
+    prose_buf = ""
+    prose_ended = False   # True once [CHARACTER tag seen — stop streaming chunks
+
+    def _flush_prose(text: str) -> None:
+        """Clean and emit one prose sentence via the callback (if non-empty)."""
+        cleaned = _clean_narrator_prose(text).strip()
+        if cleaned:
+            on_prose_sentence(cleaned)
+
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         for line in resp:
             line = line.strip()
@@ -1600,7 +1650,29 @@ def _stream_ollama_chat(messages: list[dict], timeout: float = 180.0) -> str:
                 continue
             delta = (chunk.get("message") or {}).get("content", "")
             full_text += delta
+
+            # Progressive sentence streaming — only before the first [CHARACTER tag
+            if on_prose_sentence and not prose_ended:
+                prose_buf += delta
+                if "[CHARACTER" in prose_buf:
+                    prose_ended = True
+                    pre = prose_buf[:prose_buf.index("[CHARACTER")]
+                    if pre.strip():
+                        _flush_prose(pre)
+                else:
+                    # Flush complete sentences on punctuation followed by whitespace/newline
+                    while True:
+                        m = re.search(r'(?<=[.!?])[\s\n]+', prose_buf)
+                        if not m:
+                            break
+                        sentence = prose_buf[:m.start() + 1]   # include terminal punctuation
+                        prose_buf = prose_buf[m.end():]
+                        _flush_prose(sentence)
+
             if chunk.get("done"):
+                # Flush any remaining prose that didn't end with sentence punctuation
+                if on_prose_sentence and not prose_ended and prose_buf.strip():
+                    _flush_prose(prose_buf)
                 break
     return full_text
 
@@ -1627,8 +1699,19 @@ _STRIP_DISPLAY_TAGS_RE = re.compile(
 
 
 def _clean_narrator_prose(text: str) -> str:
-    """Strip system tags from narrator prose so they never appear in the feed."""
+    """Strip system tags from narrator prose so they never appear in the feed.
+
+    Display-only formatting tags ([B], [I], [BI], [C=...]) are intentionally
+    preserved here so the frontend can convert them to HTML.  Markdown symbols
+    (* ** _ # >) are stripped because the TTS engine reads them aloud.
+    """
     cleaned = _STRIP_DISPLAY_TAGS_RE.sub("", text)
+    # Strip markdown bold/italic markers — TTS reads them aloud as "asterisk"
+    cleaned = re.sub(r'\*{1,3}([^*\n]*?)\*{1,3}', r'\1', cleaned)
+    cleaned = re.sub(r'_{1,2}([^_\n]*?)_{1,2}', r'\1', cleaned)
+    # Strip markdown headers and blockquotes
+    cleaned = re.sub(r'(?m)^#{1,6}\s+', '', cleaned)
+    cleaned = re.sub(r'(?m)^>\s*', '', cleaned)
     # Collapse multiple blank lines left by removed tags
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
@@ -1678,11 +1761,29 @@ def _strip_context_bleed(text: str) -> str:
         r"(?m)^\d+\.\s+(?:Continue|Proceed|Insult|Trace|Follow|Work with|Go to|Head to|Try|Visit|Ask|Use)\b.*$",
         "", text, flags=re.IGNORECASE,
     )
+    # Strip quest-path labels that models echo from the injected story notes
+    text = re.sub(
+        r"(?mi)^[ \t]*(?:Technical Path|Remnant['']s Way|Fortress['']s Way|Neutral Path|"
+        r"Moral [Cc]hoice|Phase \d+[^:]*|True Goal|Situation:|Entry:|Twist:|Key [Bb]eat:|"
+        r"Rewards?:|Path \d+|Faction:|Awareness:|Tone:)\s*:.*$",
+        "", text,
+    )
+    # Strip bullet-list quest paths (- Name: description)
+    text = re.sub(
+        r"(?m)^[ \t]*[-•]\s+(?:Technical|Remnant|Fortress|Neutral|Path)\b[^:\n]*:[^\n]*$",
+        "", text, flags=re.IGNORECASE,
+    )
     # Strip third-person player references ("The player takes a moment to...")
     text = re.sub(
         r"(?i)\bthe player (?:takes?|feels?|notices?|turns?|pauses?|considers?|reflects?|stands?|seems?|moves?|heads?)\b[^.!?]*[.!?]",
         "", text,
     )
+    # Strip markdown emphasis markers that TTS reads aloud as "asterisk"
+    text = re.sub(r'\*{1,3}([^*\n]*?)\*{1,3}', r'\1', text)
+    text = re.sub(r'_{1,2}([^_\n]*?)_{1,2}', r'\1', text)
+    # Strip display-only format tags [B]/[/B]/[I]/[/I]/[C=...]/[/C]
+    # so they don't appear in TTS text from context-bleed paths
+    text = re.sub(r'\[/?(?:B|I|BI|C(?:=[^\]]*)?)\]', '', text)
     # Collapse excess blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -1839,6 +1940,11 @@ def _generate_narrator_turn() -> None:
         _sse_broadcast("activity", {"text": "🔮 thinking…"})
         messages = _build_messages()
         full_text = ""
+
+        # Pre-generate the turn_id so streaming chunks reference it before
+        # the full "turn" event fires.
+        turn_id = f"narrator-{uuid.uuid4().hex[:8]}"
+
         for attempt in range(4):   # 1 initial + up to 3 continues
             if attempt > 0:
                 _sse_broadcast("activity", {"text": f"📝 continuing… ({attempt}/3)"})
@@ -1847,8 +1953,22 @@ def _generate_narrator_turn() -> None:
                     {"role": "assistant", "content": full_text},
                     {"role": "user", "content": "Please continue."},
                 ]
+
+            # On the first attempt, stream prose sentences to the frontend so
+            # TTS can start within seconds instead of waiting for the full response.
+            # Continuation attempts don't stream — the prose is already mid-flight.
+            prose_callback = None
+            if attempt == 0:
+                def prose_callback(sentence: str, _tid=turn_id) -> None:  # noqa: E731
+                    _sse_broadcast("chunk", {
+                        "turn_id": _tid,
+                        "text": sentence,
+                        "channel": "narrator",
+                    })
+
             try:
-                chunk = _stream_ollama_chat(messages, timeout=180.0)
+                chunk = _stream_ollama_chat(messages, timeout=180.0,
+                                            on_prose_sentence=prose_callback)
                 full_text += chunk
             except Exception as e:
                 print(f"[diag] generation attempt {attempt} error: {e}")
@@ -1869,7 +1989,7 @@ def _generate_narrator_turn() -> None:
 
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         turn = {
-            "turn_id": f"narrator-{uuid.uuid4().hex[:8]}",
+            "turn_id": turn_id,   # use the pre-generated id (matches chunk events)
             "is_player": False,
             "narrator_name": "The Fortress",
             "raw_text": full_text,
@@ -1889,7 +2009,10 @@ def _generate_narrator_turn() -> None:
         _enqueue_image_generation(full_text)
         _broadcast_narrator_mood(full_text)    # [MOOD: "..."] → mood SSE → music
         _broadcast_narrator_sound(full_text)   # [SOUND: "..."] → sfx SSE → sound effects
-        _schedule_sense_enrichment(full_text)  # Ollama-enriches any missing sense channels
+        # Sense enrichment disabled: it made sequential Ollama calls that blocked the
+        # narrator generation queue, causing 150+ second turn timeouts.
+        # The narrator is instructed to include all sense channels inline.
+        # _schedule_sense_enrichment(full_text)
         _check_dressed_transition(full_text)
 
     except Exception as e:

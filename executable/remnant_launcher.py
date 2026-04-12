@@ -66,7 +66,7 @@ PORTS = {
     "flask-music": 1596,
 }
 
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "mistral:latest")
 
 # ── ANSI console helpers ───────────────────────────────────────────────────────
 # Works on Windows 10+ (ENABLE_VIRTUAL_TERMINAL_PROCESSING).
