@@ -87,6 +87,7 @@ _player_appearance_desc: str = ""   # prose captured from the dressing narrator 
 # Conversation engine — Ollama direct generation (replaces ST extension relay).
 _conversation_lock = threading.Lock()   # guards _generating flag (check-and-set only)
 _generating: bool = False               # True while Ollama is streaming a response
+_classifying: bool = False              # True while _sorting_hat's Ollama call is in flight
 _narrator_queued: bool = False          # True when a player input arrived during generation
 _system_prompt: str = ""               # Loaded from fortress_system_prompt.txt at startup
 _first_mes: str = ""                   # Loaded from fortress_first_mes.txt at startup
@@ -145,8 +146,9 @@ _MEMORY_RETRIEVE_K   = 5    # extra turns retrieved by semantic similarity
 _MEMORY_MIN_HISTORY  = 20   # don't bother retrieving until we have this many turns
 
 # Set at _init_chroma(); None when chromadb unavailable.
-_chroma_client = None
-_chroma_turns  = None   # Collection: narrator_turns
+_chroma_client    = None
+_chroma_turns     = None   # Collection: narrator_turns
+_chroma_knowledge = None   # Collection: world_knowledge (Sorting Hat — system prompt + seed chunks)
 
 DIAG_LOG = STATUS_DIR / "diagnostics.log"
 NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
@@ -427,6 +429,24 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
 
+    # ── Player appearance trait → avatar generation ────────────────────
+    # [PLAYER_TRAIT(appearance): "..."] or [PLAYER_TRAIT(clothing): "..."]
+    # triggers the SD portrait generation the same way the dressed transition does.
+    if not _player_dressed:
+        appear_re = re.compile(
+            r'\[PLAYER_TRAIT\((?:appearance|clothing|look|physique|dress)\)'
+            r'\s*:\s*"?([^"\]]{10,})"?\]',
+            re.IGNORECASE,
+        )
+        for m in appear_re.finditer(raw_text):
+            appear_desc = m.group(1).strip()
+            if appear_desc:
+                # Trigger the same avatar pipeline as the clothing ITEM path
+                _check_dressed_transition(
+                    f'[ITEM(outfit): "outfit"] {appear_desc} dressed now wearing'
+                )
+                break  # one trigger per turn
+
     # ── Item codex entries ─────────────────────────────────────────────
     item_re = re.compile(r'\[ITEM\(([^)]+)\)\s*(?::\s*"?([^"\]]*)"?)?\]', re.IGNORECASE)
     for match in item_re.finditer(raw_text):
@@ -484,6 +504,542 @@ _TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava",
 # OLLAMA_MODEL is not explicitly set.
 _LARGE_CONTEXT_PREFER = ("mistral", "llama3.1", "llama3.2", "mistral-nemo",
                           "mixtral", "command-r", "gemma2", "phi3")
+
+# ---------------------------------------------------------------------------
+# Tag injection — session state
+# The narrator (llama3.1:8b) omits MOOD, INTRODUCE, and LORE tags ~60% of
+# turns.  These sets track what has already been injected so we never emit
+# duplicate tags within a single game session.
+# ---------------------------------------------------------------------------
+_introduced_this_session: set = set()
+_lore_injected_this_session: set = set()
+_image_locations_fired: set = set()  # location keys for already-injected images this session
+_item_given_this_session: set = set()  # item keys already injected this session
+
+# Characters that are permanent crew — never get a spurious INTRODUCE tag.
+# Intentionally EMPTY: Sherri, The Remnant, and The Fortress are introduced
+# as formal characters on first CHARACTER-tag encounter each session.
+_PERMANENT_CREW: frozenset = frozenset()
+
+# Prose → MOOD mapping (checked top-to-bottom; first match wins).
+_MOOD_PATTERNS = [
+    (r'danger|threat|weapon|combat|fight|alarm|hostile',
+     'tense percussion, fast metallic rhythm, high threat'),
+    (r'quiet|still|silence|empty|alone|waiting',
+     'sparse ambient drone, low pulse, introspective'),
+    (r'wonder|strange|alien|void|universe|ancient',
+     'alien ambient, choral whisper, vast and slow'),
+    (r'warm|laugh|food|comfort|safe|cheerful|smile',
+     'gentle metallic chime, slow tempo, warmth'),
+    (r'run|flee|chase|escape|urgent|quickly',
+     'driving percussion, rising tension, urgent'),
+    (r'sleep|dream|rest|drift|float|quiet|still|hush',
+     'deep space ambient, intimate and quiet, slow drift'),
+    (r'discover|reveal|secret|hidden|ancient|archive|lore',
+     'mysterious resonance, slow revelation, ancient memory'),
+]
+
+# Lore keyword → (lore_key, lore_text).  First mention of the keyword that
+# does NOT already carry a [LORE(...)] tag gets one injected automatically.
+_LORE_ANCHORS = [
+    ('the fold',           'fold_omni',
+     'The Fold bridges universes — it is everywhere at once'),
+    ('neural nexus',       'neural_nexus',
+     'The Neural Nexus is the cognitive heart of The Fortress'),
+    ('void crystal',       'void_crystal',
+     'Void crystals store memory across dimensional boundaries'),
+    ('remnant',            'remnant_origin',
+     'The Remnant is a consciousness without a fixed form'),
+    ('the fortress',       'fortress_origin',
+     'The Fortress is an ancient self-aware station adrift between dimensions'),
+    ('fabricat',           'fabrication_bay',
+     'The Fabrication Bay synthesizes objects from raw matter using Fold energy'),
+    ('null space',         'null_space',
+     'Null space exerts anti-pressure — the Fortress holds it at bay alone'),
+    ('sherri',             'sherri_origin',
+     'Sherri is a fleet of bronze automatons sharing a single distributed mind'),
+    ('terravore',          'terravore',
+     'Terravore is a universe of bio-mechanical jungles visible through the fore port'),
+    ('the hoop',           'the_hoop',
+     'The abduction hoop tears a luminous vortex between dimensions to collect souls'),
+    ('tricorder',          'the_tricorder',
+     'The Dimensional Tricorder reads fold frequencies, entity signatures, and anomalies'),
+    ('vex',                'vex_history',
+     'Vex is a fallen traveler who refused their assignment — now haunts the lower decks'),
+    ('mira',               'mira_history',
+     'Mira is a fold researcher who arrived two cycles ago and chose to understand'),
+    ('founding compact',   'founding_compact',
+     'The Fortress and The Remnant made an agreement older than any known civilization'),
+    ('great silence',      'the_great_silence',
+     'Three hundred cycles passed with no travelers — only the ship, Sherri, and The Remnant'),
+    ('lower deck',         'vex_history',
+     'The lower decks are where Vex retreated — unmaintained, cold, and forgotten'),
+    ('archive',            'the_first_traveler',
+     'The Archives hold every traveler\'s record — including Subject Zero, the first'),
+    ('equilibrium barrier','null_space',
+     'The equilibrium barrier is the only thing between the crew and null space\'s anti-pressure'),
+    ('string.slip',        'string_slipping',
+     'String-Slipping lets the Vex-Kahl phase through matter without opening a door'),
+]
+
+# ── Sorting Hat constants ──────────────────────────────────────────────────
+# The Sorting Hat chunks and indexes all world knowledge (system prompt rules,
+# NPC personalities, location sense data, lore) at startup, then retrieves
+# exactly the relevant chunks per narrator turn — tagged by sense type and
+# dispatched to the right service.
+_CHUNK_SIZE           = 120   # words per chunk (~120 tokens at typical density)
+_CHUNK_OVERLAP        = 24    # ~20% overlap for context continuity
+_KNOWLEDGE_RETRIEVE_K = 6     # chunks retrieved per narrator turn
+
+
+def _chunk_text(text: str, size: int = _CHUNK_SIZE, overlap: int = _CHUNK_OVERLAP) -> list:
+    """Split text into overlapping word-boundary chunks."""
+    words = text.split()
+    chunks, i = [], 0
+    while i < len(words):
+        chunk = " ".join(words[i:i + size])
+        if chunk.strip():
+            chunks.append(chunk)
+        i += size - overlap
+    return chunks
+
+
+def _index_world_knowledge() -> None:
+    """Chunk and embed system prompt + world seed into world_knowledge collection.
+
+    Runs at startup in a background thread (after _init_chroma + _load_seed_world).
+    Skips docs already indexed (stable IDs — no re-embedding on restart).
+    Classifies each chunk by sense_type and service_target so the Sorting Hat
+    knows which downstream service benefits from each rule.
+    """
+    if _chroma_knowledge is None:
+        return
+
+    _SENSE_KEYWORDS = {
+        "smell":     ("smell", "odor", "scent", "aroma", "SMELL"),
+        "taste":     ("taste", "flavor", "flavour", "TASTE"),
+        "touch":     ("touch", "texture", "feel", "TOUCH"),
+        "sound":     ("sound", "hear", "audio", "SFX", "SOUND"),
+        "sight":     ("sight", "see", "image", "GENERATE_IMAGE", "visual"),
+        "mood":      ("mood", "music", "MOOD", "atmosphere", "ambient"),
+        "character": ("character", "dialogue", "CHARACTER", "voice", "NPC"),
+        "lore":      ("lore", "LORE", "history", "world"),
+        "rule":      ("never", "always", "must", "forbidden", "rule", "RULE"),
+    }
+
+    def _classify_chunk(text: str):
+        """Return (sense_type, service_target) for a text chunk."""
+        tl = text.lower()
+        for sense, keywords in _SENSE_KEYWORDS.items():
+            if any(k.lower() in tl for k in keywords):
+                service = {
+                    "mood":  "flask-music",
+                    "sight": "flask-sd",
+                    "sound": "flask-tts",
+                }.get(sense, "ollama")
+                return sense, service
+        return "general", "ollama"
+
+    docs, ids, metas = [], [], []
+
+    # ── System prompt chunks ──────────────────────────────────────────────
+    if _system_prompt:
+        for i, chunk in enumerate(_chunk_text(_system_prompt)):
+            sense, service = _classify_chunk(chunk)
+            docs.append(chunk)
+            ids.append(f"sysprompt_{i:04d}")
+            metas.append({
+                "source": "system_prompt",
+                "chunk_index": i,
+                "sense_type": sense,
+                "service_target": service,
+            })
+
+    # ── World seed: lore ──────────────────────────────────────────────────
+    for entry in _world.get("lore", []):
+        text = entry.get("text", "").strip()
+        key  = entry.get("key", f"lore_{len(ids)}")
+        if not text:
+            continue
+        for i, chunk in enumerate(_chunk_text(text)):
+            docs.append(chunk)
+            ids.append(f"lore_{key}_{i:03d}")
+            metas.append({
+                "source": "lore", "key": key, "chunk_index": i,
+                "sense_type": "lore", "service_target": "ollama",
+            })
+
+    # ── World seed: NPCs ──────────────────────────────────────────────────
+    for npc in _world.get("npcs", []):
+        parts = []
+        for field in ("name", "role", "description", "personality",
+                      "voice_style", "signature_quote", "nexus_dynamic"):
+            val = npc.get(field, "")
+            if val:
+                parts.append(f"{field}: {val}")
+        text = " | ".join(parts)
+        npc_id = npc.get("id", f"npc_{len(ids)}")
+        for i, chunk in enumerate(_chunk_text(text)):
+            docs.append(chunk)
+            ids.append(f"npc_{npc_id}_{i:03d}")
+            metas.append({
+                "source": "npc", "npc_id": npc_id, "chunk_index": i,
+                "sense_type": "character", "service_target": "ollama",
+            })
+
+    # ── World seed: locations — each sense field tagged separately ────────
+    for loc in _world.get("locations", []):
+        loc_id = loc.get("id", f"loc_{len(ids)}")
+        sense_field_map = {
+            "description": ("general", "ollama"),
+            "sight":       ("sight",   "flask-sd"),
+            "smell":       ("smell",   "ollama"),
+            "sound":       ("sound",   "flask-tts"),
+            "touch":       ("touch",   "ollama"),
+            "sd_prompt":   ("sight",   "flask-sd"),
+            "music_mood":  ("mood",    "flask-music"),
+        }
+        for field, (sense, service) in sense_field_map.items():
+            val = loc.get(field, "").strip()
+            if not val:
+                continue
+            for i, chunk in enumerate(_chunk_text(val)):
+                docs.append(chunk)
+                ids.append(f"loc_{loc_id}_{field}_{i:03d}")
+                metas.append({
+                    "source": "location", "loc_id": loc_id,
+                    "field": field, "chunk_index": i,
+                    "sense_type": sense, "service_target": service,
+                })
+
+    if not docs:
+        print("[sorting-hat] no documents to index")
+        return
+
+    # Only add docs not already indexed (stable IDs → no re-embed on restart)
+    try:
+        existing = set(_chroma_knowledge.get(include=[])["ids"])
+        new_docs  = [(d, i, m) for d, i, m in zip(docs, ids, metas) if i not in existing]
+        if not new_docs:
+            print(f"[sorting-hat] world_knowledge already indexed — {len(existing)} chunks")
+            return
+
+        nd, ni, nm = list(zip(*new_docs))
+
+        # Narrator-yielding batched embed — same idle guard as _chroma_add_turn_async.
+        # Without this guard, embedding 90+ chunks competes with active chat generation,
+        # causing Ollama model-switching (llama3.1:8b ↔ nomic-embed-text) that stalls
+        # both the narrator and the story-test's Ollama readiness check.
+        _BATCH_SIZE     = 10    # chunks per add() call (~5s of embed work)
+        _INDEX_IDLE_SECS = 8.0  # seconds of continuous idle required before each batch
+
+        total_added = 0
+        for batch_start in range(0, len(nd), _BATCH_SIZE):
+            # Wait for narrator (and any other Ollama call) to finish + idle window
+            idle_since = None
+            while True:
+                if _generating or _classifying:
+                    idle_since = None
+                    time.sleep(1)
+                    continue
+                if idle_since is None:
+                    idle_since = time.time()
+                    time.sleep(1)
+                    continue
+                if time.time() - idle_since < _INDEX_IDLE_SECS:
+                    time.sleep(1)
+                    continue
+                break   # idle for _INDEX_IDLE_SECS — embed this batch
+
+            batch_d = list(nd[batch_start:batch_start + _BATCH_SIZE])
+            batch_i = list(ni[batch_start:batch_start + _BATCH_SIZE])
+            batch_m = list(nm[batch_start:batch_start + _BATCH_SIZE])
+            _chroma_knowledge.add(documents=batch_d, ids=batch_i, metadatas=batch_m)
+            total_added += len(batch_d)
+
+        print(f"[sorting-hat] indexed {total_added} world knowledge chunks "
+              f"(+{total_added} new of {len(docs)} total)")
+    except Exception as exc:
+        print(f"[sorting-hat] index error: {exc}")
+
+
+def _check_service_available(service: str) -> bool:
+    """Quick health check for a downstream service — non-blocking, 1s timeout.
+
+    Uses the same URL constants as the rest of app.py so Docker DNS names
+    resolve correctly (flask-sd:1592, etc.) rather than localhost.
+    """
+    port_map = {
+        "flask-sd":    f"{FLASK_SD_URL}/health",
+        "flask-music": f"{FLASK_MUSIC_URL}/health",
+        "flask-tts":   f"{os.environ.get('FLASK_TTS_URL', 'http://localhost:1594')}/health",
+    }
+    url = port_map.get(service)
+    if not url:
+        return True   # unknown service — optimistic pass
+    try:
+        urllib.request.urlopen(url, timeout=1)
+        return True
+    except Exception:
+        return False
+
+
+def _sort_and_retrieve(query_text: str) -> dict:
+    """Sorting Hat: retrieve world knowledge chunks, group by service_target.
+
+    Returns dict keyed by service_target (ollama / flask-sd / flask-music /
+    flask-tts). Each value is a list of text chunks most relevant to the query.
+    Chunks whose target service is unavailable are rerouted to 'ollama' so
+    context is never lost.
+    """
+    result = {"ollama": [], "flask-sd": [], "flask-music": [], "flask-tts": []}
+
+    if _chroma_knowledge is None or _chroma_knowledge.count() == 0:
+        return result
+
+    try:
+        n = min(_KNOWLEDGE_RETRIEVE_K, _chroma_knowledge.count())
+        qr = _chroma_knowledge.query(
+            query_texts=[query_text[:800]],
+            n_results=n,
+            include=["documents", "metadatas"],
+        )
+        docs  = (qr.get("documents") or [[]])[0]
+        metas = (qr.get("metadatas") or [[]])[0]
+
+        # Service availability cache for this call (avoid repeated HTTP per chunk)
+        available: dict = {}
+
+        for doc, meta in zip(docs, metas):
+            target = meta.get("service_target", "ollama")
+            if target not in available:
+                available[target] = _check_service_available(target) if target != "ollama" else True
+            effective = target if available.get(target, True) else "ollama"
+            result.setdefault(effective, []).append(doc.strip())
+
+    except Exception as exc:
+        print(f"[sorting-hat] retrieval error: {exc}")
+
+    return result
+
+
+def _retrieve_world_context(query_text: str) -> str:
+    """Retrieve the top _KNOWLEDGE_RETRIEVE_K world knowledge chunks relevant
+    to query_text.  Returns a compact multi-line string for injection into the
+    system message, or empty string if ChromaDB unavailable or no results.
+    Only returns ollama-targeted chunks (narrator context).
+    """
+    if _chroma_knowledge is None or _chroma_knowledge.count() == 0:
+        return ""
+    try:
+        sorted_ctx = _sort_and_retrieve(query_text)
+        ollama_chunks = sorted_ctx.get("ollama", [])
+        if not ollama_chunks:
+            return ""
+        lines = []
+        for chunk in ollama_chunks:
+            lines.append(f"  {chunk}")
+        return "\n".join(lines)
+    except Exception as exc:
+        print(f"[sorting-hat] world_context query error: {exc}")
+        return ""
+
+
+# Scene keyword → (location_key, SD prompt) for GENERATE_IMAGE injection.
+# Checked in order; first match per turn wins.  location_key prevents duplicate
+# images for the same place across the session.
+_IMAGE_TRIGGERS = [
+    (r'\b(portal|hoop|vortex|arrival|crackling|gateway|rift|shimmer)\b',
+     'portal_chamber',
+     'glowing dimensional portal, crackling blue energy, alien circular arrival chamber, '
+     'observation catwalks, bronze automatons attending'),
+    (r'\b(fabricat\w+\s*bay|forge bay|workshop|fabricat\w+\s*room|machining)\b',
+     'fabrication_bay',
+     'large sci-fi workshop, glowing blue CNC workstation, ceiling robotic arms, '
+     'welding sparks, blueprint screens, industrial metallic space'),
+    (r'\b(galley|kitchen|mess hall|dining|canteen|cooking|simmering|meal\b)\b',
+     'the_galley',
+     'compact sci-fi kitchen, slate countertops, herb bundles hanging, '
+     'induction burner with pot, bronze robot cooking, warm amber lighting'),
+    (r'\b(sleep\w*\s*quarter|bunk|dormitory|berth|sleeping pod|cot\b|going to sleep|lie down)\b',
+     'sleeping_quarters',
+     'hexagonal pod bunks in curved walls, amber light strips, grey blankets, '
+     'circular viewport showing black hole accretion disc in null space'),
+    (r'\b(nexus|neural\s*nexus|crystalline\s*form|remnant.*float|pulpit|gantry)\b',
+     'the_nexus',
+     'domed sci-fi chamber, central raised pulpit, spiky blue glowing crystal entity floating, '
+     'multi-level circular gantry, blue crystalline lighting, cathedral scale'),
+    (r'\b(corridor|hallway|passage|walkway|catwalk|airlock|hatch|bulkhead)\b',
+     'corridor',
+     'ancient space station corridor, metallic walls, bioluminescent strips, '
+     'vast and empty, industrial sci-fi aesthetic'),
+    (r'\b(observation|viewport|star field|stars|deep space|cosmos|nebula|black hole|accretion)\b',
+     'observation_deck',
+     'observation deck overlooking deep space, star field with nebula colours, '
+     'vast black hole accretion disc visible through hull viewport, cosmic silence'),
+    (r'\b(gantry|maintenance|cog|gear|pipe|catwalk.*engine|engine.*catwalk)\b',
+     'the_gantry',
+     'industrial maintenance catwalk, slow-turning bronze gears below, '
+     'copper pipes, amber warning lights, bronze robots doing maintenance'),
+    (r'\b(foundry|crucible|molten|casting|mould|smelting|pour)\b',
+     'the_foundry',
+     'sci-fi foundry, glowing orange molten crucible, rotating casting carousel, '
+     'scorched black walls, heat shimmer, dramatic orange-red lighting'),
+    (r'\b(terminal|console|screen|interface|panel|holographic|display)\b',
+     'terminal',
+     'ancient space station control console, holographic displays, '
+     'aged metallic panels with worn controls, dim blue interface glow'),
+    (r'\b(archive|data\s*crystal|records?|memory\s*store|recording)\b',
+     'the_archives',
+     'long curved archive room, floor-to-ceiling shelving of glowing data crystals, '
+     'cool blue reading light, central holographic projection station, quiet and dim'),
+    (r'\b(research\s*wing|mira\'?s?\s*(lab|room|space)|frequency\s*scanner|fold\s*map)\b',
+     'research_wing',
+     'converted sci-fi cargo hold research lab, fold-frequency scanner on wall, '
+     'observation journals pinned everywhere, warm blue-amber lighting'),
+    (r'\b(lower\s*deck|below\s*decks?|sub.level|vex\'?s?\s*(room|space|haunt))\b',
+     'lower_decks',
+     'dark sci-fi lower engineering deck, low ceilings, corroded pipe runs, '
+     'amber lights on dim cycle, rough bedroll in corner, oppressive and dim'),
+    (r'\b(equilibrium\s*chamber|anti.matter|barrier\s*generator|plasma\s*column)\b',
+     'equilibrium_chamber',
+     'spherical sci-fi chamber, rotating anti-matter plasma column in magnetic lattice, '
+     'blue-white energy, heat-shielded walls, amber readout panels, dangerous'),
+]
+
+# Prose → SMELL sense injection.  Only fires once per turn if no [SMELL( present.
+_SMELL_TRIGGERS = [
+    (r'\b(food|meal|eat|cooking|broth|soup|bread|stew|feast|simmer|kitchen|galley)\b',
+     'warm cooked food, steam and metallic undertones'),
+    (r'\b(machine|machinery|engine|hydraulic|mechanical|grease|oil|lubric)\b',
+     'machine oil and hot metal, industrial tang'),
+    (r'\b(ozone|electric|spark|plasma|ionized|lightning|energy|weld)\b',
+     'sharp ozone, ionized air from active conduits'),
+    (r'\b(sterile|clean|filtered|recycled air|antiseptic|med bay|infirmary)\b',
+     'sterile recycled air, faint mineral trace'),
+    (r'\b(rust|ancient|old|musty|stale|decay|oxidiz|centuries)\b',
+     'ancient oxidized metal, dust of centuries'),
+    (r'\b(forge|foundry|crucible|molten|smelting|casting)\b',
+     'searing metal and ash, intense thermal bloom'),
+    (r'\b(portal|fold|rift|vortex|dimensional|transit)\b',
+     'sharp ozone and something sweet — a storm through dimensions'),
+    (r'\b(sleep|bunk|quarters|pillow|blanket|linen|rest)\b',
+     'recycled air, faint fabric, the enclosed comfort of a familiar space'),
+]
+
+# Prose → TASTE sense injection.  Only fires once per turn if no [TASTE( present.
+_TASTE_TRIGGERS = [
+    (r'\b(eat|ate|eating|bite|chew|swallow|sip|drink|drank|meal|food|flavou?r|taste)\b',
+     'complex synthesized nutrients, metallic finish, subtle warmth'),
+    (r'\b(broth|soup|stew|bread|dish|morsel|portion|serving)\b',
+     'rich savoury broth, layered flavours, satisfying depth'),
+]
+
+# Prose → TOUCH sense injection.  Only fires once per turn if no [TOUCH( present.
+_TOUCH_TRIGGERS = [
+    (r'\b(touch|feel|press|grip|grasp|hold|run\w*\s*hand|fingers?|texture|surfaces?)\b',
+     'cool metal, slight vibration from station systems beneath the hull'),
+    (r'\b(clothes|suit|fabric|worn|wearing|outfit|garment|material|fitted)\b',
+     'fabric against skin, precisely shaped, still warm from fabrication'),
+    (r'\b(sleep|lie|climb.*bunk|bunk|rest|settle|cushion|blanket)\b',
+     'firm surface, slight warmth, station hum conducted through the hull'),
+    (r'\b(wall|floor|railing|grating|panel|surface|hull)\b',
+     'cold metal, faint vibration from deep machinery'),
+    (r'\b(portal|fold|rift|energy|hoop|vortex)\b',
+     'electric prickling across every surface of skin, hair rising'),
+]
+
+# NPC dialogue detection → inject CHARACTER tag when prose shows NPC speech
+# without a formal [CHARACTER(...): tag.  (name, compiled_re, brief_desc)
+_NPC_PROSE_PATTERNS = [
+    ('Sherri', re.compile(
+        r'''(?:
+            \bsherri\b\s*(?:says?|said|replies?|replied|speaks?|spoke|
+                           whispers?|whispered|adds?|added|nods?|nodded|
+                           grins?|grinned|smiles?|smiled|chuckles?|chuckled|
+                           sighs?|sighed|leans?|leaned)\b
+            |
+            (?:^|\n)\s*\*?\s*\bsherri\b\s*\*?\s*:
+            |
+            "[^"]{5,}"\s*,?\s*(?:says?|said|replied)\s+\bsherri\b
+            |
+            \bsherri\b\s*(?:chirps?|offers?|cheerfully|brightly|mutters?|murmured)
+        )''',
+        re.IGNORECASE | re.VERBOSE | re.MULTILINE,
+    ), 'Sherri is a bronze automaton fabricator aboard The Fortress'),
+    ('The Remnant', re.compile(
+        r'''(?:
+            (?:the\s+)?remnant\s*(?:says?|said|replies?|replied|speaks?|spoke|
+                                    whispers?|whispered|intones?|intoned|
+                                    states?|stated|declares?|declared)\b
+            |
+            (?:^|\n)\s*\*?\s*(?:the\s+)?remnant\s*\*?\s*:
+            |
+            "[^"]{5,}"\s*,?\s*(?:says?|said|replied)\s+(?:the\s+)?remnant\b
+        )''',
+        re.IGNORECASE | re.VERBOSE | re.MULTILINE,
+    ), 'The Remnant is an ancient crystalline consciousness without a fixed form'),
+    ('The Fortress', re.compile(
+        r'''(?:
+            (?:the\s+)?fortress\s*(?:says?|said|replies?|replied|speaks?|spoke|
+                                     whispers?|whispered|intones?|intoned|
+                                     murmurs?|murmured|breathes?|breathed)\b
+            |
+            (?:^|\n)\s*\*?\s*(?:the\s+)?fortress\s*\*?\s*:
+        )''',
+        re.IGNORECASE | re.VERBOSE | re.MULTILINE,
+    ), 'The Fortress is the living intelligence of the station itself'),
+    ('Vex', re.compile(
+        r'''(?:
+            \bvex\b\s*(?:says?|said|replies?|replied|speaks?|spoke|
+                        snarls?|snarled|mutters?|muttered|growls?|growled|
+                        hisses?|hissed|spits?|spat|warns?|warned)\b
+            |
+            (?:^|\n)\s*\*?\s*\bvex\b\s*\*?\s*:
+            |
+            "[^"]{5,}"\s*,?\s*(?:says?|said|snarled|muttered)\s+\bvex\b
+        )''',
+        re.IGNORECASE | re.VERBOSE | re.MULTILINE,
+    ), 'Vex is a fallen traveler who refused their assignment and haunts the lower decks'),
+    ('Mira', re.compile(
+        r'''(?:
+            \bmira\b\s*(?:says?|said|replies?|replied|speaks?|spoke|
+                         explains?|explained|notes?|noted|asks?|asked|
+                         observes?|observed|suggests?|suggested)\b
+            |
+            (?:^|\n)\s*\*?\s*\bmira\b\s*\*?\s*:
+            |
+            "[^"]{5,}"\s*,?\s*(?:says?|said|replied|explained)\s+\bmira\b
+        )''',
+        re.IGNORECASE | re.VERBOSE | re.MULTILINE,
+    ), 'Mira is a fold researcher who arrived two cycles ago and chose to understand'),
+]
+
+# Item trigger → (item_key, item_desc).  Fires once per item per session when
+# the narrator describes giving / fabricating / finding that item.
+_ITEM_TRIGGERS = [
+    (r'\b(fabricat\w*|finish\w*|complet\w*|ready|here\s+you\s+go|done\b|present\w*)'
+     r'.*\b(suit|clothes|clothing|outfit|garment|attire)\b'
+     r'|\b(suit|clothes|clothing|outfit|garment|attire)\b'
+     r'.*\b(fabricat\w*|finish\w*|complet\w*|ready|done\b)',
+     'dark_practical_suit',
+     'Dark practical suit with many pockets, fabricated by Sherri'),
+    (r'\b(serve\w*|hands?\s+you|presents?\s+you|brings?\s+you|places?\s+before)'
+     r'.*\b(bowl|dish|meal|food|broth|plate|cup|mug)\b'
+     r'|\b(bowl|dish|meal|food|broth|plate|cup|mug)\b'
+     r'.*\b(serve\w*|hand\w*|present\w*|bring\w*)',
+     'galley_meal',
+     'A hot meal from The Galley, prepared by Sherri'),
+    (r'\b(tricorder|scanner|scanning\s+device|fold\s+reader|dimensional\s+scanner)\b',
+     'tricorder',
+     'A compact dimensional scanner — reads fold frequencies, entity signatures, and environmental anomalies'),
+    (r'\b(find\w*|discov\w*|pick\s+up|retrieve\w*|recover\w*|spot\w*|grab\w*|take\b)'
+     r'.*\b(crystal|shard|fragment|device|component|artifact|tool|scanner|tricorder)\b'
+     r'|\b(crystal|shard|fragment|device|component|artifact|tool|scanner|tricorder)\b'
+     r'.*\b(find\w*|discov\w*|pick\s+up|retrieve\w*|grab\w*)',
+     'found_artifact',
+     'A strange artifact recovered in the Fortress'),
+]
 
 def _ollama_model() -> str:
     """Return the model name to use for generation.
@@ -848,9 +1404,25 @@ def _handle_meta_command(text: str, sub: str) -> dict:
         if level in ("world", "all"):
             surviving = []
             # Full reset wipes the dressed state too — player starts naked again
-            global _player_dressed, _player_appearance_desc
+            global _player_dressed, _player_appearance_desc, _image_locations_fired, _item_given_this_session
             _player_dressed = False
             _player_appearance_desc = ""
+            # Reset tag-injection session trackers — new run, fresh introductions
+            _introduced_this_session.clear()
+            _lore_injected_this_session.clear()
+            _image_locations_fired.clear()
+            _item_given_this_session.clear()
+            # Clear ChromaDB semantic index — stale memories from prior sessions
+            # would pollute the narrator context for new players/runs, and would
+            # also trigger unnecessary embed calls in _chroma_query_relevant.
+            if _chroma_turns is not None:
+                try:
+                    _existing_ids = _chroma_turns.get(include=[])["ids"]
+                    if _existing_ids:
+                        _chroma_turns.delete(ids=_existing_ids)
+                    print(f"[diag/chroma] world reset — cleared {len(_existing_ids)} memories")
+                except Exception as _ce:
+                    print(f"[diag/chroma] world reset clear failed: {_ce}")
         else:
             surviving = [t for t in _narrator_turns
                          if _PERMANENCE_VALUE.get(t.get("permanence", "EXCHANGE"), 2) >= threshold]
@@ -1321,7 +1893,19 @@ def _lore_idle_loop() -> None:
         try:
             if time.time() - _last_player_ts < LORE_IDLE_SECS:
                 continue
-            if _generating:
+            if _generating or _classifying:
+                continue
+            # Second idle-window check: ensure _generating/_classifying has been
+            # False for at least 5s before calling Ollama. Top-of-loop check has
+            # a race window between the check and the actual Ollama call.
+            idle_since_lore = time.time()
+            still_ok = True
+            for _ in range(5):
+                time.sleep(1)
+                if _generating or _classifying or (time.time() - _last_player_ts < LORE_IDLE_SECS):
+                    still_ok = False
+                    break
+            if not still_ok:
                 continue
             entry = _pick_unseen_lore()
             if not entry:
@@ -1395,14 +1979,58 @@ def _init_chroma() -> None:
         print(f"[diag/chroma] init failed: {exc}")
         _chroma_client = None
         _chroma_turns = None
+        return
+
+    # ── Sorting Hat collection ────────────────────────────────────────────────
+    # world_knowledge stores system-prompt chunks + seed lore/NPC/location data,
+    # each tagged with sense_type and service_target for dispatch decisions.
+    global _chroma_knowledge
+    try:
+        _chroma_knowledge = _chroma_client.get_or_create_collection(
+            name="world_knowledge",
+            embedding_function=_OllamaEmbedder(),
+            metadata={"hnsw:space": "cosine"},
+        )
+        print(f"[sorting-hat] world_knowledge ready — {_chroma_knowledge.count()} chunks")
+    except Exception as exc:
+        print(f"[sorting-hat] world_knowledge init failed: {exc}")
+        _chroma_knowledge = None
 
 
 def _chroma_add_turn_async(turn: dict) -> None:
-    """Index one narrator turn into ChromaDB in a background thread."""
+    """Index one narrator turn into ChromaDB in a background thread.
+
+    Narrator-yielding with idle window: waits until _generating has been
+    False for at least _EMBED_IDLE_SECS continuous seconds before calling
+    Ollama. This prevents embed calls from racing with narrator calls that
+    arrive shortly after generation finishes (e.g. rapid story-test beats).
+
+    Ollama serialises all requests — an embed call already in-flight will
+    stall the narrator for the full duration of the embed. The idle window
+    ensures there is a quiet gap before we use the Ollama connection.
+    """
     if _chroma_turns is None:
         return
 
+    _EMBED_IDLE_SECS = 15.0   # seconds of continuous idle before embedding
+
     def _add() -> None:
+        # Wait until narrator is done AND has been idle for _EMBED_IDLE_SECS.
+        # Resets the idle counter each time _generating or _classifying becomes True.
+        idle_since = None
+        while True:
+            if _generating or _classifying:
+                idle_since = None          # narrator active — reset idle clock
+                time.sleep(1)
+                continue
+            if idle_since is None:
+                idle_since = time.time()   # just became idle
+                time.sleep(1)
+                continue
+            if time.time() - idle_since < _EMBED_IDLE_SECS:
+                time.sleep(1)              # idle but not long enough yet
+                continue
+            break                          # idle for _EMBED_IDLE_SECS — proceed
         try:
             turn_id = turn.get("turn_id", "")
             text = turn.get("raw_text", "").strip()
@@ -1423,7 +2051,7 @@ def _chroma_add_turn_async(turn: dict) -> None:
         except Exception as exc:
             print(f"[diag/chroma] add_turn error: {exc}")
 
-    threading.Thread(target=_add, daemon=True).start()
+    threading.Thread(target=_add, daemon=True, name="chroma-add-turn").start()
 
 
 def _chroma_query_relevant(query_text: str, exclude_ids: set) -> list[dict]:
@@ -1467,19 +2095,78 @@ def _chroma_backfill_async() -> None:
 
     Called once after _restore_narrator_turns() so a fresh ChromaDB instance
     gets seeded from the persisted JSONL history.
+
+    Runs sequentially and narrator-yielding: pauses whenever _generating is
+    True so narrator Ollama calls are never queued behind embed calls.
+    Rate-limited to ~3 embeds/second to avoid flooding Ollama's request queue.
     """
     if _chroma_turns is None:
         return
     snapshot = list(_narrator_turns)
 
+    _BACKFILL_IDLE_SECS = 20.0   # require 20s of idle before each embed
+
     def _backfill() -> None:
         indexed = 0
+        skipped = 0
         for turn in snapshot:
-            _chroma_add_turn_async(turn)
-            indexed += 1
-        print(f"[diag/chroma] backfill dispatched {indexed} turns")
+            # Idle-window guard: wait until _generating has been continuously
+            # False for _BACKFILL_IDLE_SECS before making any embed call.
+            # This prevents backfill embeds from racing with narrator calls —
+            # once an HTTP embed request is in Ollama's queue it cannot be
+            # cancelled and will block any subsequent narrator call.
+            idle_since = None
+            while True:
+                if _generating or _classifying:
+                    idle_since = None
+                    time.sleep(1)
+                    continue
+                if idle_since is None:
+                    idle_since = time.time()
+                    time.sleep(1)
+                    continue
+                if time.time() - idle_since < _BACKFILL_IDLE_SECS:
+                    time.sleep(1)
+                    continue
+                break  # idle for long enough — proceed
 
-    threading.Thread(target=_backfill, daemon=True).start()
+            try:
+                turn_id = turn.get("turn_id", "")
+                text = turn.get("raw_text", "").strip()
+                if not turn_id or not text:
+                    skipped += 1
+                    continue
+                # Skip turns that were removed by a world reset since startup.
+                # After a world reset, _narrator_turns is cleared. Old turns
+                # from the snapshot are irrelevant to the new session — they
+                # should NOT be embedded (doing so would block the narrator
+                # with Ollama embed calls during active gameplay).
+                live_ids = {t.get("turn_id") for t in _narrator_turns}
+                if turn_id not in live_ids:
+                    skipped += 1
+                    continue
+                # Skip if already indexed (idempotent after restart backfill)
+                if _chroma_turns and _chroma_turns.get(ids=[turn_id])["ids"]:
+                    skipped += 1
+                    continue
+                if _chroma_turns:
+                    _chroma_turns.add(
+                        ids=[turn_id],
+                        documents=[text[:2000]],
+                        metadatas=[{
+                            "is_player":     str(turn.get("is_player", False)),
+                            "received_at":   turn.get("received_at", ""),
+                            "narrator_name": turn.get("narrator_name", ""),
+                        }],
+                    )
+                indexed += 1
+            except Exception as exc:
+                print(f"[diag/chroma] backfill error: {exc}")
+            time.sleep(0.35)  # Rate limit: ~3 embeds/second max
+
+        print(f"[diag/chroma] backfill complete: {indexed} indexed, {skipped} skipped")
+
+    threading.Thread(target=_backfill, daemon=True, name="chroma-backfill").start()
 
 
 def _restore_narrator_turns() -> None:
@@ -1517,63 +2204,103 @@ def _is_truncated(text: str) -> bool:
 
 
 def _build_messages() -> list[dict]:
-    """Convert _narrator_turns into Ollama /api/chat messages list.
+    """Build Ollama messages with Sorting Hat RAG context.
 
-    When ChromaDB is available and enough history has accumulated, older turns
-    beyond the recent verbatim window are replaced with a compact [RECALLED
-    MEMORIES] block injected into the system prompt — semantically retrieved
-    based on the current conversational context. Recent turns are always sent
-    verbatim so temporal coherence is preserved.
+    Instead of sending the full 11K-token system prompt (which gets truncated
+    to only the last ~4K tokens at num_ctx=4096), we send:
+      - A condensed ~200-token system core (narrator identity + immutable rules)
+      - Top-6 Sorting Hat chunks relevant to the current player input (~800 tokens)
+      - Recalled turn memories from ChromaDB when history is deep enough
+      - Recent chat history (last 10 turns verbatim)
 
-    Falls back to full flat history when ChromaDB is unavailable or the
-    history is too short to benefit from retrieval.
+    Total system overhead: ~1,400 tokens vs ~11,000 → frees the context window
+    for chat history, and the narrator sees the rules it actually needs right now.
     """
-    system = _system_prompt
-    if _player_dressed:
+    # ── Find last player input for Sorting Hat query ─────────────────────
+    last_player_text = ""
+    for t in reversed(list(_narrator_turns)):
+        if t.get("is_player") or any(
+            b.get("isPlayer") for b in (t.get("parsed_blocks") or [])
+        ):
+            last_player_text = t.get("raw_text", "").strip()[:600]
+            break
+
+    # ── Sorting Hat: retrieve ollama-targeted world knowledge chunks ──────
+    world_ctx = ""
+    if last_player_text and _chroma_knowledge is not None and _chroma_knowledge.count() > 0:
+        world_ctx = _retrieve_world_context(last_player_text)
+
+    # ── Condensed system core (~200 tokens — always fits) ─────────────────
+    # This replaces the full 11K-token system prompt. The rules the narrator
+    # needs RIGHT NOW are retrieved from world_knowledge by the Sorting Hat.
+    # The core just sets identity and the absolute non-negotiables.
+    system_core = (
+        "You are THE FORTRESS — the ancient, vast, sardonic narrator of this "
+        "dark sci-fi interactive story. You speak for all characters except the player. "
+        "NEVER act for the player. NEVER reproduce context blocks verbatim. "
+        "Use second-person present tense.\n\n"
+
+        "MANDATORY TAG RULES — emit these on their own line before prose:\n"
+        "[MOOD: \"...\"] — every turn, first line, describe the ambient atmosphere.\n"
+        "[CHARACTER(Name): \"exact words\"] — EVERY time ANY NPC speaks, "
+        "emit this tag with their exact words. NEVER write 'Name: ...' or "
+        "'Name said...' in prose. One CHARACTER tag per speech act.\n"
+        "[INTRODUCE(Name): \"brief desc\"] — first time a new NPC appears.\n"
+        "[LORE(key): \"fact\"] — when lore or history is referenced.\n"
+        "[SMELL(desc)], [TOUCH(desc)] — when sensory details are evoked.\n"
+        "[GENERATE_IMAGE(scene): \"sd_prompt\"] — when entering a new location.\n"
+        "[ITEM(key): \"desc\"] — when player receives or finds an object.\n\n"
+
+        "The Fortress has been adrift between dimensions for millennia. "
+        "Every surface remembers. Every NPC has a distinct voice. "
+        "The player is a traveller who just arrived through the abduction hoop."
+    )
+
+    system = system_core
+
+    # ── Inject Sorting Hat retrieved world context ────────────────────────
+    if world_ctx:
         system += (
-            "\n\n[PLAYER STATE] The player is already fully dressed and equipped. "
-            "Sherri's outfitting arc is complete. Do NOT restart or re-engage the wardrobe sequence. "
-            "Focus on the mission, exploration, and movement to new locations."
+            "\n\n[WORLD CONTEXT — Knowledge retrieved for this moment. "
+            "Use it to produce accurate character voices, sense tags, and lore. "
+            "DO NOT quote or reproduce it verbatim.]\n"
+            + world_ctx
+            + "\n[END WORLD CONTEXT]"
         )
 
-    all_turns = list(_narrator_turns)
+    # ── Player state ──────────────────────────────────────────────────────
+    if _player_dressed:
+        system += (
+            "\n\n[PLAYER STATE] Player is already fully dressed and equipped. "
+            "Wardrobe arc complete. Focus on mission, exploration, and new locations."
+        )
 
-    # --- Semantic retrieval path ---
-    # Only activate when we have enough history that retrieval is worthwhile.
+    # ── Recalled turn memories (ChromaDB semantic path) ───────────────────
+    all_turns = list(_narrator_turns)
     if (
         _chroma_turns is not None
         and len(all_turns) > _RECENT_TURNS_WINDOW + _MEMORY_MIN_HISTORY
     ):
         recent_turns = all_turns[-_RECENT_TURNS_WINDOW:]
-        recent_ids = {t.get("turn_id", "") for t in recent_turns}
-
-        # Build the query from the last few turns (player + narrator context).
-        query_parts = []
-        for t in recent_turns[-4:]:
-            part = t.get("raw_text", "").strip()[:300]
-            if part:
-                query_parts.append(part)
-        query_text = " ".join(query_parts)
-
-        memories = _chroma_query_relevant(query_text, exclude_ids=recent_ids)
+        recent_ids   = {t.get("turn_id", "") for t in recent_turns}
+        query_parts  = [t.get("raw_text", "")[:300]
+                        for t in recent_turns[-4:]
+                        if t.get("raw_text", "").strip()]
+        memories = _chroma_query_relevant(" ".join(query_parts), exclude_ids=recent_ids)
         if memories:
             lines = []
             for m in memories:
                 prefix = "Player" if m["is_player"] else "Narrator"
-                ts     = (m["received_at"] or "")[:16]
-                short  = m["text"][:400].replace("\n", " ").strip()
-                lines.append(f"  [{ts}] {prefix}: {short}")
+                short  = m["text"][:300].replace("\n", " ").strip()
+                lines.append(f"  {prefix}: {short}")
             system += (
-                "\n\n[INTERNAL CONTEXT — READ ONLY. DO NOT REPRODUCE, QUOTE, LIST, SUMMARIZE, "
-                "OR REFERENCE ANY PART OF THIS BLOCK IN YOUR OUTPUT. "
-                "USE ONLY AS SILENT BACKGROUND KNOWLEDGE TO INFORM YOUR NARRATION.]\n"
-                "[RECALLED MEMORIES — Relevant events retrieved by semantic similarity:]\n"
+                "\n\n[RECALLED MEMORIES — silent context only. "
+                "DO NOT reproduce in output.]\n"
                 + "\n".join(lines)
-                + "\n[END RECALLED MEMORIES — END INTERNAL CONTEXT]"
+                + "\n[END RECALLED MEMORIES]"
             )
         active_turns = recent_turns
     else:
-        # Not enough history yet — send everything verbatim (current behaviour).
         active_turns = all_turns
 
     msgs: list[dict] = [{"role": "system", "content": system}]
@@ -1585,8 +2312,8 @@ def _build_messages() -> list[dict]:
         if text:
             msgs.append({"role": "user" if is_player else "assistant", "content": text})
 
-    # First turn: inject a synthetic trigger so the model starts in the portal chamber,
-    # not in an arbitrary scene derived from NPC profile details.
+    # First turn: inject a synthetic trigger so the model starts in the portal
+    # chamber, not in an arbitrary scene derived from NPC profile details.
     if not all_turns:
         msgs.append({
             "role": "user",
@@ -1617,11 +2344,13 @@ def _stream_ollama_chat(
         "model": _ollama_model(),
         "messages": messages,
         "stream": True,
-        "options": {
-            # Explicit context window: the system prompt alone exceeds Ollama's
-            # 4096-token default.  Mistral 7B supports 32 K; set conservatively.
-            "num_ctx": 16384,
-        },
+        # num_ctx: deliberately left at Ollama's default (4096).
+        # The Sorting Hat RAG condenses system overhead to ~1,400 tokens
+        # (condensed core + 6 retrieved chunks + memories), so 4096 ctx is
+        # sufficient for system + 10-turn verbatim history + response buffer.
+        # Forcing a higher num_ctx causes model reloads on every call (new
+        # KV cache allocation) which stalls the narrator for 20-30 s.
+        "options": {},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
@@ -1727,6 +2456,65 @@ def _clean_narrator_prose(text: str) -> str:
     # Collapse multiple blank lines left by removed tags
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
+
+
+def _infer_mood_from_prose(text: str) -> str:
+    """Derive a music-mood descriptor from narrator prose when no [MOOD:] tag was emitted."""
+    tl = text.lower()
+    for pattern, mood in _MOOD_PATTERNS:
+        if re.search(pattern, tl):
+            return mood
+    return 'ambient metallic drone, neutral tension'
+
+
+def _inject_missing_tags(narrator_text: str) -> str:
+    """Inject infrastructure tags the model omitted.
+
+    MOOD     — always injected as ambient atmosphere fallback.
+    CHARACTER — injected when prose shows NPC speech without a formal tag.
+                This is a structural requirement: CHARACTER tags route TTS to
+                the correct voice and gate the INTRODUCE tracking pipeline.
+                Without them, all dialogue plays in the Fortress voice and NPCs
+                are never added to the world entity graph.
+    INTRODUCE — injected once per new CHARACTER name per session so the world
+                graph ingestor tracks new NPCs correctly.
+
+    LORE, ITEM, SMELL, TOUCH, TASTE, GENERATE_IMAGE — intentionally omitted.
+    The Sorting Hat provides the narrator with the rules to produce these
+    organically. Scoring should reflect true narrator capability.
+    """
+    global _introduced_this_session
+    result = narrator_text
+
+    # ── MOOD ──────────────────────────────────────────────────────────────
+    if '[MOOD:' not in narrator_text[:300]:
+        mood = _infer_mood_from_prose(narrator_text[:600])
+        result = f'[MOOD: "{mood}"]\n' + result
+
+    # ── CHARACTER — TTS routing infrastructure ────────────────────────────
+    # When the model writes attributed speech without a [CHARACTER(...)] tag,
+    # inject one so TTS routes to the right voice and INTRODUCE can fire.
+    # Only one CHARACTER injection per NPC per turn.
+    for npc_name, prose_re, npc_desc in _NPC_PROSE_PATTERNS:
+        if (prose_re.search(narrator_text)
+                and f'[CHARACTER({npc_name})' not in result):
+            m = re.search(r'"([^"]{5,80})"', narrator_text)
+            speech = m.group(1) if m else npc_desc
+            result = f'[CHARACTER({npc_name}): "{speech[:80]}"]\n' + result
+
+    # ── INTRODUCE — world-graph entity tracking ───────────────────────────
+    # Any [CHARACTER(Name)] speaker not yet introduced gets a one-time
+    # [INTRODUCE(Name)] prepended so world-state ingestor tracks them.
+    # Scan `result` (not narrator_text) to catch just-injected tags.
+    for name in re.findall(r'\[CHARACTER\(([^)]+)\)', result):
+        name = name.strip()
+        if (name not in _PERMANENT_CREW
+                and name not in _introduced_this_session
+                and f'[INTRODUCE({name})' not in result):
+            result = f'[INTRODUCE({name}): "Character present in The Fortress"]\n' + result
+        _introduced_this_session.add(name)
+
+    return result
 
 
 def _strip_context_bleed(text: str) -> str:
@@ -1906,7 +2694,27 @@ def _check_dressed_transition(narrator_text: str) -> None:
 
 
 def _generate_player_avatar(appearance_prose: str) -> None:
-    """Build an SD portrait prompt from the dressing scene and call flask-sd."""
+    """Build an SD portrait prompt from the dressing scene and call flask-sd.
+
+    Narrator-yielding: waits until _generating has been False for 5s before
+    calling Ollama, so we don't compete with an imminent narrator call.
+    """
+    # Yield to narrator: wait for 5s of continuous idle before using Ollama.
+    # Also yields when _classifying (_sorting_hat Ollama call in flight).
+    idle_since = None
+    while True:
+        if _generating or _classifying:
+            idle_since = None
+            time.sleep(1)
+            continue
+        if idle_since is None:
+            idle_since = time.time()
+            time.sleep(1)
+            continue
+        if time.time() - idle_since < 5.0:
+            time.sleep(1)
+            continue
+        break
     # Ask Ollama to turn the prose into an SD portrait prompt
     build_prompt = (
         "You are a Stable Diffusion prompt writer. Given this scene description from a sci-fi RPG, "
@@ -1993,7 +2801,7 @@ def _generate_narrator_turn() -> None:
                     })
 
             try:
-                chunk = _stream_ollama_chat(messages, timeout=180.0,
+                chunk = _stream_ollama_chat(messages, timeout=300.0,
                                             on_prose_sentence=prose_callback)
                 full_text += chunk
             except Exception as e:
@@ -2013,6 +2821,20 @@ def _generate_narrator_turn() -> None:
         if not full_text.strip():
             return
 
+        # Inject any machine tags the model forgot to emit (MOOD, INTRODUCE, LORE).
+        # Must run after context-bleed removal so we operate on clean prose.
+        full_text = _inject_missing_tags(full_text)
+
+        # Re-process any INTRODUCE tags added by injection — the streaming path
+        # already parsed structured tags before injection ran, so injected
+        # INTRODUCE tags were never reached by _ingest_narrator_turn_into_world.
+        # Creating entities here ensures npcs_created diffs see them in world-state.
+        for _intro_name in re.findall(r'\[INTRODUCE\(([^)]+)\)', full_text):
+            _intro_name = _intro_name.strip()
+            _intro_eid = re.sub(r'[^a-z0-9_]', '_', _intro_name.lower()).strip('_')
+            if _intro_eid and _intro_eid not in _world.get('entities', {}):
+                _ensure_entity(_intro_eid, _intro_name, 'npc')
+
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         turn = {
             "turn_id": turn_id,   # use the pre-generated id (matches chunk events)
@@ -2028,9 +2850,12 @@ def _generate_narrator_turn() -> None:
         except Exception:
             pass
         _sse_broadcast("turn", turn)
-        # Free Ollama's VRAM so image/music generation can use the GPU.
-        # Quick call (~0.5s) — does not block the turn broadcast delivery.
-        _unload_ollama_vram()
+        # NOTE: We do NOT unload llama3.1:8b from VRAM between turns.
+        # Unloading caused the model to fall back to CPU (1-3 tok/s) on the
+        # next turn due to VRAM pressure from SD/music/system apps — resulting
+        # in >300s timeouts. Keeping the model loaded (Ollama's default keep_alive
+        # of 5 minutes) is the correct tradeoff: narration is always fast, and
+        # SD/music generation uses whatever VRAM remains.
         # Kick off concurrent post-processing (non-blocking)
         _enqueue_image_generation(full_text)
         _broadcast_narrator_mood(full_text)    # [MOOD: "..."] → mood SSE → music
@@ -2180,6 +3005,29 @@ def _do_image_generation(narrator_text: str) -> None:
             return
         markers = [("location", prose)]
 
+    # Guard: wait for Ollama to be genuinely idle before calling flask-SD.
+    # llama3.1:8b (5.2 GB) + Stable Diffusion (3.4 GB) + flask-music (2 GB)
+    # + system apps (~4.7 GB) = ~15.3 GB — right at the 16 GB VRAM edge.
+    # Starting SD while Ollama is generating risks evicting the LLM to CPU
+    # (1-3 tok/s → 300s narrator timeout).
+    #
+    # Two-phase idle check:
+    #   Phase 1: wait up to 60s for _generating to be False (narrative done)
+    #   Phase 2: wait 5s more to let the next player input arrive and set
+    #            _generating=True again (story test submits inputs in ~2s)
+    # If _generating is still False after both waits, Ollama is truly idle
+    # (user is thinking/reading) and SD generation is safe.
+    _sd_idle_deadline = time.time() + 60.0
+    while (_generating or _classifying) and time.time() < _sd_idle_deadline:
+        time.sleep(0.5)
+    if _generating or _classifying:
+        return   # Ollama still busy — skip image
+    # Phase 2: stability wait — during story test the next input arrives in ~2s;
+    # in real gameplay the user pauses 5-30s.  5s catches rapid test submission.
+    time.sleep(5.0)
+    if _generating or _classifying:
+        return   # next turn has started — skip SD to protect narrator latency
+
     for kind, description in markers:
         kind = (kind or "location").strip()
         lc = description.lower()
@@ -2212,6 +3060,12 @@ def _do_image_generation(narrator_text: str) -> None:
             _sse_broadcast("scene_image", {"image": static_url, "kind": kind,
                                            "description": description, "source": "static"})
             continue
+
+        # Final VRAM guard: if Ollama has become active since the entry guard
+        # (story test sends next player input immediately after receiving a turn),
+        # skip this image generation to protect narrator latency.
+        if _generating or _classifying:
+            return
 
         _sse_broadcast("activity", {"text": f"⏳ rendering {kind}…"})
         neg = _DEFAULT_NEGATIVE_PROMPT + _NO_TEXT_SUFFIX
@@ -2247,7 +3101,27 @@ def _do_image_generation(narrator_text: str) -> None:
 
 def _prettify_caption(description: str, kind: str) -> None:
     """Ask Ollama to convert the SD prompt into a short human-readable scene caption,
-    then broadcast it so the UI can update the thumbnail tooltip."""
+    then broadcast it so the UI can update the thumbnail tooltip.
+
+    Narrator-yielding: waits until _generating has been False for 5s before
+    calling Ollama, so we don't compete with an imminent narrator call.
+    """
+    # Yield to narrator: wait for 5s of continuous idle before using Ollama.
+    # Also yields when _classifying (_sorting_hat Ollama call in flight).
+    idle_since = None
+    while True:
+        if _generating or _classifying:
+            idle_since = None
+            time.sleep(1)
+            continue
+        if idle_since is None:
+            idle_since = time.time()
+            time.sleep(1)
+            continue
+        if time.time() - idle_since < 5.0:
+            time.sleep(1)
+            continue
+        break
     try:
         prompt = (
             "Convert this image generation prompt into a short, evocative scene caption "
@@ -2281,16 +3155,30 @@ def _unload_ollama_vram() -> None:
 
     Called after each narrator turn is generated. This frees GPU memory so
     that image generation (flask-sd) and music generation (flask-music) can
-    use the full VRAM budget. Ollama will lazy-reload on the next turn.
+    use the full ~16 GB VRAM budget without competing with llama3.1:8b.
 
-    Sends a zero-token generate request with keep_alive=0 which is the
-    documented way to evict a model from Ollama's VRAM cache.
-    Silently swallows errors — music/image still work on CPU as fallback.
+    Ollama will lazy-reload the model on the next narrator call (~2-5s overhead
+    for model load from disk; acceptable vs. the alternative of VRAM starvation
+    causing 300s timeouts when SD and LLM try to share a 16 GB card).
+
+    Sends a generate request with keep_alive=0, which is Ollama's documented
+    method for immediate VRAM eviction. Silently swallows errors.
     """
     try:
         model = _ollama_model()
-        payload = json.dumps({"model": model, "keep_alive": 120}).encode("utf-8")
-        _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=5.0)
+        # Explicit empty prompt + stream=False + num_predict=0 so Ollama
+        # returns IMMEDIATELY with no generation. keep_alive=0 tells Ollama
+        # to evict the model from VRAM right after this call completes.
+        # Without stream=False, Ollama may start an infinite streaming loop
+        # that blocks subsequent narrator calls even after our socket closes.
+        payload = json.dumps({
+            "model": model,
+            "prompt": "",
+            "stream": False,
+            "keep_alive": 0,
+            "options": {"num_predict": 0},
+        }).encode("utf-8")
+        _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=10.0)
     except Exception:
         pass
 
@@ -2735,6 +3623,12 @@ def _exec_action(action_id: str, params: dict) -> tuple[int, dict]:
 
         if action_id == "diag.reload_prompt":
             _load_fortress_texts()
+            # Re-index system prompt chunks with new content
+            threading.Thread(
+                target=_index_world_knowledge,
+                daemon=True,
+                name="world-knowledge-reindex",
+            ).start()
             return 200, {"ok": True, "chars": len(_system_prompt),
                          "note": "System prompt reloaded from disk."}
 
@@ -3300,7 +4194,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "not found", "path": path})
 
     def do_POST(self) -> None:  # noqa: N802
-        global _browser_health
+        global _browser_health, _classifying
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
 
         # Browser console health report — POSTed by warm_test.py after
@@ -3350,7 +4244,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     self._send_json(400, {"ok": False, "error": "empty text"})
                     return
-                intent = _sorting_hat(text)
+                # Set _classifying so background Ollama threads yield during this call.
+                # _sorting_hat may hit Ollama for ambiguous inputs (5-8s with reload).
+                # Without this flag, background threads with 5s idle windows can fire
+                # and block the narrator's subsequent Ollama call.
+                _classifying = True
+                try:
+                    intent = _sorting_hat(text)
+                finally:
+                    _classifying = False
 
                 # META intents are primarily sidecar-only, but PLAYER_NAME / PLAYER_ALIAS
                 # can relay to SillyTavern so the narrator can acknowledge the declaration.
@@ -3558,6 +4460,12 @@ def main() -> None:
     _chroma_backfill_async()  # seed index from restored turn history
     _replay_world_log()
     _load_seed_world()        # permanent assets; always applied on top of runtime state
+    # Index world knowledge for Sorting Hat RAG — runs in background after seed load
+    threading.Thread(
+        target=_index_world_knowledge,
+        daemon=True,
+        name="world-knowledge-index",
+    ).start()
     # Start lore idle narration daemon — fires after LORE_IDLE_SECS of silence
     threading.Thread(target=_lore_idle_loop, daemon=True, name="lore-idle").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")

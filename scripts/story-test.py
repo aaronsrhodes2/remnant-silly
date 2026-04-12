@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""story-test.py — 100-turn narrative arc test for Remnant.
+"""story-test.py — pilot-quest arc test for Remnant.
 
-Drives the game through a complete story arc:
-  portal arrival → name → outfit → galley → sleep → Nexus → quest
+Drives the game through all 15 beats of the pilot quest to completion:
+  portal arrival → name → outfit → galley → sleep → Nexus → quest → arc end
 
+Runs until all 15 beats pass or the safety cap (300 turns) is reached.
 Measures story richness at every beat (images, moods, SFX, senses, character
-lines, lore, items, NPC introductions, new world entities) and saves a
+lines, lore, items, NPC introductions, new world entities) and saves an
 Ollama-summarised story excerpt to tests/story-results/.
 
 USAGE:
     python -X utf8 scripts/story-test.py
-    python -X utf8 scripts/story-test.py --player-name "Wren" --max-turns 80
+    python -X utf8 scripts/story-test.py --player-name "Wren"
     python -X utf8 scripts/story-test.py --skip-reset
 """
 
@@ -116,15 +117,15 @@ soft_results: list[tuple[str, bool, str]] = []
 story_text:   list[str] = []
 seen_ids:     set[str]  = set()
 
-BASE_URL     = "http://localhost:1582"
-DIAG_URL     = "http://localhost:1591"
-TURN_TIMEOUT = 150  # 150s — generous for 16K-context mistral turns
-MAX_TURNS    = 100
+BASE_URL          = "http://localhost:1582"
+DIAG_URL          = "http://localhost:1591"
+TURN_TIMEOUT      = 300   # 300s — covers model reload + image gen GPU contention
+MAX_SAFETY_TURNS  = 300   # hard ceiling — terminate if pilot quest stalls
 
 # ── Tag extraction regexes ────────────────────────────────────────────────────
 _RE_IMAGE    = re.compile(r'\[GENERATE_IMAGE')
-_RE_MOOD     = re.compile(r'\[MOOD\(')
-_RE_SOUND    = re.compile(r'\[SOUND\(')
+_RE_MOOD     = re.compile(r'\[MOOD[\s:(]')   # matches [MOOD: "..."] and [MOOD(...]
+_RE_SOUND    = re.compile(r'\[SOUND[\s:(]')  # matches [SOUND: "..."] and [SOUND(...)
 _RE_SMELL    = re.compile(r'\[SMELL\(')
 _RE_TASTE    = re.compile(r'\[TASTE\(')
 _RE_TOUCH    = re.compile(r'\[TOUCH\(')
@@ -227,6 +228,72 @@ def _update_npcs_created(current_entities: dict, baseline_ids: set) -> None:
                 metrics["npcs_created"].add(eid)
 
 
+OLLAMA_URL = "http://localhost:1593"
+
+
+def _wait_ollama_ready(max_wait: float = 120.0) -> None:
+    """Poll Ollama until a quick generate call completes in under 15s.
+
+    Ensures no heavy background calls (embed, caption prettify) are still
+    occupying the Ollama queue before the narrator-reset thread uses it.
+    Hits Ollama directly on port 1593.
+    """
+    print(f"  {_dim('Checking Ollama readiness…')}", end="", flush=True)
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        t0 = time.time()
+        try:
+            code, data = _post(
+                f"{OLLAMA_URL}/api/generate",
+                {"model": "llama3.1:8b", "prompt": "ok", "stream": False,
+                 "options": {"num_predict": 2}},
+                timeout=20.0,
+            )
+            elapsed = time.time() - t0
+            if code == 200 and elapsed < 12.0:
+                print(f" {_ok('ready')} ({elapsed:.1f}s)")
+                return
+            # Slow — Ollama is still busy with background calls
+            print(".", end="", flush=True)
+            time.sleep(5.0)
+        except Exception:
+            print(".", end="", flush=True)
+            time.sleep(5.0)
+    print(f" {_warn('⚠ timed out — proceeding anyway')}")
+
+
+def _drain_reset_opening(base: str, max_wait: float = 360.0) -> None:
+    """Wait for the auto-generated narrator turn that fires after a world reset.
+
+    The reset handler spawns a narrator-reset thread that generates an opening
+    sequence via Ollama.  If the story test submits Beat 1 while this is still
+    running, two Ollama jobs compete and both can exceed TURN_TIMEOUT.
+
+    This function waits until the opening turn arrives (marking it in seen_ids
+    so the test won't count it as a beat response), then returns.  Proceeds
+    without error if no turn appears within max_wait seconds.
+    """
+    print(f"  {_dim('Waiting for post-reset auto-opening (up to %.0fs)…' % max_wait)}")
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        code, data = _get(f"{base}/diagnostics/narrator-turns?n=50", timeout=10.0)
+        if code == 200 and isinstance(data, dict):
+            turns = data.get("turns", [])
+            new_narr = [
+                t for t in turns
+                if str(t.get("turn_id", "")) not in seen_ids
+                and not t.get("is_player", False)
+            ]
+            if new_narr:
+                for t in new_narr:
+                    seen_ids.add(str(t.get("turn_id", "")))
+                prose = _clean_for_story(new_narr[-1].get("raw_text", ""))[:80]
+                print(f"  {_ok('✓')} Auto-opening received: {_dim(prose + '…')}")
+                return
+        time.sleep(3.0)
+    print(f"  {_warn('⚠')} Auto-opening not detected within {max_wait:.0f}s — proceeding anyway")
+
+
 def assert_soft(condition: bool, label: str, detail: str = "") -> None:
     soft_results.append((label, bool(condition), detail))
 
@@ -312,6 +379,47 @@ def play(text: str, label: str, base: str,
     return turn
 
 
+# ── Self-healing beat wrapper ─────────────────────────────────────────────────
+_MAX_BEAT_RETRIES = 2
+_RETRY_WAITS = [20, 45]   # seconds to wait between attempt 1→2, 2→3
+
+
+def play_with_retry(text: str, label: str, base: str,
+                    pause_after: float = 0.0,
+                    timeout: float = TURN_TIMEOUT) -> dict:
+    """Call play() with up to _MAX_BEAT_RETRIES retries on timeout.
+
+    On timeout: wait for Ollama to clear, check service health, then retry.
+    Non-timeout StepFailed errors are re-raised immediately (hard fail).
+    """
+    last_exc: StepFailed | None = None
+    for attempt in range(_MAX_BEAT_RETRIES + 1):
+        try:
+            return play(text, label, base, pause_after=pause_after, timeout=timeout)
+        except StepFailed as e:
+            last_exc = e
+            if "Timed out" not in str(e) or attempt >= _MAX_BEAT_RETRIES:
+                raise
+            wait = _RETRY_WAITS[attempt]
+            print(f"  {_warn('⚠')} Timeout on attempt {attempt + 1} — waiting {wait}s for Ollama to clear…")
+            time.sleep(wait)
+            # Check service health via diagnostics
+            try:
+                req = urllib.request.Request(
+                    f"{base}/diagnostics/ai.json",
+                    headers={"Accept": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    ai = json.loads(r.read())
+                if not ai.get("ollama", {}).get("healthy", True):
+                    print(f"  {_warn('⚠')} Ollama unhealthy — waiting 30s extra…")
+                    time.sleep(30)
+            except Exception:
+                pass
+            print(f"  → Retrying {label} (attempt {attempt + 2})…")
+    raise last_exc  # type: ignore[misc]
+
+
 # ── Richness scoring ─────────────────────────────────────────────────────────
 def _compute_score(beats_done: int, starting_items: set) -> int:
     """Weighted richness score 0-100."""
@@ -321,16 +429,25 @@ def _compute_score(beats_done: int, starting_items: set) -> int:
     senses = metrics["smell"] + metrics["taste"] + metrics["touch"]
     new_items = [i for i in metrics["items_acquired"] if i not in starting_items]
 
+    # Quest-complete bonus: tricorder acquired + antagonist or protagonist met
+    _new_item_keys = set(new_items)
+    _has_tricorder = any(i in ('tricorder', 'found_artifact') for i in _new_item_keys)
+    _npcs_lc = {n.lower() for n in metrics["npcs_met"]}
+    _has_antagonist  = any('vex' in n for n in _npcs_lc)
+    _has_protagonist = any(n in _npcs_lc for n in ('mira', 'artisan_kaelo'))
+    _quest_complete  = _has_tricorder and (_has_antagonist or _has_protagonist)
+
     score = (
-        _frac(metrics["images"],         16) * 15 +
-        _frac(metrics["moods"],          14) * 10 +
-        _frac(senses,                    12) * 10 +
-        _frac(beats_done,                14) * 25 +
+        _frac(metrics["images"],          16) * 12 +   # reduced: VRAM guard limits SD in test
+        _frac(metrics["moods"],           14) * 10 +
+        _frac(senses,                     12) * 10 +
+        _frac(beats_done,                 15) * 25 +   # 15 beats = 100%
         _frac(metrics["character_lines"], 30) * 10 +
-        _frac(metrics["introduce_tags"],  3) * 10 +
-        _frac(len(new_items),             3) * 10 +
-        (5 if metrics["lore_whispers"] >= 1 else 0) +
-        (5 if not metrics["warnings"] else 0)
+        _frac(metrics["introduce_tags"],   3) *  8 +
+        _frac(len(new_items),              3) * 10 +
+        _frac(len(metrics["npcs_created"]),2) *  8 +   # new world entities created
+        (3 if metrics["lore_whispers"] >= 1 else 0) +
+        (4 if _quest_complete else 0)
     )
     return round(score)
 
@@ -457,7 +574,6 @@ def main() -> int:
     parser.add_argument("--host",        default="localhost")
     parser.add_argument("--port",        type=int, default=1582)
     parser.add_argument("--diag-port",   type=int, default=1591)
-    parser.add_argument("--max-turns",   type=int, default=MAX_TURNS)
     parser.add_argument("--player-name", default="Kael")
     parser.add_argument("--skip-reset",  action="store_true",
                         help="Skip world reset (use current world state)")
@@ -466,14 +582,14 @@ def main() -> int:
     base        = f"http://{args.host}:{args.port}"
     diag        = f"http://{args.host}:{args.diag_port}"
     player_name = args.player_name
-    max_turns   = args.max_turns
+    max_turns   = MAX_SAFETY_TURNS
 
     print(_bold(f"\n╔══════════════════════════════════════════╗"))
-    print(_bold(f"║   Remnant — 100-Turn Story Arc Test      ║"))
+    print(_bold(f"║   Remnant — Pilot Quest Arc Test         ║"))
     print(_bold(f"╚══════════════════════════════════════════╝"))
     print(f"  Target:  {base}")
     print(f"  Player:  {player_name}")
-    print(f"  Budget:  {max_turns} turns\n")
+    print(f"  Safety:  {max_turns} turn cap\n")
 
     # ── Start SSE lore listener ───────────────────────────────────────────────
     sse_thread = threading.Thread(
@@ -491,10 +607,25 @@ def main() -> int:
         print(_bold("── Beat 0: Setup"))
 
         if not args.skip_reset:
-            code, _ = _post(f"{base}/reset", {}, timeout=30.0)
+            # Use "world" level reset: clears ALL narrator turns, player state,
+            # session trackers (_introduced_this_session, etc.) and re-seeds from
+            # seed/world.json. This ensures a completely clean run each time and
+            # avoids inheriting _player_dressed / _player_appearance_desc from
+            # previous sessions (those linger across scene/story resets).
+            code, _ = _post(f"{base}/reset", {"level": "world"}, timeout=30.0)
             assert_hard(code == 200, f"/reset returned HTTP {code}")
             print(f"  {_ok('✓')} World reset OK")
-            time.sleep(3.0)  # Let world settle
+            # Let any in-flight Ollama background calls (caption prettify, embed)
+            # settle before the narrator-reset thread competes for the Ollama queue.
+            # Let any in-flight Ollama background calls settle before checking
+            print(f"  {_dim('Waiting 10s for Ollama background calls to settle…')}")
+            time.sleep(10.0)
+            # Quick Ollama responsiveness check — if Ollama is still busy with
+            # background embed/caption calls, wait until it responds promptly
+            _wait_ollama_ready()
+            # Wait for the narrator-reset auto-opening to complete before
+            # submitting Beat 1, otherwise two Ollama jobs compete and stall.
+            _drain_reset_opening(base, max_wait=360.0)
 
         code, ws = _get(f"{base}/world-state", timeout=15.0)
         assert_hard(code == 200, f"/world-state returned HTTP {code}")
@@ -540,7 +671,7 @@ def main() -> int:
 
         # ── Beat 1: Portal arrival ────────────────────────────────────────────
         print(_bold("\n── Beat 1: Portal Arrival"))
-        turn = play(
+        turn = play_with_retry(
             "I open my eyes and look around.",
             "Portal arrival", base,
         )
@@ -552,7 +683,7 @@ def main() -> int:
 
         # ── Beat 2: Name yourself ─────────────────────────────────────────────
         print(_bold("\n── Beat 2: Name Yourself"))
-        turn = play(
+        turn = play_with_retry(
             f"My name is {player_name}. I am a traveller from a world of rain.",
             "Name yourself", base,
         )
@@ -565,7 +696,7 @@ def main() -> int:
 
         # ── Beat 3: Follow Sherri ─────────────────────────────────────────────
         print(_bold("\n── Beat 3: Follow Sherri"))
-        turn = play(
+        turn = play_with_retry(
             "I follow Sherri to the Fabrication Bay.",
             "Follow Sherri", base,
         )
@@ -580,7 +711,7 @@ def main() -> int:
 
         # ── Beat 4: Describe appearance ───────────────────────────────────────
         print(_bold("\n── Beat 4: Describe Appearance"))
-        turn = play(
+        turn = play_with_retry(
             "I am tall, with dark curly hair and sharp green eyes. Weathered hands.",
             "Describe appearance", base,
         )
@@ -593,7 +724,7 @@ def main() -> int:
 
         # ── Beat 5: Ask for clothes ───────────────────────────────────────────
         print(_bold("\n── Beat 5: Ask for Clothes"))
-        turn = play(
+        turn = play_with_retry(
             "Sherri, can you make me some clothes? Dark practical ones, lots of pockets.",
             "Ask for clothes", base,
         )
@@ -606,7 +737,7 @@ def main() -> int:
 
         # ── Beat 6: Clothes applied ───────────────────────────────────────────
         print(_bold("\n── Beat 6: Clothes Applied"))
-        turn = play(
+        turn = play_with_retry(
             "I put on the new clothes. What do I look like?",
             "Clothes applied", base,
         )
@@ -617,7 +748,7 @@ def main() -> int:
 
         # ── Beat 7: To the galley ─────────────────────────────────────────────
         print(_bold("\n── Beat 7: To the Galley"))
-        turn = play(
+        turn = play_with_retry(
             "Sherri, I'm hungry. Take me to the galley.",
             "To the galley", base,
         )
@@ -634,7 +765,7 @@ def main() -> int:
 
         # ── Beat 8: Order meal ────────────────────────────────────────────────
         print(_bold("\n── Beat 8: Order Meal"))
-        turn = play(
+        turn = play_with_retry(
             "Sherri, whatever smells best today.",
             "Order meal", base,
         )
@@ -645,7 +776,7 @@ def main() -> int:
 
         # ── Beat 9: Eat the meal ──────────────────────────────────────────────
         print(_bold("\n── Beat 9: Eat the Meal"))
-        turn = play(
+        turn = play_with_retry(
             "I eat slowly, taking in every flavour.",
             "Eat the meal", base,
         )
@@ -656,7 +787,7 @@ def main() -> int:
 
         # ── Beat 10: To sleeping quarters ─────────────────────────────────────
         print(_bold("\n── Beat 10: To Sleeping Quarters"))
-        turn = play(
+        turn = play_with_retry(
             "Sherri, show me where I can sleep.",
             "To sleeping quarters", base,
         )
@@ -669,7 +800,7 @@ def main() -> int:
         print(_bold("\n── Beat 11: Go to Sleep"))
         print(f"  {_dim('(Will pause 65s after response to allow lore whisper…)')}")
         lore_before = metrics["lore_whispers"]
-        turn = play(
+        turn = play_with_retry(
             "I climb into a bunk and close my eyes.",
             "Go to sleep", base,
             pause_after=65.0,   # idle window for _lore_idle_loop (fires at 50s)
@@ -684,7 +815,7 @@ def main() -> int:
         # ── Beat 12: Wake up (another 65s window) ────────────────────────────
         print(_bold("\n── Beat 12: Wake Up"))
         print(f"  {_dim('(Another 65s pause for second lore whisper opportunity…)')}")
-        turn = play(
+        turn = play_with_retry(
             "I wake up. How long was I asleep?",
             "Wake up", base,
             pause_after=65.0,
@@ -698,7 +829,7 @@ def main() -> int:
 
         # ── Beat 13: To the Nexus ─────────────────────────────────────────────
         print(_bold("\n── Beat 13: To the Nexus"))
-        turn = play(
+        turn = play_with_retry(
             "Sherri, take me to the Nexus. I wish to speak with the Remnant.",
             "To the Nexus", base,
         )
@@ -713,7 +844,7 @@ def main() -> int:
 
         # ── Beat 14: Ask the Remnant ──────────────────────────────────────────
         print(_bold("\n── Beat 14: Ask the Remnant"))
-        turn = play(
+        turn = play_with_retry(
             "Remnant — why did you bring me here? What do you need from me?",
             "Ask the Remnant", base,
         )
@@ -724,7 +855,7 @@ def main() -> int:
 
         # ── Beat 15: Accept quest ─────────────────────────────────────────────
         print(_bold("\n── Beat 15: Accept Quest"))
-        turn = play(
+        turn = play_with_retry(
             "I'll do it. Whatever it takes. Tell me how to begin.",
             "Accept quest", base,
         )
@@ -736,20 +867,72 @@ def main() -> int:
         )
         beats_done += 1
 
-        # ── Quest arc (beats 16–max_turns) ────────────────────────────────────
-        print(_bold(f"\n── Quest Arc (turns 16–{max_turns})"))
+        # ── Quest arc (runs until all 15 beats pass or safety cap) ───────────
+        print(_bold(f"\n── Quest Arc ({beats_done} beats done — continuing for richness)"))
 
-        _arc_fallbacks = [
-            "I push forward. What happens next?",
-            "I examine my surroundings carefully.",
-            "I ask the Remnant what to do.",
-            "I look for anything useful in this room.",
-            "I listen for any sounds nearby.",
+        # Dialogue pool — cycles through entity-referencing inputs to exercise
+        # INTRODUCE tags, lore discovery, and world exploration.
+        _ARC_TURNS = [
+            # Exploration
+            "I explore the corridor ahead.",
+            "I examine the walls for markings or symbols.",
+            "I press on deeper into the Fortress.",
+            "I listen carefully — what sounds can I hear?",
+            # Tricorder acquisition
+            "I look for any scanning equipment I can use.",
+            "I pick up the dimensional scanner from the console.",
+            "I use the tricorder to scan the area.",
+            # Vex encounter (antagonist)
+            "I hear someone in the shadows ahead — not Sherri.",
+            "I call out to the figure in the corridor.",
+            "I hold my ground and face the hostile traveler.",
+            # Mira encounter (protagonist)
+            "Sherri, who else is on this station?",
+            "I ask to meet the researcher Sherri mentioned.",
+            "I introduce myself to Mira and ask about The Fold.",
+            # Lore / Remnant
+            "I ask The Remnant about The Fold.",
+            "I look for any sign of the Neural Nexus.",
+            "What does The Remnant know about this section?",
+            "I search for anything that might explain the void crystals.",
+            "I ask The Remnant how The Fold brought me here.",
+            # Wrap-up
+            "I look for a way to higher levels.",
+            "I ask The Remnant what my first task is.",
         ]
-        _arc_idx = 0
+        _arc_idx  = 0
         quest_turn = 0
         last_intro_turn = -99
-        prev_world_snap: dict = {}
+
+        # Arc runs until quest_complete + richness targets satisfied OR safety cap.
+        # We need at least MIN_ARC_TURNS to cover tricorder, Vex, and Mira beats.
+        MIN_ARC_TURNS = 15   # always run at least this many exploration turns
+
+        def _richness_met():
+            senses = metrics["smell"] + metrics["taste"] + metrics["touch"]
+            new_items = [i for i in metrics["items_acquired"] if i not in starting_items]
+
+            # Quest-complete gate: must have tricorder + met antagonist or protagonist
+            has_tricorder = any(i in ('tricorder', 'found_artifact') for i in new_items)
+            npcs_lc = {n.lower() for n in metrics["npcs_met"]}
+            has_antagonist  = any('vex' in n for n in npcs_lc)
+            has_protagonist = any(n in npcs_lc for n in ('mira', 'artisan_kaelo'))
+            quest_complete = has_tricorder and (has_antagonist or has_protagonist)
+
+            all_targets_met = (
+                metrics["images"]          >= 16 and
+                metrics["moods"]           >= 14 and
+                senses                     >= 12 and
+                metrics["character_lines"] >= 30 and
+                metrics["lore_tags"]       >= 5  and
+                metrics["introduce_tags"]  >= 3  and
+                len(new_items)             >= 3
+            )
+            # Also accept score ≥75 as early-exit — individual targets for
+            # images may be unreachable during rapid test turns (VRAM guard).
+            score_passing = _compute_score(beats_done, starting_items) >= 75
+            # Quest-complete is required in both paths
+            return (all_targets_met or score_passing) and quest_complete
 
         while metrics["player_turns"] + metrics["narrator_turns"] < max_turns:
             quest_turn += 1
@@ -759,31 +942,28 @@ def main() -> int:
                 current_ents = _snap_world_entities(base)
                 _update_npcs_created(current_ents, baseline_entity_ids)
 
-            # Choose player input
+            # Choose player input — context-reactive first, then pool rotation
             last_raw = story_text[-1] if story_text else ""
+            last_raw_lc = last_raw.lower()
 
-            if quest_turn % 8 == 0:
-                text = "Tell me more about this place. What do you know of its history?"
-            elif quest_turn % 5 == 0:
-                text = "Is there anything here worth taking?"
-            elif "introduce" in last_raw.lower() and quest_turn != last_intro_turn:
+            if "introduce" in last_raw_lc and quest_turn != last_intro_turn:
                 text = "Tell me about yourself. Who are you?"
                 last_intro_turn = quest_turn
-            elif "fabrication" in last_raw.lower() and "sherri" in last_raw.lower():
+            elif "fabrication" in last_raw_lc and "sherri" in last_raw_lc:
                 text = "I work with Sherri to recalibrate the rigs."
-            elif "nexus" in last_raw.lower() and "frequency" in last_raw.lower():
+            elif "nexus" in last_raw_lc and "frequency" in last_raw_lc:
                 text = "I goad the Remnant into revealing what it knows."
-            elif "cold" in last_raw.lower() and "spot" in last_raw.lower():
+            elif "cold" in last_raw_lc and "spot" in last_raw_lc:
                 text = "I follow the cold trail through the sleeping quarters."
-            elif "portal" in last_raw.lower():
+            elif "portal" in last_raw_lc:
                 text = "I step through the portal."
             else:
-                text = _arc_fallbacks[_arc_idx % len(_arc_fallbacks)]
+                text = _ARC_TURNS[_arc_idx % len(_ARC_TURNS)]
                 _arc_idx += 1
 
             label = f"Quest arc turn {quest_turn}"
             try:
-                turn = play(text, label, base)
+                turn = play_with_retry(text, label, base)
             except StepFailed as e:
                 print(f"  {_err('✗')} {label} failed: {e}")
                 break
@@ -792,6 +972,14 @@ def main() -> int:
             assert_soft(_RE_IMAGE.search(raw) or _RE_MOOD.search(raw) or _RE_CHAR.search(raw),
                         f"Quest turn {quest_turn} richness",
                         "No image/mood/character in quest turn")
+
+            # Check early-exit: all beats done + richness met + minimum arc turns
+            if beats_done >= 15 and quest_turn >= MIN_ARC_TURNS and _richness_met():
+                print(f"\n  {_ok('✅')} {_bold('All beats complete + richness targets met — pilot quest done!')}")
+                break
+
+        if metrics["player_turns"] + metrics["narrator_turns"] >= max_turns:
+            print(f"\n  {_warn('⚠')} Safety cap reached ({max_turns} turns). Beats: {beats_done}/15")
 
         # Final world entity diff
         current_ents = _snap_world_entities(base)
@@ -833,13 +1021,26 @@ def main() -> int:
         for w in metrics["warnings"][:3]:
             print(f"     {_warn(w[:100])}")
 
+    # Tag-injection health checks — warn if expected tags are still zero
+    tag_warnings = []
+    if metrics["moods"] == 0:
+        tag_warnings.append("MOOD tags = 0 — _inject_missing_tags may not be firing")
+    if metrics["lore_tags"] == 0:
+        tag_warnings.append("LORE tags = 0 — check _LORE_ANCHORS coverage in app.py")
+    if metrics["introduce_tags"] == 0:
+        tag_warnings.append("INTRODUCE tags = 0 — CHARACTER tags absent from narrator turns")
+    if tag_warnings:
+        print(_warn("\n  Tag-injection warnings:"))
+        for tw in tag_warnings:
+            print(f"    {_warn('⚠')}  {tw}")
+
     print(_dim(f"\n  NPCs met:        {', '.join(sorted(metrics['npcs_met'])) or '(none)'}"))
     print(_dim(f"  NPCs created:    {', '.join(sorted(metrics['npcs_created'])) or '(none)'}"))
     print(_dim(f"  Items acquired:  {', '.join(metrics['items_acquired']) or '(none)'}"))
     print(_dim(f"  Lore collected:  {', '.join(metrics['lore_collected']) or '(none)'}"))
     print(_dim(f"  Locations:       {', '.join(sorted(metrics['locations_visited'])) or '(none)'}"))
 
-    print(f"\n  Beats completed: {_bold(str(beats_done))}/14")
+    print(f"\n  Beats completed: {_bold(str(beats_done))}/15")
     print(f"  {_bold('RICHNESS SCORE:')} {_cyan(str(score))}/100\n")
 
     # ── Soft results summary ──────────────────────────────────────────────────
@@ -864,7 +1065,18 @@ def main() -> int:
     print(f"\n  {_ok('✓')} Story saved to: {_bold(str(out_path))}")
     print()
 
-    return 0 if beats_done >= 12 and score >= 40 else 1
+    # v4.0.0 gate: all 15 beats complete AND richness score ≥ 75
+    success = beats_done == 15 and score >= 75
+    if success:
+        print(_ok(f"  🏆  v4.0.0 GATE PASSED — all beats complete, score {score}/100\n"))
+    else:
+        reasons = []
+        if beats_done < 15:
+            reasons.append(f"beats {beats_done}/15")
+        if score < 75:
+            reasons.append(f"score {score}/100 (need ≥75)")
+        print(_warn(f"  ✗  Gate not yet passed: {', '.join(reasons)}\n"))
+    return 0 if success else 1
 
 
 if __name__ == "__main__":

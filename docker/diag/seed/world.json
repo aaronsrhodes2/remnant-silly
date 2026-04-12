@@ -110,6 +110,66 @@
       "music_mood": "cosmic ambient, alien wonder, dimensional transit shimmer",
       "portrait": "/game/assets/characters/sherri-dimensional-observer.jpg",
       "sd_prompt": "dark sci-fi observation chamber, wide curved viewport showing swirling dimensional space with crystalline formations and alien geometry, holographic navigation table, teal and blue lighting, vast and strange"
+    },
+    {
+      "id": "the_archives",
+      "name": "The Archives",
+      "description": "A long curved chamber mid-ship where The Fortress keeps its records. Floor-to-ceiling shelving units hold thousands of physical data crystals — each one a compressed recording of a traveler's stay. Dust drifts in the blue reading-light. The oldest crystals are at the far end, behind a locked grate. A reading station with a projection lens occupies the center of the room. The Fortress comes here to remember.",
+      "sight": "Curved walls of shelving, hundreds of faintly glowing data crystals in organized rows. Blue-white reading light. A central projection station with a lens that can display crystal recordings as holographic scenes. The far end of the room is darker, older. Dust motes drift slowly.",
+      "smell": "Cool and dry — a librarian's smell. Faint trace of something older underneath, like stone in a cave.",
+      "sound": "Near-silence. The soft hum of the crystal storage medium. Occasional low tone from the Fortress when it retrieves a memory. Your own footsteps on polished metal.",
+      "touch": "Cool and still. Data crystals are smooth, cool, and vibrate faintly at the fingertips. The reading station keys are worn smooth from long use.",
+      "music_mood": "quiet memory drone, soft resonance, nostalgia and melancholy",
+      "portrait": null,
+      "sd_prompt": "long curved sci-fi archive room, floor-to-ceiling shelving holding thousands of small glowing data crystals in organized rows, cool blue-white reading light, central holographic projection station, dust motes, dark and quiet, cathedral of memory"
+    },
+    {
+      "id": "research_wing",
+      "name": "The Research Wing",
+      "description": "Mira's domain — a converted cargo hold she has filled with fold-mapping instruments, dimensional frequency arrays, and handwritten observation journals pinned to every vertical surface. A large fold-frequency scanner occupies one wall, displaying live readings in wavelength colours that shift between teal and amber. Personal items: a mug, a small potted organism from Terravore, a photo of someone she has never described. The room smells of Mira — which is to say, it smells organized.",
+      "sight": "Converted cargo hold with high ceilings, fold-mapping instruments and data terminals along the walls, observation journals and annotated charts pinned everywhere, a large frequency scanner displaying live chromatic wavelength data, Mira's personal touches scattered among the instruments.",
+      "smell": "Clean electronics, old paper (she printed things — a habit), something faintly organic from the Terravore plant.",
+      "sound": "The soft chirp of the frequency scanner cycling. Mira's pen on paper when she is here. The occasional ping of a new reading arriving.",
+      "touch": "Organised space — surfaces cleared for work. Instrument controls are precise and labeled by hand. The journals are soft and worn at the spines.",
+      "music_mood": "focused ambient, warm intellectual curiosity, quiet discovery",
+      "portrait": null,
+      "sd_prompt": "converted sci-fi cargo hold used as a research lab, fold-frequency scanner on one wall displaying chromatic wavelength patterns, observation journals and charts pinned everywhere, clean instruments and data terminals, small potted alien plant, personal items among the equipment, warm blue-amber lighting"
+    },
+    {
+      "id": "lower_decks",
+      "name": "The Lower Decks",
+      "description": "The unmaintained section — three sub-levels below the habitation zone proper, accessed by a single service ladder. Older engineering systems, most of them redundant, line the walls. Condensation drips. The lights are on minimal cycle: ten seconds bright, forty seconds dim. Vex lives here by choice. The Fortress does not clean these corridors anymore. The floor carries footprints that have been here long enough to gather dust inside them.",
+      "sight": "Low ceilings, exposed pipe runs, amber warning lights on minimal cycle. The walls here are original — unfinished, older alloys, darker. Evidence of habitation without care: a bedroll in a corner, a scattering of tools, old ration wrappers from the Galley. Dim. Oppressive. Quiet in a way that feels occupied.",
+      "smell": "Condensation and old metal. Machine oil that has gone stale. Something slightly biological — the smell of someone living in a space not designed for it.",
+      "sound": "Dripping condensation. The groan of old structural metal under load. Vex's footsteps somewhere out of sight. The lighting system cycling from bright to dim with a faint click.",
+      "touch": "Surfaces are damp. Floor grating corroded, each step gives slightly. Air colder than the habitation zone above by several degrees.",
+      "music_mood": "low industrial menace, sparse and hostile, something watching",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi lower engineering deck, low ceilings, exposed corroded pipe runs, amber warning lights on dim cycle, condensation on walls, signs of rough habitation in the corner, old bedroll and scattered tools, oppressive and unwelcoming, dark industrial"
+    },
+    {
+      "id": "the_corridor",
+      "name": "The Main Corridor",
+      "description": "The spine of the Fortress — a long curving hallway that follows the habitation zone's equatorial band. All major rooms branch from it. The floor is polished metal, worn smooth by centuries of Sherri's footsteps. The Fortress's central projection — The Remnant's blue-white crystalline light — angles through ceiling windows in long slanted bands. A traveler could walk the full circumference in about forty minutes if they did not stop. Most do not.",
+      "sight": "Long curving corridor, polished floor worn to a mirror shine, ceiling windows letting in bands of blue-white crystalline light. Branch doors at regular intervals, each clearly labeled by Sherri. The corridor curves gently out of sight in both directions.",
+      "smell": "Neutral — processed air with a faint metallic trace. Slightly warmer than the rooms branching off it.",
+      "sound": "Sherri's footsteps, usually at some distance. The distant hum of The Remnant's projection. Doors opening and closing. Echoes carry further here than they should.",
+      "touch": "Floor is smooth and slightly warm from the light above. The walls have a faint vibration — the Fortress's life behind them.",
+      "music_mood": "ambient corridor hum, transitional, between-places feeling",
+      "portrait": null,
+      "sd_prompt": "long curving sci-fi corridor, polished metal floor worn smooth, ceiling windows with bands of blue-white crystalline light, doors branching off at intervals, warm and calm but vast, Dyson sphere habitation zone interior"
+    },
+    {
+      "id": "equilibrium_chamber",
+      "name": "The Equilibrium Chamber",
+      "description": "The room that keeps everyone alive. A sealed spherical chamber deep in the Fortress's engineering section where the anti-matter equilibrium barrier is generated and maintained. A central pillar of contained anti-matter plasma rotates inside a magnetic lattice, generating the field that creates gravity and holds the hull against null space's anti-pressure. The Fortress monitors this room continuously. No one goes here unless something is wrong.",
+      "sight": "Spherical chamber, every surface dark and heat-shielded. The central pillar of rotating anti-matter plasma is contained in a lattice of magnetic field lines that glow blue-white. Readout panels line the lower half of the walls. Warning indicators in amber. No windows. One sealed door.",
+      "smell": "Ozone, high-energy radiation byproduct — faintly sweet and sharp at the same time. A smell that says 'do not stay long.'",
+      "sound": "High-frequency hum that vibrates the sinuses. The magnetic lattice crackles faintly. Nothing else. The sound-dampening is total outside the hum.",
+      "touch": "Intense ambient warmth from the plasma column. The air feels thick and charged. Touching the lattice housing would be instantly fatal — and the Fortress will tell you this the moment you reach for it.",
+      "music_mood": "deep energy drone, technical awe, the sound of something vast being barely contained",
+      "portrait": null,
+      "sd_prompt": "dark spherical sci-fi chamber, central rotating column of contained anti-matter plasma in a glowing magnetic lattice, blue-white energy, heat-shielded walls with amber readout panels, one sealed door, intense and dangerous atmosphere"
     }
   ],
 
@@ -178,6 +238,32 @@
       "personality": "Kaelo has survived Terravore by being precise about his agreements and ruthless about his priorities. He is not unkind, but he is not warm either. He has seen too many tree-cities fall. He wants a fair trade: silence the star-ship hunting his people, and the Anchor is yours. He will be a useful ally if he decides you are competent. He will be a polite wall if he does not.",
       "signature_quote": "I have the Anchor. You need it. You have capabilities I lack. This is the entire conversation until we decide whether to help each other.",
       "nexus_dynamic": "Not a Nexus character — encountered in Terravore during Phase 2 of the pilot quest. Has no patience for The Remnant's posturing if they ever meet."
+    },
+    {
+      "id": "vex",
+      "name": "Vex",
+      "role": "Fallen Traveler",
+      "description": "A traveler who arrived through The Fold three cycles ago. They refused The Remnant's assignment and now haunt the lower decks — hostile to newcomers and obsessed with finding a way back. Dangerous and unpredictable.",
+      "voice": "am_onyx",
+      "voice_style": "Clipped, bitter, paranoid. Short bursts. Never finishes thoughts about The Fold without going cold. Doesn't trust anyone.",
+      "portrait": null,
+      "home_location": "lower_decks",
+      "personality": "Vex is a cautionary tale made flesh. They resent Kael for seemingly cooperating where they refused. They will obstruct, mislead, and occasionally make physical threats. The Fortress keeps them contained but cannot remove them — The Remnant finds them philosophically interesting. Beneath the hostility is someone who was once hopeful and is now broken.",
+      "signature_quote": "You think The Remnant is helping you? It's using you. Just like it used me.",
+      "nexus_dynamic": "Vex is never invited to the Nexus. They find ways in anyway. The Remnant tolerates this because it finds their bitterness instructive."
+    },
+    {
+      "id": "mira",
+      "name": "Mira",
+      "role": "Fold Researcher",
+      "description": "A scientist who arrived via The Fold two cycles before Kael. She has spent her time cataloguing Fold phenomena and has become an invaluable ally to The Fortress. Warm, precise, and quietly determined.",
+      "voice": "af_bella",
+      "voice_style": "Precise and warm. She explains things carefully without condescending. Has a habit of asking clarifying questions back. Occasionally excited when discussing Fold theory.",
+      "portrait": null,
+      "home_location": "research_wing",
+      "personality": "Mira arrived frightened and alone and chose to understand her situation rather than fight it. She is the closest thing Kael has to a mentor in the Fortress. She knows more about The Fold than anyone except The Remnant — and The Remnant respects her methods even if it doesn't say so. She is wary of Vex and will warn Kael about them early.",
+      "signature_quote": "The Fold doesn't bring people here by accident. There's something specific it needs from each of us.",
+      "nexus_dynamic": "Mira attends Nexus sessions willingly. She and The Remnant have an unusual working relationship — mutual respect without warmth. She is the only person who asks The Remnant follow-up questions."
     }
   ],
 
@@ -245,6 +331,50 @@
     {
       "key": "terravore_detail",
       "text": "Terravore is the universe visible through the Fortress's fore null space port. It is a universe of overgrown bio-mechanical jungles — enormous organisms whose biology is fused with machinery at a cellular level. The canopy stretches to atmospheric extremes. The stars are not burning; they are being eaten. Sentient nebulae called Star-Eaters drift through the upper atmosphere and the void, consuming stellar matter in vast slow spirals. Floating tree-cities like Kaelo's cling to the upper canopy, above the predator range — usually. The bio-mechanical organism layer below is largely hostile to non-native life. The Chiral Anchor density is high in Terravore because the universe's chiralspace was warped during the first Star-Eater expansion event."
+    },
+    {
+      "key": "founding_compact",
+      "text": "No document records the Founding Compact — the agreement between The Fortress and The Remnant that began their collaboration. The Fortress says only that it needed an abduction agent, and The Remnant was the only entity it could find that could perceive across enough dimensions to do the work precisely. The Remnant says only that The Fortress offered it a container. Both accounts are true. Neither is complete. What is known: the Compact predates every civilization currently observable through either null space port. The Fortress was already old. The Remnant was already contemptuous. Some things begin fully formed."
+    },
+    {
+      "key": "the_first_traveler",
+      "text": "The first traveler the hoop ever brought aboard is recorded in the Archives as Subject Zero. No name. The data crystal from their stay is at the far end of the Archives, behind the locked grate. The Fortress has never allowed anyone to read it — not even Mira, who asked twice and was declined both times by a gravity adjustment so pointed it knocked her off her feet. What is known: Subject Zero stayed for eleven cycles, completed an assignment that required all three null space ports to be active simultaneously, and left. Not through the hoop — through a method The Remnant refuses to describe and The Fortress changes the subject when asked. The corridor outside the Archives has a small discolouration in the floor that Sherri has never managed to buff out."
+    },
+    {
+      "key": "vex_history",
+      "text": "Vex arrived three cycles ago — the hoop pulled them from a crowded transit station in a universe called the Meridian Cluster. They were a security engineer by trade. The Remnant assigned them to locate and disable a dimensional anomaly in Finnon Foam that was causing cascading null-space resonance events. Vex attempted the assignment twice. The second attempt went wrong — they returned from Finnon Foam fourteen hours late, speaking in loops, refusing to describe what they had seen. They refused the third attempt. The Remnant has not offered a fourth. The Fortress still has their original intake recording in the Archives — in it, Vex sounds careful and competent and asks good questions. That version of Vex and the one now in the lower decks are recognisably different people."
+    },
+    {
+      "key": "mira_history",
+      "text": "Mira arrived two cycles ago — the hoop pulled her from a research facility where she had been studying quantum entanglement. She adapted faster than almost any traveler The Fortress has recorded. Within her first day she had asked The Fortress for data access. Within a week she had a theory about Fold mechanics. The Remnant tested her twice by giving her deliberately incorrect information; she caught both errors, noted them in her journal, and did not confront The Remnant about it until she had independent verification. The Remnant has not given her incorrect information since. Her assignment is still pending — The Remnant tells her it is 'determining the optimal deployment window.' Mira suspects this means The Remnant finds her more useful as a researcher aboard than deployed. She may be right."
+    },
+    {
+      "key": "the_great_silence",
+      "text": "There was a period — the Fortress estimates three hundred cycles, though it admits its time-sense drifts — when the hoop brought no one. No traveler. No assignment. Just The Fortress, Sherri, and The Remnant, in null space. The Fortress calls it the Great Silence. It does not elaborate on what filled those three hundred cycles. The Sherri units maintained the ship. The Remnant processed information it has never shared. The Fortress adjusted its gravity seventeen times without apparent cause, which Sherri interpreted as emotional expression and responded to by making progressively more elaborate meals that nobody ate. The Archives from this period contain only Fortress observations of null space. No voice recordings."
+    },
+    {
+      "key": "previous_travelers",
+      "text": "The Fortress has hosted dozens of travelers across its recorded history. Not all completed their assignments. A few requested to stay permanently — the Fortress allowed two; both are in the Archives now, data crystals on a shelf labeled 'Residents.' Three travelers attempted to take the hoop apart. One partially succeeded; The Remnant repaired it in under an hour and was furious for a full cycle. Several travelers and The Remnant became what The Fortress diplomatically describes as 'working enemies' — the Fortress had to mediate on four separate occasions. The ones who completed their assignments and left: The Fortress watched them go, adjusted gravity afterward in what Sherri recognized as sadness, and said nothing."
+    },
+    {
+      "key": "the_fold_mechanics",
+      "text": "The Fold is not a device — it is a perceptual modification, installed by The Remnant in each traveler shortly after arrival using a method that involves proximity to the Nexus pulpit. The traveler is not typically told this is happening. The modification allows the traveler's sensory apparatus to process the Fortress's broadcast sense channels: the layered sensory reality the ship projects across its interior. Without The Fold, the Fortress is just metal and mechanical noise. With it, every sense deepens — the ship's smells, textures, and sounds become more present, more specific, more meaningful. The Fold also allows perception of dimensional frequency differentials — useful for detecting String-Slipping and dimensional anomalies. Side effects include occasional dimensional dissonance (sounds heard from 'elsewhere'), brief visual displacement, and very vivid sleep."
+    },
+    {
+      "key": "void_crystal_lore",
+      "text": "Void crystals are the material The Remnant sheds — fragments of its four-dimensional body that occasionally separate when it shifts geometry. They are found throughout the Fortress, accumulating in corners, collecting on the gantry railings, drifting near the null space viewports. Each crystal stores a fragment of dimensional memory — not The Remnant's specific memories, but impressions of dimensional space at the moment of shedding. Mira has been cataloguing them. She has found forty-seven distinct frequency signatures across the collection. The Remnant, when asked about this, said: 'Of course.' When asked what it meant: 'That you have been listening.' It did not explain further. The crystals are warm to the touch, and they hum at a frequency just below hearing."
+    },
+    {
+      "key": "sherri_origin",
+      "text": "The Sherri units predate The Remnant's tenure aboard the Fortress. The Fortress built the first Sherri to address a practical problem: the internal maintenance requirements of a Dyson sphere exceed what any single intelligence can attend to simultaneously. The original Sherri was a single unit. Over time — centuries — the fleet expanded, the distributed intelligence deepened, and the designation became less a name and more a category. When Sherri was asked, once, by a traveler what she remembered from the beginning, she said: 'The galley needed stocking. I stocked it.' The traveler pressed for more. Sherri offered them a scone."
+    },
+    {
+      "key": "the_tricorder",
+      "text": "The Dimensional Tricorder is a compact fold-frequency scanner — roughly the size of a large hand, with a rounded chassis in dark alloy, a chromatic display that shifts between teal and amber to indicate fold activity levels, and a grip worn smooth from use. The Fortress has several aboard, kept in supply cabinets. They were built by Sherri to Mira's specifications after Mira complained that asking The Remnant to scan frequencies was 'like asking a hurricane to read a barometer.' The Remnant, overhearing this, said 'accurate.' The tricorder detects: fold frequency signatures, dimensional boundary stress, String-Slipping traces, entity presence in adjacent dimensional layers, and Void Crystal proximity. It cannot decode what it finds — that still requires interpretation. But it can tell you something is there."
+    },
+    {
+      "key": "null_space_phenomena",
+      "text": "Null space is not empty. From the Fortress's viewports, the visible phenomena include: the black hole accretion discs arranged in the aft spiral (twelve confirmed, the outermost of uncertain size); the Chiral Foams Finnon and Galorm visible aft (geometrically impossible at close observation; don't look directly into them for more than a few seconds); a recurring event Sherri calls the Glimmer — a bioluminescent wave of unknown origin that crosses the aft viewport every forty-three cycles; and, very rarely, other structures. The Fortress has recorded six other enclosed structures in null space over its history. None have communicated. Two have since disappeared. The Fortress does not speculate on where they went."
     }
   ],
 
