@@ -2356,12 +2356,12 @@ inputEl.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape') {
-    if (_contMode) { _icClose(); return; }
+    if (_contMode || _atMode) { _icClose(); return; }
     suggestEl.style.display = 'none';
     return;
   }
-  // Chooser open: delegate Tab/Arrow/Enter to chooser
-  if (_contMode === 'awaiting_item') {
+  // Chooser open (continuation or @ mode): delegate Tab/Arrow/Enter to chooser
+  if (_contMode === 'awaiting_item' || _atMode) {
     if (e.key === 'Tab' || e.key === 'ArrowDown') { e.preventDefault(); _icSetActive(_icActive + 1); return; }
     if (e.key === 'ArrowUp')   { e.preventDefault(); _icSetActive(_icActive - 1); return; }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2386,11 +2386,36 @@ inputEl.addEventListener('keydown', e => {
   }
 });
 inputEl.addEventListener('input', () => {
+  const word = _getWordAtCursor();
+
+  // @ mention: open or update the chooser
+  if (word.startsWith('@') && !_contMode) {
+    const atStart = inputEl.selectionStart - word.length;
+    const filter  = word.slice(1);
+    if (!_atMode) {
+      _icOpenAt(atStart, filter);
+    } else {
+      // Already in @ mode — keep filter in sync as user types
+      icFilterEl.value = filter;
+      _icRender(filter);
+    }
+    // Don't start countdown while chooser is open
+    return;
+  }
+
+  // If @ was deleted, close the at-chooser
+  if (_atMode && !word.startsWith('@')) {
+    _icClose();
+  }
+
   if (inputEl.value.trim()) _startCountdown(); else _clearTimers();
   _updateSuggest();
 });
 inputEl.addEventListener('blur', () => {
-  setTimeout(() => { suggestEl.style.display = 'none'; }, 150);
+  setTimeout(() => {
+    suggestEl.style.display = 'none';
+    if (_atMode) _icClose();
+  }, 150);
 });
 
 // ── Always-on VAD (Voice Activity Detection) ──
@@ -2492,6 +2517,11 @@ let _contMode  = null;
 let _contBase  = '';
 let _contAfter = '';
 
+// @ mention mode — triggered by typing @ in the textarea (not a continuation,
+// just inline entity insertion at cursor, like Claude Desktop's @ picker).
+let _atMode    = false;
+let _atStart   = -1;  // char index of the @ in the textarea
+
 const _CONT_TOKEN_RE = /\b(item|items|inventory)\b/i;
 
 const icEl       = document.getElementById('item-chooser');
@@ -2540,15 +2570,28 @@ function _icSetActive(idx) {
 }
 
 function _icSelect(name) {
+  if (_atMode) {
+    // @ mode: replace @word at cursor with chosen entity name
+    const val = inputEl.value;
+    const end = inputEl.selectionStart;  // cursor is after the @word
+    inputEl.value = val.slice(0, _atStart) + name + val.slice(end);
+    inputEl.selectionStart = inputEl.selectionEnd = _atStart + name.length;
+    icEl.classList.remove('open');
+    icFilterEl.value = '';
+    _atMode  = false;
+    _atStart = -1;
+    if (inputEl.value.trim()) _startCountdown(); else _clearTimers();
+    inputEl.focus();
+    return;
+  }
+  // Continuation mode: assemble base + name + after-text
   _icClose();
-  // Assemble: base + selected name + after-text
   const assembled = (_contBase + name + _contAfter).trimEnd();
   inputEl.value = assembled;
   inputEl.dataset.cont = 'awaiting_rest';
   _contMode  = 'awaiting_rest';
   _contBase  = assembled + ' ';   // next VAD chunk appends here
   _contAfter = '';
-  // Restart auto-send countdown — player may keep speaking the rest
   _startCountdown(4000);
   inputEl.focus();
 }
@@ -2560,6 +2603,8 @@ function _icClose() {
   _contMode  = null;
   _contBase  = '';
   _contAfter = '';
+  _atMode    = false;
+  _atStart   = -1;
   inputEl.focus();
 }
 
@@ -2573,6 +2618,18 @@ function _icOpen(base, after) {
   _icRender('');
   icEl.classList.add('open');
   icFilterEl.value = '';
+  icFilterEl.focus();
+}
+
+// @ mode: open chooser inline at the @ symbol (no continuation state).
+function _icOpenAt(atStart, filterText) {
+  _atMode  = true;
+  _atStart = atStart;
+  inputEl.dataset.cont = 'awaiting_item';  // reuse amber border
+  _clearTimers();
+  _icRender(filterText);
+  icFilterEl.value = filterText;
+  icEl.classList.add('open');
   icFilterEl.focus();
 }
 
