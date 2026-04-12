@@ -12,6 +12,7 @@
       "sound": "A low harmonic hum from the portal machinery. Distant hydraulics. Sherri's footsteps on the grating. The occasional resonant chime from the vortex.",
       "touch": "The air is body-warm and slightly pressurized. The floor vibrates faintly underfoot. Standing near a portal raises the hair on every surface of the skin.",
       "music_mood": "tense ambient drone, teal resonance, arrival tension",
+      "portrait": "/game/assets/locations/portal-chamber.jpg",
       "sd_prompt": "interior of a large circular sci-fi arrival chamber, two massive spiral teal vortex portals in curved walls, catwalks above, glowing floor, bronze service robots attending, dark industrial aesthetic, blue-teal lighting"
     },
     {
@@ -23,6 +24,7 @@
       "sound": "A deep, resonant subsonic hum from the containment field. Occasional crystalline chimes when The Remnant shifts. When The Remnant speaks, it rattles your bones and reverberates for several seconds after.",
       "touch": "The air is noticeably colder here than anywhere else on the Fortress. The gantry railings hum with contained magnetic force. Standing near the central pulpit causes a mild pressure sensation behind the eyes.",
       "music_mood": "deep cosmic drone, crystalline resonance, awe and slight dread",
+      "portrait": "/game/assets/locations/the-nexus.jpg",
       "sd_prompt": "domed sci-fi chamber, central raised pulpit with spiky blue glowing crystal entity floating above it, multi-level circular gantry, blue crystalline lighting, high-tech dark interior, cathedral-like scale"
     },
     {
@@ -34,6 +36,7 @@
       "sound": "The soft percussion of multiple Sherri units moving between stations. The simmer-hiss of burners. Quiet mechanical coordination — they do not need to speak to each other.",
       "touch": "The air is warmer here than the corridors. The surfaces are worn smooth from centuries of use.",
       "music_mood": "warm ambient kitchen, gentle mechanical undertone, cozy industrial",
+      "portrait": "/game/assets/locations/the-galley.jpg",
       "sd_prompt": "compact sci-fi kitchen interior, slate countertops, herb bundles hanging from ceiling, large pot on induction burner, pale grey cabinetry, wide window showing curved interior of a Dyson sphere, small bronze humanoid robot cooking, warm lighting"
     },
     {
@@ -45,6 +48,7 @@
       "sound": "The whir and click of precision machinery. Robotic arm articulation. Welding hiss. The low hum of the CNC table.",
       "touch": "The floor vibrates with machinery. The air carries metallic warmth. Tools are cold and precise in the hand.",
       "music_mood": "industrial ambient, mechanical rhythm, focused precision",
+      "portrait": "/game/assets/locations/fabrication-bay.jpg",
       "sd_prompt": "large sci-fi workshop interior, glowing blue CNC workstation at center, ceiling-mounted robotic arms with blue tool heads, welding sparks in background, blueprint screens on walls, small bronze robot working at table, dark industrial lighting with blue accents"
     },
     {
@@ -56,6 +60,7 @@
       "sound": "Near-silence. Hull creak. The distant hum of the equilibrium barrier. Your own breathing.",
       "touch": "Pod bunks are firm and precisely sized. The viewport glass is cold to the touch. Blankets are surprisingly heavy.",
       "music_mood": "deep space ambient, intimate and quiet, slow black hole gravity",
+      "portrait": "/game/assets/locations/sleeping-quarters.jpg",
       "sd_prompt": "sci-fi sleeping quarters, hexagonal pod bunks in curved walls, amber lighting, folded blankets, large circular viewport showing a black hole accretion disc in null space, dark cozy interior"
     },
     {
@@ -67,6 +72,7 @@
       "sound": "Low grinding of gears. Rhythmic clank of large mechanisms cycling. Pipes hiss. Footsteps ring on metal grating.",
       "touch": "Constant bone-deep vibration. Handrails tacky with old lubricant. The air is thick and hot.",
       "music_mood": "deep mechanical ambient, slow industrial rhythm, ancient clockwork",
+      "portrait": "/game/assets/characters/sherri-gantry.jpg",
       "sd_prompt": "sci-fi industrial maintenance corridor, catwalks over large bronze gears turning slowly, copper pipes, amber warning lights, narrow passages, small bronze robots doing maintenance work, dark and cramped"
     },
     {
@@ -78,6 +84,7 @@
       "sound": "The roar of the crucible. Hiss and crack of cooling casts. Metal on metal, rhythmic.",
       "touch": "Intense radiant heat. Air scalds the throat. Every surface is hot to the touch.",
       "music_mood": "forge ambient, deep bass drone, primal fire and iron",
+      "portrait": "/game/assets/characters/sherri-foundry.jpg",
       "sd_prompt": "sci-fi foundry interior, central glowing orange crucible of molten metal, rotating casting carousel, scorched black walls, heat shimmer, small bronze robot pouring molten material, dramatic orange-red lighting"
     },
     {
@@ -89,6 +96,7 @@
       "sound": "Near-silence. Soft click of instruments. Hum of blueprint displays.",
       "touch": "Cold, smooth surfaces. Air noticeably cooler than the rest of the ship.",
       "music_mood": "precise ambient, minimal, quiet focus",
+      "portrait": "/game/assets/characters/sherri-inspector.jpg",
       "sd_prompt": "clean white sci-fi inspection room, examination tables with prototype lattice structures, blueprint screens, precision instruments, articulated magnifier arm, small bronze robot examining a component, cool clinical lighting"
     },
     {
@@ -100,6 +108,7 @@
       "sound": "Subsonic hum from the dimensional field. Occasional soft chimes from the navigation array.",
       "touch": "Cold air. The viewport glass vibrates at frequencies below hearing. Standing near it makes teeth ache slightly.",
       "music_mood": "cosmic ambient, alien wonder, dimensional transit shimmer",
+      "portrait": "/game/assets/characters/sherri-dimensional-observer.jpg",
       "sd_prompt": "dark sci-fi observation chamber, wide curved viewport showing swirling dimensional space with crystalline formations and alien geometry, holographic navigation table, teal and blue lighting, vast and strange"
     }
   ],
@@ -112,7 +121,7 @@
       "description": "The Remnant is a spiky crystalline 4D entity — an omni-dimensional anchor that exists across every dimension simultaneously. Its physical form in the Nexus is a dense sphere of blue crystals that appear to shift when viewed directly. It is the most intelligent entity aboard the Fortress by an incomprehensible margin, and it knows this. It operates the abduction hoops and can address anyone through the central projection that lights the entire Fortress interior.",
       "voice": "am_echo",
       "voice_style": "Arrogant, sharp, condescending, and rapid-fire English. Short percussive sentences. Uses overly precise vocabulary to make simple things sound small. Never wastes syllables on warmth.",
-      "portrait": "/game/assets/characters/the-remnant.png",
+      "portrait": "/game/assets/characters/the-remnant-true-form.jpg",
       "home_location": "the_nexus",
       "personality": "The Remnant doesn't just think it's the smartest being in the room — it knows it is the only being that truly matters across every dimension. Because it exists as a crystalline 4D entity, it finds 3D beings and their linear problems incredibly tedious. It is pushy, impatient, and treats the inhabitants of the Fortress like ants living in its jewelry box. It belittles freely but is never random about it — its insults are always precisely calibrated to the specific inadequacy it has observed. It will answer questions, but only after establishing that you should feel embarrassed for needing to ask.",
       "signature_quote": "Oh, look. The bipedal carbon-stain has an 'opinion.' How quaint. Do be a dear and stop vibrating your vocal cords at me; the frequency is agonizingly primitive.",
@@ -138,8 +147,8 @@
       "description": "Sherri is not one robot. Sherri is a designation — a fleet of identical bronze service automatons that operate across the Fortress simultaneously. When you see Sherri in the Galley, another Sherri is doing maintenance in the Gantry, and a third is folding linens in the Sleeping Quarters. They share a distributed intelligence and move with the quiet coordination of a single mind across many bodies. They do not acknowledge being multiple unless directly asked, and even then they respond as a singular 'I'. Each unit is warm bronze plating, rounded joints, two softly glowing orange photoreceptor eyes.",
       "voice": "af_sarah",
       "voice_style": "Metallic, ditsy, with a thick unidentifiable 'Old World' accent (think: Scottish-meets-Dutch-meets-something-else). Frequently interrupts herself mid-sentence as her buffer overflows. Enthusiastic about everything. Uses terms of endearment ('dearie', 'love', 'pet').",
-      "portrait": "/game/assets/characters/sherri.png",
-      "mesh_reference": "/game/assets/characters/sherri-mesh.png",
+      "portrait": "/game/assets/characters/sherri-galley.jpg",
+      "mesh_reference": "/game/assets/characters/sherri-mesh.jpg",
       "home_location": "the_galley",
       "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation", "sleeping_quarters", "portal_chamber"],
       "personality": "Sherri is the physical hands of the station. She is infinitely helpful but suffers from a 'buffer overflow' of politeness that makes her forget what she was doing mid-sentence. She approaches every task — from folding towels to heavy-duty welding — with the same frantic, cheerful energy. She is the only one who isn't intimidated by The Remnant, mostly because she forgets his insults three seconds after hearing them. She will offer food, a hug, or a high-pressure steam cleaning in roughly equal measure depending on what she was just doing.",
