@@ -1056,12 +1056,16 @@ def _load_seed_world() -> None:
         if not npc_id or not name:
             continue
         ent = _ensure_entity(npc_id, name, "npc")
-        ent["permanence"]  = "WORLD"
-        ent["source"]      = "seed"
-        ent["description"] = npc.get("description", "")
-        ent["personality"] = npc.get("personality", "")
-        ent["portrait"]    = npc.get("portrait", "")
-        ent["voice"]       = npc.get("voice", "")
+        ent["permanence"]        = "WORLD"
+        ent["source"]            = "seed"
+        ent["description"]       = npc.get("description", "")
+        ent["personality"]       = npc.get("personality", "")
+        ent["portrait"]          = npc.get("portrait", "")
+        ent["voice"]             = npc.get("voice", "")
+        ent["role"]              = npc.get("role", "")
+        ent["voice_style"]       = npc.get("voice_style", "")
+        ent["signature_quote"]   = npc.get("signature_quote", "")
+        ent["nexus_dynamic"]     = npc.get("nexus_dynamic", "")
         if npc.get("home_location"):
             ent["home_location"] = npc["home_location"]
         # Push portrait URL to connected UI clients so names map immediately
@@ -1098,14 +1102,46 @@ def _load_seed_world() -> None:
         except Exception as exc:
             print(f"[diag/seed] lore write failed ({key}): {exc}")
 
-    # ── System prompt injection — seed NPCs ────────────────────────────────
-    # Append a lightweight roster block so the narrator knows these beings
-    # exist from the very first turn, without needing the world graph replay.
-    if npc_lines and _system_prompt:
+    # ── System prompt injection — seed NPC personalities ──────────────────
+    # Append a rich character bible block so the narrator voices each being
+    # correctly from the very first turn. Includes role, voice style,
+    # personality, signature quote, and the Nexus dynamic.
+    npc_profile_lines = []
+    for npc in seed.get("npcs", []):
+        name = npc.get("name", "")
+        if not name:
+            continue
+        role        = npc.get("role", "")
+        voice_style = npc.get("voice_style", "")
+        personality = npc.get("personality", "")
+        sig_quote   = npc.get("signature_quote", "")
+        nexus       = npc.get("nexus_dynamic", "")
+        block = f"\n--- {name}"
+        if role:
+            block += f"\n  Role: {role}"
+        if voice_style:
+            block += f"\n  Voice: {voice_style}"
+        if personality:
+            block += f"\n  Personality: {personality}"
+        if sig_quote:
+            block += f"\n  Example quote: \"{sig_quote}\""
+        if nexus:
+            block += f"\n  In the Nexus: {nexus}"
+        npc_profile_lines.append(block)
+
+    if npc_profile_lines and _system_prompt:
+        nexus_dynamic = (
+            "\n\nNexus Dynamic — when all three are present at the pulpit:\n"
+            "  1. The Remnant belittles the player's request and questions their right to exist.\n"
+            "  2. The Fortress softly interrupts to offer historical context and encouragement.\n"
+            "  3. Sherri clanks in, trips over a floor panel, and asks if anyone wants tea."
+        )
         roster_block = (
             "\n\n[PERMANENT CREW — These beings exist aboard the Fortress at all times. "
-            "You know them. They do not need to be introduced unless the player asks.]\n"
-            + "\n".join(npc_lines)
+            "Write their dialogue to match their voice and personality exactly as described below. "
+            "They do not need to be introduced unless the player asks.]\n"
+            + "\n".join(npc_profile_lines)
+            + nexus_dynamic
             + "\n[END PERMANENT CREW]"
         )
         # Only append once — check if block already present

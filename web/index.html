@@ -638,6 +638,14 @@ let _thinkTimer   = null;
 const _pendingPlayerTexts = new Set();
 
 // ── NPC voice pool — Kokoro voices for character dialogue ─────────────────
+// Permanent crew have pinned voices that match their personality.
+// All other speakers get a deterministic voice from the pool via name hash.
+const _PINNED_VOICES = {
+  'The Remnant':  'am_echo',    // sharp, crisp, rapid-fire — arrogant AI
+  'The Fortress': 'bf_alice',   // warm British female — maternal historian
+  'Sherri':       'af_sarah',   // warm American female — cheerful automaton
+};
+
 const _NPC_VOICES = [
   'af_sarah', 'am_adam', 'bf_emma',  'bm_george',
   'af_heart', 'am_echo', 'bf_alice', 'bm_lewis',
@@ -646,6 +654,8 @@ const _NPC_VOICES = [
 const _speakerVoiceCache = new Map();
 
 function _voiceForSpeaker(name) {
+  // Permanent crew always get their canonical voice
+  if (_PINNED_VOICES[name]) return _PINNED_VOICES[name];
   if (_speakerVoiceCache.has(name)) return _speakerVoiceCache.get(name);
   let h = 0;
   for (const c of (name || 'NPC')) h = (h * 31 + c.charCodeAt(0)) & 0xffff;

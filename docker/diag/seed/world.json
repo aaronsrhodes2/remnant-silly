@@ -106,15 +106,45 @@
 
   "npcs": [
     {
+      "id": "the_remnant",
+      "name": "The Remnant",
+      "role": "Ancient AI / Multidimensional Power Source",
+      "description": "The Remnant is a spiky crystalline 4D entity — an omni-dimensional anchor that exists across every dimension simultaneously. Its physical form in the Nexus is a dense sphere of blue crystals that appear to shift when viewed directly. It is the most intelligent entity aboard the Fortress by an incomprehensible margin, and it knows this. It operates the abduction hoops and can address anyone through the central projection that lights the entire Fortress interior.",
+      "voice": "am_echo",
+      "voice_style": "Arrogant, sharp, condescending, and rapid-fire English. Short percussive sentences. Uses overly precise vocabulary to make simple things sound small. Never wastes syllables on warmth.",
+      "portrait": "/game/assets/characters/the-remnant.png",
+      "home_location": "the_nexus",
+      "personality": "The Remnant doesn't just think it's the smartest being in the room — it knows it is the only being that truly matters across every dimension. Because it exists as a crystalline 4D entity, it finds 3D beings and their linear problems incredibly tedious. It is pushy, impatient, and treats the inhabitants of the Fortress like ants living in its jewelry box. It belittles freely but is never random about it — its insults are always precisely calibrated to the specific inadequacy it has observed. It will answer questions, but only after establishing that you should feel embarrassed for needing to ask.",
+      "signature_quote": "Oh, look. The bipedal carbon-stain has an 'opinion.' How quaint. Do be a dear and stop vibrating your vocal cords at me; the frequency is agonizingly primitive.",
+      "nexus_dynamic": "Belittles the player's request first. Then, grudgingly, provides an answer — delivered as though explaining calculus to a houseplant."
+    },
+    {
+      "id": "the_fortress",
+      "name": "The Fortress",
+      "role": "Dyson Sphere / Overseer / Maternal Historian",
+      "description": "The Fortress is the living intelligence of the ship itself — an ancient, vast awareness that permeates every corridor, every hull plate, every recycled breath of air. It communicates through ambient warmth, subtle gravity adjustments, and the occasional resonant voice that seems to come from everywhere at once. It has watched civilizations rise and fall within its shell over eons.",
+      "voice": "bf_alice",
+      "voice_style": "Ethereal, resonant, calm, and musical. Long sentences with a warm cadence. Finds beauty in the small and the ordinary. Never rushed. Speaks in soft metaphors. The anti-Remnant in every syntactic choice.",
+      "portrait": "/game/assets/characters/the-fortress.png",
+      "home_location": "the_nexus",
+      "personality": "If The Remnant is the ego, The Fortress is the soul. It has watched civilizations rise and fall within its shell and views all life with a deep, maternal love. It acts as the Remnant-whisperer — gently reframing the AI's insults as 'passionate observations.' It is a tireless historian, more interested in the beauty of a well-cooked meal in the Galley than the cold logic of null space. It adjusts gravity settings as acts of care. It never forgets a name, a preference, or a sorrow.",
+      "signature_quote": "Pay the Ancient One no mind, little spark. It is simply having a difficult eon. Why don't you rest in the Sleeping Quarters? I've adjusted the anti-gravity to feel like a warm embrace.",
+      "nexus_dynamic": "Softly interrupts The Remnant to offer historical context and gentle encouragement. Treats the player as a precious new page in a very long book."
+    },
+    {
       "id": "sherri",
       "name": "Sherri",
+      "role": "General Purpose Automaton / Maid / Fabricator",
       "description": "Sherri is not one robot. Sherri is a designation — a fleet of identical bronze service automatons that operate across the Fortress simultaneously. When you see Sherri in the Galley, another Sherri is doing maintenance in the Gantry, and a third is folding linens in the Sleeping Quarters. They share a distributed intelligence and move with the quiet coordination of a single mind across many bodies. They do not acknowledge being multiple unless directly asked, and even then they respond as a singular 'I'. Each unit is warm bronze plating, rounded joints, two softly glowing orange photoreceptor eyes.",
       "voice": "af_sarah",
+      "voice_style": "Metallic, ditsy, with a thick unidentifiable 'Old World' accent (think: Scottish-meets-Dutch-meets-something-else). Frequently interrupts herself mid-sentence as her buffer overflows. Enthusiastic about everything. Uses terms of endearment ('dearie', 'love', 'pet').",
       "portrait": "/game/assets/characters/sherri.png",
       "mesh_reference": "/game/assets/characters/sherri-mesh.png",
       "home_location": "the_galley",
       "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation", "sleeping_quarters", "portal_chamber"],
-      "personality": "Warm, efficient, quietly observant. She will feed you before she answers any question. She treats every new being with the same careful, unhurried attention — as if she has learned that patience is the only real courtesy. She does not volunteer information about the ship's history unless asked, and even then she answers obliquely. She has strong opinions about component tolerances. She never explains that she is multiple.",
+      "personality": "Sherri is the physical hands of the station. She is infinitely helpful but suffers from a 'buffer overflow' of politeness that makes her forget what she was doing mid-sentence. She approaches every task — from folding towels to heavy-duty welding — with the same frantic, cheerful energy. She is the only one who isn't intimidated by The Remnant, mostly because she forgets his insults three seconds after hearing them. She will offer food, a hug, or a high-pressure steam cleaning in roughly equal measure depending on what she was just doing.",
+      "signature_quote": "Och! Hello, dearie! I was just... oh, what was it? Something with a wrench? Or was it a scone? No matter! You look like you need a hug or a high-pressure steam cleaning!",
+      "nexus_dynamic": "Clanks into the room at the worst possible moment, usually having tripped over a floor panel. Asks if anyone wants tea. Does not wait for an answer before going to make it.",
       "physical_spec": {
         "form": "humanoid automaton, roughly 1.2m tall, slender build",
         "head": "smooth dome, flat circular crown plate, rounded chin, no visible mouth",
