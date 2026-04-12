@@ -1102,6 +1102,66 @@ def _load_seed_world() -> None:
         except Exception as exc:
             print(f"[diag/seed] lore write failed ({key}): {exc}")
 
+    # ── Quests ─────────────────────────────────────────────────────────────
+    # Build a system prompt block summarising active quests so the narrator
+    # knows the story arc, phase structure, paths, and moral weight from
+    # turn 1 — without needing the player to discover it first.
+    quest_blocks = []
+    for quest in seed.get("quests", []):
+        qid    = quest.get("id", "")
+        title  = quest.get("title", "")
+        status = quest.get("status", "available")
+        if not title or status == "disabled":
+            continue
+
+        lines = [f"\n[PILOT QUEST — {title.upper()}]"]
+        if quest.get("threat_summary"):
+            lines.append(f"Threat: {quest['threat_summary']}")
+        if quest.get("tone"):
+            lines.append(f"Tone: {quest['tone']}")
+        if quest.get("faction"):
+            lines.append(f"Faction: {quest['faction']}")
+
+        for phase in quest.get("phases", []):
+            ptitle = phase.get("title", "")
+            pgoal  = phase.get("goal", "")
+            psit   = phase.get("situation", "")
+            lines.append(f"\n  Phase: {ptitle}")
+            if pgoal:
+                lines.append(f"    Goal: {pgoal}")
+            if psit:
+                lines.append(f"    Situation: {psit}")
+            if phase.get("entry"):
+                lines.append(f"    Entry: {phase['entry']}")
+            if phase.get("twist"):
+                lines.append(f"    Twist: {phase['twist']}")
+            for path in phase.get("paths", []):
+                pname = path.get("name", path.get("id", ""))
+                pdesc = path.get("description", "")
+                kbeat = path.get("key_beat", "")
+                lines.append(f"    - {pname}: {pdesc}")
+                if kbeat:
+                    lines.append(f"      Key beat: {kbeat}")
+            mc = phase.get("moral_choice", {})
+            if mc:
+                lines.append("    Moral choice (Phase 3 climax):")
+                for choice_key, choice in mc.items():
+                    cname = choice.get("name", choice_key)
+                    cdesc = choice.get("description", "")
+                    cout  = choice.get("outcome", "")
+                    lines.append(f"      {cname}: {cdesc}")
+                    if cout:
+                        lines.append(f"        Outcome: {cout}")
+
+        rewards = quest.get("rewards", {})
+        if rewards:
+            lines.append("\n  Rewards:")
+            for rkey, rval in rewards.items():
+                lines.append(f"    - {rkey}: {rval}")
+
+        lines.append(f"[END PILOT QUEST — {title.upper()}]")
+        quest_blocks.append("\n".join(lines))
+
     # ── System prompt injection — seed NPC personalities ──────────────────
     # Append a rich character bible block so the narrator voices each being
     # correctly from the very first turn. Includes role, voice style,
@@ -1148,10 +1208,23 @@ def _load_seed_world() -> None:
         if "[PERMANENT CREW" not in _system_prompt:
             _system_prompt += roster_block
 
-    locs  = len(seed.get("locations", []))
-    npcs  = len(seed.get("npcs", []))
-    lores = len(seed.get("lore", []))
-    print(f"[diag/seed] loaded — {locs} locations, {npcs} NPCs, {lores} lore entries from {SEED_PATH}")
+    # ── System prompt injection — quests ──────────────────────────────────
+    # Append each active quest's full arc so the narrator can reference
+    # quest phases, paths, NPCs, moral choices and rewards from turn 1.
+    if quest_blocks and _system_prompt:
+        import re as _re  # noqa: PLC0415
+        for qblock in quest_blocks:
+            # Use the [PILOT QUEST — ...] opening tag as the idempotency key
+            tag_match = _re.search(r"\[PILOT QUEST[^\]]*\]", qblock)
+            tag_key = tag_match.group(0) if tag_match else qblock[:60]
+            if tag_key not in _system_prompt:
+                _system_prompt += "\n\n" + qblock.strip()
+
+    locs   = len(seed.get("locations", []))
+    npcs   = len(seed.get("npcs", []))
+    lores  = len(seed.get("lore", []))
+    quests = len(seed.get("quests", []))
+    print(f"[diag/seed] loaded — {locs} locations, {npcs} NPCs, {lores} lore entries, {quests} quests from {SEED_PATH}")
 
 
 def _init_chroma() -> None:
@@ -1697,6 +1770,75 @@ _GENERATE_IMAGE_RE = re.compile(
     r'\[GENERATE_IMAGE(?:\(([^)]*)\))?\s*:\s*"([^"]+)"\]', re.IGNORECASE
 )
 
+# ── Static scene images — permanent canonical assets ───────────────────────
+# Maps asset-id → web-relative URL served by nginx from web/assets/.
+# When the narrator generates a GENERATE_IMAGE description that matches one of
+# these assets, we broadcast the URL directly instead of calling flask-sd.
+# This is the same keyword-bypass pattern used for music and SFX.
+_STATIC_SCENE_IMAGES: dict[str, str] = {
+    # Locations
+    "portal-chamber":    "/game/assets/locations/portal-chamber.jpg",
+    "the-nexus":         "/game/assets/locations/the-nexus.jpg",
+    "the-galley":        "/game/assets/locations/the-galley.jpg",
+    "fabrication-bay":   "/game/assets/locations/fabrication-bay.jpg",
+    "sleeping-quarters": "/game/assets/locations/sleeping-quarters.jpg",
+    "fortress-exterior": "/game/assets/locations/fortress-exterior-aft.jpg",
+    "port-interior":     "/game/assets/locations/port-interior.jpg",
+    "portal-closeup":    "/game/assets/locations/portal-closeup.jpg",
+    # Characters
+    "the-remnant":       "/game/assets/characters/the-remnant-true-form.jpg",
+    "sherri-galley":     "/game/assets/characters/sherri-galley.jpg",
+    "sherri-gantry":     "/game/assets/characters/sherri-gantry.jpg",
+    "sherri-foundry":    "/game/assets/characters/sherri-foundry.jpg",
+    "sherri-inspector":  "/game/assets/characters/sherri-inspector.jpg",
+}
+
+# Keyword table: (asset-id, [keyword-substrings-to-match-in-description-lower])
+_SCENE_IMAGE_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("portal-chamber",    ["portal chamber", "null-space port", "null space port",
+                           "aft portal", "chiral portal", "portal room"]),
+    ("the-nexus",         ["the nexus", "central nexus", "command nexus",
+                           "nexus pulpit", "at the pulpit", "standing at the nexus"]),
+    ("the-galley",        ["the galley", "in the galley", "galley interior",
+                           "kitchen area", "sherri.*galley", "galley.*sherri",
+                           "sherri.*tea", "sherri.*scone", "sherri.*meal"]),
+    ("fabrication-bay",   ["fabrication bay", "fabrication rig", "fab bay",
+                           "sherri.*fabricat", "fabricat.*sherri",
+                           "lathe", "fabrication bench"]),
+    ("sleeping-quarters", ["sleeping quarters", "bunk room", "dormitory",
+                           "sleeping area", "your bunk", "the bunk"]),
+    ("fortress-exterior", ["outer hull", "exterior catwalk", "gantry walk",
+                           "fortress exterior", "null space vista",
+                           "outside the fortress", "starfield.*hull",
+                           "hull.*starfield", "aft exterior"]),
+    ("port-interior",     ["port interior", "interior port", "docking bay",
+                           "dock interior"]),
+    ("portal-closeup",    ["portal surface", "hoop up close", "portal detail",
+                           "dimensional gateway", "portal close"]),
+    ("the-remnant",       ["the remnant.*portrait", "remnant.*close.?up",
+                           "remnant.*face", "ancient ai.*form",
+                           "remnant.*true form"]),
+    ("sherri-galley",     ["sherri.*standing in galley", "sherri.*at the stove",
+                           "sherri.*full view", "sherri.*portrait"]),
+    ("sherri-gantry",     ["sherri.*gantry", "sherri.*catwalk", "sherri.*outer hull"]),
+    ("sherri-foundry",    ["sherri.*foundry", "sherri.*smelt", "sherri.*weld",
+                           "sherri.*forge"]),
+    ("sherri-inspector",  ["sherri.*inspect", "sherri.*scanning", "sherri.*examining",
+                           "sherri.*readout", "sherri.*calibrat"]),
+]
+
+
+def _match_static_scene(description: str) -> str | None:
+    """Return a static web URL for known permanent assets, or None to use SD."""
+    lc = description.lower()
+    for asset_id, keywords in _SCENE_IMAGE_KEYWORDS:
+        for kw in keywords:
+            if re.search(kw, lc):
+                url = _STATIC_SCENE_IMAGES.get(asset_id)
+                if url:
+                    return url
+    return None
+
 
 def _enqueue_image_generation(narrator_text: str) -> None:
     threading.Thread(
@@ -1721,6 +1863,19 @@ def _do_image_generation(narrator_text: str) -> None:
         if any(bad in lc for bad in _SD_BLOCKLIST):
             print(f"[diag] img-gen blocked: content policy match")
             continue
+
+        # ── Static asset shortcut ─────────────────────────────────────────
+        # For known permanent locations and characters, serve the pre-generated
+        # canonical image directly as a URL — no SD generation needed.
+        static_url = _match_static_scene(description)
+        if static_url:
+            print(f"[diag] img-gen static: {static_url}")
+            _latest_scene_image = {"image": static_url, "kind": kind,
+                                   "description": description, "source": "static"}
+            _sse_broadcast("scene_image", {"image": static_url, "kind": kind,
+                                           "description": description, "source": "static"})
+            continue
+
         _sse_broadcast("activity", {"text": f"⏳ rendering {kind}…"})
         neg = _DEFAULT_NEGATIVE_PROMPT + _NO_TEXT_SUFFIX
         if any(kw in lc for kw in _NUDITY_KEYWORDS):

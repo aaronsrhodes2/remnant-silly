@@ -165,6 +165,19 @@
         "multiplicity": "many identical units — always treat as singular 'she' in narration; occasionally note a second Sherri visible in background"
       },
       "sd_prompt": "Sherri, small friendly humanoid service robot, warm burnished bronze plating with wood-grain texture, large circular glowing orange photoreceptor eyes, smooth dome head with flat crown plate, segmented limbs with spherical joint connectors, small utility pack on upper back, dark brown joint seams, often multiple identical units visible"
+    },
+    {
+      "id": "artisan_kaelo",
+      "name": "Artisan Kaelo",
+      "role": "Terravore Survivor / Pilot Quest Contact",
+      "description": "A craftsperson and survivor from Terravore, living in a floating tree-city above the bio-mechanical jungle canopy. Precise, careful, and unsentimental. He has a Chiral Anchor and will not give it away for nothing — his people are being hunted by a predatory star-ship.",
+      "voice": "bm_george",
+      "voice_style": "Measured, exact, and dry. He speaks the way someone does when they have learned that imprecision is fatal. Short declarative sentences. No pleasantries wasted. Occasional dry dark humour.",
+      "portrait": null,
+      "home_location": "terravore",
+      "personality": "Kaelo has survived Terravore by being precise about his agreements and ruthless about his priorities. He is not unkind, but he is not warm either. He has seen too many tree-cities fall. He wants a fair trade: silence the star-ship hunting his people, and the Anchor is yours. He will be a useful ally if he decides you are competent. He will be a polite wall if he does not.",
+      "signature_quote": "I have the Anchor. You need it. You have capabilities I lack. This is the entire conversation until we decide whether to help each other.",
+      "nexus_dynamic": "Not a Nexus character — encountered in Terravore during Phase 2 of the pilot quest. Has no patience for The Remnant's posturing if they ever meet."
     }
   ],
 
@@ -208,6 +221,30 @@
     {
       "key": "the_hoop",
       "text": "The abduction hoop appears as a luminous teal vortex — a spiral portal with blue crystal fragments of The Remnant's attention orbiting at the center. The color and texture vary by run. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not. Two hoops exist aboard the Fortress, housed in the Central Containment Bays at both ends of the oblong sphere."
+    },
+    {
+      "key": "vex_kahl",
+      "text": "The Vex-Kahl are a nomadic hive-mind culture from a dying pocket dimension. They do not think individually — every Vex-Kahl shares a distributed consciousness across the swarm, making them impossible to deceive through individual members and very difficult to negotiate with, since no single unit holds authority. They have mastered 'String-Slipping': a form of dimensional transit that threads a living body between the strings of spacetime, allowing them to phase through solid matter, bypass sensor grids, and enter enclosed spaces without opening a door. String-Slipping leaves a signature: cold spots in the air, a faint dissonant hum at a frequency just below standard sensor ranges, and strange obsidian-coloured components the Vex-Kahl deposit as dimensional anchors. Their technology is visually distinctive — jagged, dark, hive-organic — and hums with a dissonant energy that makes Sherri's photoreceptors flicker."
+    },
+    {
+      "key": "string_slipping",
+      "text": "String-Slipping is the Vex-Kahl's method of dimensional transit. Rather than opening a portal, a String-Slipper threads their body laterally through the strings of spacetime, emerging inside enclosed spaces without any visible entry point. The process leaves three detectable traces: localised cold spots (a temperature drop of 8-12 degrees at the insertion point), a frequency ghost (a jamming signal at a specific harmonic that disrupts standard sensors), and physical anchor components (obsidian-black, hive-organic devices that stabilise the insertion point for repeat access). Countering a frequency ghost requires either identifying the jamming harmonic and broadcasting a null-signal, or finding a being with perception beyond 3D space — The Remnant, notably, perceives the frequency effortlessly and finds it extremely irritating."
+    },
+    {
+      "key": "parasitic_siphon",
+      "text": "A Parasitic Siphon is Vex-Kahl technology designed to drain energy from an external source to fuel their jump-drives. The Vex-Kahl have anchored one to the outer hull of the Fortress near the aft viewports, targeting the anti-matter equilibrium barrier — the field that maintains field gravity and holds against null space's anti-pressure. Draining the barrier slowly collapses it; if the barrier fails, the Fortress's interior would be exposed to null space's anti-pressure. The siphon is anchored at a dimensional frequency that makes it invisible to the Fortress's standard sensors while the frequency ghost jams the detection arrays."
+    },
+    {
+      "key": "chiral_anchor",
+      "text": "A Chiral Anchor is a rare device that stabilises a specific harmonic of dimensional space, making it possible to 'lock' a String-Slip insertion point or sever a dimensional tether like a Parasitic Siphon without feedback damage. Chiral Anchors are found only in universes with high chiralspace density — Terravore is one. The Anchor must be attuned to the specific frequency of the siphon to work; using it without the correct frequency would be like trying to cut a thread you cannot see."
+    },
+    {
+      "key": "artisan_kaelo",
+      "text": "Artisan Kaelo is a survivor and craftsperson from Terravore — a universe of overgrown bio-mechanical jungles where the stars are being consumed by sentient nebulae called Star-Eaters. Kaelo lives in a floating tree-city suspended above the canopy. He possesses a Chiral Anchor, which he acquired at great cost. He is a careful, pragmatic man who has survived Terravore by being precise about his agreements. He will not give the Anchor freely — his people are being hunted by a predatory star-ship, and he needs help before he parts with anything of value. He speaks in the measured, exact way of someone who has learned that imprecision is fatal."
+    },
+    {
+      "key": "terravore_detail",
+      "text": "Terravore is the universe visible through the Fortress's fore null space port. It is a universe of overgrown bio-mechanical jungles — enormous organisms whose biology is fused with machinery at a cellular level. The canopy stretches to atmospheric extremes. The stars are not burning; they are being eaten. Sentient nebulae called Star-Eaters drift through the upper atmosphere and the void, consuming stellar matter in vast slow spirals. Floating tree-cities like Kaelo's cling to the upper canopy, above the predator range — usually. The bio-mechanical organism layer below is largely hostile to non-native life. The Chiral Anchor density is high in Terravore because the universe's chiralspace was warped during the first Star-Eater expansion event."
     }
   ],
 
@@ -386,6 +423,112 @@
       "description": "Rapid-fire mechanical clicking and high-pitched digital chirps as the station AI processes information.",
       "loop": false,
       "locations": ["dimensional_observation"]
+    }
+  ],
+
+  "quests": [
+    {
+      "id": "stabilizers-gambit",
+      "title": "The Stabilizer's Gambit",
+      "status": "available",
+      "faction": "Vex-Kahl",
+      "threat_summary": "The Vex-Kahl — a nomadic hive-mind culture from a dying pocket dimension — have anchored a Parasitic Siphon to the outer hull of the Fortress near the aft viewports. It is slowly draining the anti-matter equilibrium barrier to fuel their jump-drives. If the barrier fails, null space's anti-pressure will destroy the interior habitation zone.",
+      "tone": "The quest has three distinct emotional registers: Phase 1 is industrial mystery (something is wrong, Sherri is puzzled); Phase 2 is adventure in an alien biome (Terravore is wondrous and dangerous); Phase 3 is moral weight (the Vex-Kahl are not simply villains).",
+
+      "phases": [
+        {
+          "id": "phase_1",
+          "title": "The Ghost in the Fabrication Bay",
+          "goal": "Identify the frequency the Vex-Kahl are using to bypass the Fortress's sensors.",
+          "location": "fabrication_bay",
+          "situation": "The Fortress's internal sensors are being jammed by a 'frequency ghost.' Sherri keeps finding extra parts in the Fabrication Bay that she did not build — jagged, obsidian-like components that hum with a dissonant energy. She is deeply puzzled and slightly offended by the craftsmanship.",
+          "paths": [
+            {
+              "id": "technical",
+              "name": "The Technical Path",
+              "description": "Help Sherri recalibrate the fabrication rigs to reverse-engineer the obsidian components. She will be delighted to have a task, will forget what she is doing at least twice, and will eventually isolate the jamming frequency by accident while trying to identify what alloy the components are made of.",
+              "key_beat": "Sherri holds up the readout and says: 'Och! That's not a material signature — that's a frequency. What a rude thing to be!'"
+            },
+            {
+              "id": "diplomatic",
+              "name": "The Diplomatic Path",
+              "description": "Go to the Nexus and insult The Remnant until it gets so annoyed it 'accidentally' reveals the frequency just to prove how much smarter it is than you. The Remnant has perceived the frequency from the moment the siphon activated and finds it agonisingly obvious. It will only reveal it after being goaded past its tolerance for stupidity.",
+              "key_beat": "The Remnant: 'FINE. It is 7.4 terahertz, offset by a chiral half-phase. Even a fossilised ham sandwich could have detected it. Are you satisfied? Have you achieved something today? Wonderful. Leave.'"
+            },
+            {
+              "id": "exploratory",
+              "name": "The Exploratory Path",
+              "description": "Follow the cold spots — localised temperature drops caused by String-Slip insertion points — through the Sleeping Quarters and into the service corridors. The player physically traces the Vex-Kahl scouts' phase-shift paths to find where they are entering the ship and what they are placing.",
+              "key_beat": "The player finds a cluster of obsidian anchor components hidden behind a wall panel, still humming. The Fortress speaks quietly: 'They have been walking through my walls. I felt it. I did not know what it was.'"
+            }
+          ]
+        },
+        {
+          "id": "phase_2",
+          "title": "The Terravore Retrieval",
+          "goal": "Obtain a Chiral Anchor from the universe of Terravore to stabilise the hull for the siphon severance.",
+          "location": "terravore",
+          "entry": "Dive through the fore-end portal (the hoop in the fore Central Containment Bay). The Remnant will open it, complaining loudly about 'errand-running for carbon units.'",
+          "situation": "Terravore is a universe of overgrown bio-mechanical jungle where the stars are literally being eaten by sentient nebulae. The player arrives in the upper canopy zone and must find Artisan Kaelo's floating tree-city.",
+          "key_npc": "artisan_kaelo",
+          "npc_situation": "Kaelo has a Chiral Anchor but needs the player to help silence a predatory star-ship that is hunting his people. He will trade fairly and insist on precision in any agreement.",
+          "paths": [
+            {
+              "id": "combat",
+              "name": "Combat",
+              "description": "Engage the predatory star-ship in a high-stakes aerial chase through the upper canopy. The ship is fast, armoured, and has consumed at least one smaller tree-city already. Victory requires using the bio-mechanical canopy as cover.",
+              "key_beat": "The star-ship falls into the canopy and is immediately consumed by the bio-mechanical organism layer below. Kaelo watches without expression. 'Clean enough.'"
+            },
+            {
+              "id": "stealth",
+              "name": "Stealth",
+              "description": "Sneak into the 'stomach' of one of the predatory nebulae while it is dormant to steal or redirect the energy the star-ship relies on. The interior of a dormant Star-Eater is vast, biological, and deeply strange.",
+              "key_beat": "The star-ship, deprived of its power source, drifts into the Star-Eater's feeding range and is consumed. Kaelo: 'I did not ask how. That was wise of you.'"
+            },
+            {
+              "id": "trade",
+              "name": "Trade",
+              "description": "Offer Kaelo a piece of ancient Fortress technology in exchange for safe passage and the star-ship's withdrawal. The Fortress will give it gladly, with a long, warm blessing about the meaning of generosity across dimensions. The Remnant will have strong feelings about this.",
+              "key_beat": "The Fortress: 'Take it with our love, Artisan. May it serve your people well.' The Remnant (extremely loudly, through the projection): 'THAT IS A TERTIARY STABILISATION COIL FROM THE 4TH ERA. YOU ARE GIVING AWAY THE GOOD CHINA.'"
+            }
+          ]
+        },
+        {
+          "id": "phase_3",
+          "title": "The Nexus Stand-Off",
+          "goal": "Use the Chiral Anchor and the identified frequency to sever the Parasitic Siphon.",
+          "location": "the_nexus",
+          "situation": "The player stands at the Nexus pulpit, Anchor in hand, with The Remnant above them and The Fortress humming around them. The severance requires coordinating The Remnant's dimensional perception with the Anchor's physical stabilisation.",
+          "twist": "Before the severance can complete, the Vex-Kahl send a Thought-Specter — a hive-mind projection — to the pulpit to bargain. It reveals that the Vex-Kahl are siphoning the Fortress not out of aggression but desperation: their pocket dimension is collapsing, and the barrier energy is the only thing that could slow the collapse enough to evacuate their population.",
+          "moral_choice": {
+            "fortress_way": {
+              "name": "The Fortress's Way",
+              "description": "Find a way to share a measured amount of barrier energy with the Vex-Kahl without collapsing the Fortress's own field. Requires negotiation with the Thought-Specter and precise calibration. The Fortress will attempt this joyfully. The Remnant will say it is mathematically impossible and then immediately calculate exactly how to do it.",
+              "requirement": "High Historian or Diplomacy stat. Patience.",
+              "outcome": "The siphon is severed cleanly. A controlled energy transfer is established on Fortress terms. The Vex-Kahl begin a slow evacuation. The Fortress gains a dormant Vex-Kahl thread in its memory."
+            },
+            "remnant_way": {
+              "name": "The Remnant's Way",
+              "description": "Use the Anchor to snap the siphon like a rubber band, sending a feedback pulse that destroys the Vex-Kahl fleet. Fast, decisive, and complete. The Remnant considers this the only correct answer.",
+              "requirement": "Willingness to end the Vex-Kahl fleet.",
+              "outcome": "The siphon is severed violently. The Vex-Kahl fleet is gone. The Fortress is safe but hums quietly for a long time. The Remnant is briefly satisfied, which is unnerving."
+            },
+            "neutral_path": {
+              "name": "The Neutral Path",
+              "description": "Simply sever the connection and let the Vex-Kahl drift back into the folds of the chiral foams of Finnon and Galorm. No energy shared, no fleet destroyed — just the door closed. The Vex-Kahl are expelled from the Fortress's dimensional neighbourhood and must find another way.",
+              "requirement": "None. The simplest path.",
+              "outcome": "The barrier stabilises. The Vex-Kahl disperse into the chiral foams, which may contain or absorb them. The Fortress accepts this without comment. The Remnant calls it 'cowardly common sense,' which is the closest it comes to a compliment."
+            }
+          }
+        }
+      ],
+
+      "rewards": {
+        "location_unlock": "Access to the Gantry exterior walks — the catwalks that run along the outer hull between the aft null space port and the main body.",
+        "sherri_upgrade": "Sherri learns Phase-Welding — the ability to seal 4D cracks in the hull using a technique she reverse-engineered from the Vex-Kahl obsidian components. She is very proud of this and will mention it constantly.",
+        "station_mood": "The Fortress hums with a brighter, warmer light throughout the habitation zone. Small gestures of gratitude appear: a warm meal left in the Galley, blankets adjusted in the Sleeping Quarters.",
+        "remnant_acknowledgement": "The Remnant begrudgingly admits the player is 'slightly less useless than a wet sponge.' This is, by The Remnant's standards, an extraordinary compliment. The Fortress will later tell the player, quietly, that this is the nicest thing The Remnant has said about anyone in approximately six hundred years."
+      }
     }
   ]
 }
