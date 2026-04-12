@@ -37,6 +37,14 @@ import queue as _queue
 import re
 import subprocess
 import threading
+
+# On Windows, suppress the brief console flash that appears when spawning child
+# processes from a non-console (or background-thread) context.
+_SUBPROCESS_NO_WINDOW = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW}
+    if hasattr(subprocess, "CREATE_NO_WINDOW")
+    else {}
+)
 import time
 import traceback
 import urllib.error
@@ -4024,7 +4032,8 @@ def _build_signature() -> dict:
         try:
             git_commit = subprocess.check_output(
                 ["git", "rev-parse", "--short", "HEAD"],
-                cwd=str(_REPO_ROOT), stderr=subprocess.DEVNULL, timeout=2
+                cwd=str(_REPO_ROOT), stderr=subprocess.DEVNULL, timeout=2,
+                **_SUBPROCESS_NO_WINDOW,
             ).decode().strip()
         except Exception:
             pass
@@ -4131,6 +4140,7 @@ def _sample_system_metrics() -> dict:
              "--query-gpu=name,utilization.gpu,memory.used,memory.total",
              "--format=csv,noheader,nounits"],
             text=True, timeout=2,
+            **_SUBPROCESS_NO_WINDOW,
         )
         parts = [p.strip() for p in raw.strip().split(",")]
         if len(parts) >= 4:
