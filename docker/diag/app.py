@@ -1706,6 +1706,18 @@ def _clean_narrator_prose(text: str) -> str:
     (* ** _ # >) are stripped because the TTS engine reads them aloud.
     """
     cleaned = _STRIP_DISPLAY_TAGS_RE.sub("", text)
+    # Strip sense-label prose prefixes ("Sight: ...", "Smell: ...", etc.).
+    # The narrator sometimes writes these as visible paragraph headers instead of
+    # using the machine tags.  They must never appear in the display feed.
+    cleaned = re.sub(
+        r'(?im)^[ \t]*(?:Sight|Smell|Sound|Touch|Taste|Environment)\s*:\s*',
+        '', cleaned
+    )
+    # Also strip inline occurrences mid-sentence ("...cool air. Smell: The floor…")
+    cleaned = re.sub(
+        r'\b(?:Sight|Smell|Sound|Touch|Taste|Environment)\s*:\s*',
+        ' ', cleaned
+    )
     # Strip markdown bold/italic markers — TTS reads them aloud as "asterisk"
     cleaned = re.sub(r'\*{1,3}([^*\n]*?)\*{1,3}', r'\1', cleaned)
     cleaned = re.sub(r'_{1,2}([^_\n]*?)_{1,2}', r'\1', cleaned)
@@ -1838,7 +1850,11 @@ _CLOTHING_KEYWORDS = frozenset({
 })
 _SHERRI_DONE_RE = re.compile(
     r'(this should suffice|fabricat\w+ complete|all done|finished|here you go|dressed\w*|'
-    r'suit is ready|ready to wear|suit up|outfitted|equipped)',
+    r'suit is ready|ready to wear|suit up|outfitted|equipped|'
+    # Broader matches for llama3.1:8b phrasing
+    r'looks great on you|fits you well|your new (?:clothes|outfit|suit|attire|gear)|'
+    r'now wearing|you are now dressed|slipping into|put on your|wearing your|'
+    r'new outfit|new clothes|tailored|stitched|assembled your|crafted your)',
     re.IGNORECASE,
 )
 
@@ -1861,8 +1877,17 @@ def _check_dressed_transition(narrator_text: str) -> None:
     )
     # Also catch prose descriptions of Sherri completing the outfit
     has_done_phrase = bool(_SHERRI_DONE_RE.search(narrator_text))
+    # Fallback: if appearance is already captured and narrator describes
+    # the player wearing something — broad enough for any model
+    has_appearance_worn = (
+        bool(_player_appearance_desc)
+        and bool(re.search(
+            r'\b(?:dressed|wearing|outfit|clothes|suit|attire|garment|fabric)\b',
+            narrator_text, re.IGNORECASE,
+        ))
+    )
 
-    if not (has_clothing_item or has_done_phrase):
+    if not (has_clothing_item or has_done_phrase or has_appearance_worn):
         return
 
     _player_dressed = True
@@ -1904,7 +1929,8 @@ def _generate_player_avatar(appearance_prose: str) -> None:
     if not sd_prompt:
         sd_prompt = "player character, sci-fi suit, cinematic portrait, dramatic lighting, highly detailed"
 
-    # Call flask-sd
+    # Call flask-sd — prepend style prefix for consistency with world assets
+    sd_prompt = _SD_STYLE_PREFIX + sd_prompt
     gen_payload = json.dumps({"prompt": sd_prompt, "width": 512, "height": 512}).encode("utf-8")
     img_code, img_resp, _ = _http("POST", f"{FLASK_SD_URL}/api/generate", body=gen_payload, timeout=120.0)
     if img_code == 200:
@@ -2039,10 +2065,21 @@ _DEFAULT_NEGATIVE_PROMPT = (
     "(captions:1.5), (subtitles:1.5), (signature:1.4), (watermark:1.4), (logo:1.4), "
     "(labels:1.5), (numbers:1.4), (symbols:1.3), (runes:1.3), (glyphs:1.3), "
     "handwriting, scribbles, gibberish, UI, frame, blurry, low quality, distorted, deformed, "
+    # Keep all generated images in the stylized world-asset aesthetic — no real-world photography
+    "photorealistic, photograph, real photo, stock photo, DSLR, camera shot, "
+    "modern earth, contemporary setting, mundane, generic background, "
     "(genitals:1.8), (penis:1.8), (vagina:1.8), (explicit nudity:1.8), "
     "(exposed groin:1.7), (sexual:1.6)"
 )
 _NO_TEXT_SUFFIX = ", (no text:1.4), (no writing:1.4), (no letters:1.4)"
+
+# Global style prefix prepended to all dynamic SD prompts.
+# Keeps generated images visually consistent with permanent world assets:
+# dark painterly sci-fi concept art, not photorealistic photography.
+_SD_STYLE_PREFIX = (
+    "dark sci-fi concept art, painterly illustration, cinematic composition, "
+    "dramatic lighting, highly detailed, "
+)
 _NUDE_COVERAGE_SUFFIX = (
     ", tastefully posed, back turned, camera angle covers intimate areas, "
     "crossed legs, hands covering, foreground object, shy composition, artful framing, modest"
@@ -2150,6 +2187,20 @@ def _do_image_generation(narrator_text: str) -> None:
             print(f"[diag] img-gen blocked: content policy match")
             continue
 
+        # ── Object permanence: inject player appearance when player is in frame ──
+        # If this image features the player character and we know what they look like,
+        # append a concise appearance clause so the SD model maintains visual continuity
+        # across turns (same face, hair, clothing colour, etc.).
+        _img_player_name = (_world["entities"].get("__player__") or {}).get("canonical_name", "")
+        if _player_appearance_desc and _img_player_name:
+            player_lc = _img_player_name.lower()
+            if player_lc in lc or "player character" in lc or "protagonist" in lc:
+                # First sentence of appearance desc — enough for visual continuity
+                first_sentence = _player_appearance_desc.split('.')[0].strip()
+                if first_sentence:
+                    description = description.rstrip('. ') + ', ' + first_sentence[:120]
+                    lc = description.lower()
+
         # ── Static asset shortcut ─────────────────────────────────────────
         # For known permanent locations and characters, serve the pre-generated
         # canonical image directly as a URL — no SD generation needed.
@@ -2167,7 +2218,10 @@ def _do_image_generation(narrator_text: str) -> None:
         if any(kw in lc for kw in _NUDITY_KEYWORDS):
             neg += _NUDE_COVERAGE_SUFFIX
         try:
-            payload = json.dumps({"prompt": description, "negative_prompt": neg}).encode("utf-8")
+            # Prepend global style prefix so all generated images stay consistent
+            # with the hand-crafted world assets (painterly, not photorealistic).
+            styled_description = _SD_STYLE_PREFIX + description
+            payload = json.dumps({"prompt": styled_description, "negative_prompt": neg}).encode("utf-8")
             req = urllib.request.Request(
                 f"{FLASK_SD_URL}/api/generate",
                 data=payload,
@@ -3342,8 +3396,29 @@ class Handler(BaseHTTPRequestHandler):
                                          daemon=True, name="narrator").start()
                     return
 
-                global _last_player_ts
+                global _last_player_ts, _player_appearance_desc
                 _last_player_ts = time.time()  # reset idle lore timer
+
+                # Early avatar from player self-description.
+                # If the player sends a message that looks like an appearance description
+                # (≥3 appearance markers) and we don't yet have one, capture it and fire
+                # avatar generation immediately — don't wait for the dressing scene.
+                _early_player_name = (_world["entities"].get("__player__") or {}).get("canonical_name", "")
+                if not _player_appearance_desc and _early_player_name:
+                    _lc_input = text.lower()
+                    _appearance_markers = [
+                        "i am ", "i'm ", "hair", "eyes", "skin",
+                        "tall", "short", "wearing", "feature",
+                    ]
+                    if sum(1 for m in _appearance_markers if m in _lc_input) >= 3:
+                        _player_appearance_desc = text[:400]
+                        threading.Thread(
+                            target=_generate_player_avatar,
+                            args=(_player_appearance_desc,),
+                            daemon=True,
+                            name="player-avatar-early",
+                        ).start()
+
                 wrapped = _wrap_player_text(intent, text)
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 turn = {

@@ -84,6 +84,10 @@ docker/sillytavern/content/thumbnails/
 docker/sillytavern/content/vectors/
 docker/sillytavern/content/User\ Avatars/
 
+# Story test results — generated output, gitignored except the keeper file
+tests/story-results/*
+!tests/story-results/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db
