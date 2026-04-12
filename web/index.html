@@ -1521,11 +1521,6 @@ function connect() {
   // response.  When the "turn" event arrives, character dialogue is appended to
   // the same sequential chain — narrator prose plays first, dialogue after.
   let _chunkTurnId = null;         // turn_id of the turn currently being streamed
-  // ── TTS governor state (replaces _chunkTTSPromise / async IIFE pattern) ──
-  const _ttsQ = [];                // pending items: {text,voice,ttsGen,fadeEl} | {_cb}
-  let _ttsActive   = false;        // true while _ttsNext loop owns the queue
-  const _ttsSeenTexts = new Set(); // dedup within a turn boundary
-  let _ttsLoopGen  = 0;            // incremented on clear; stale loops self-terminate
 
   es.addEventListener('chunk', e => {
     try {
@@ -1886,6 +1881,12 @@ let _ttsSource = null;
 let _ttsAbort  = null;
 let _ttsGenId  = 0;   // incremented each turn; old speech loops stop when stale
 
+// ── TTS governor state (shared by connect() SSE handlers + top-level functions) ──
+const _ttsQ = [];                // pending items: {text,voice,ttsGen,fadeEl,speakerName} | {_cb}
+let _ttsActive = false;          // true while _ttsNext loop owns the queue
+const _ttsSeenTexts = new Set(); // dedup within a turn boundary
+let _ttsLoopGen = 0;             // incremented on clear; stale loops self-terminate
+
 // ── TTS governor functions ──────────────────────────────────────────
 // _ttsEnqueue  — add one item to the queue; kick off loop if idle
 // _ttsNext     — drain loop (one active instance at a time)
@@ -1943,6 +1944,8 @@ function _ttsClearTurn() {
   if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
   _ttsActive = false;
   _ttsLoopGen++; // invalidate any running loop
+  // If a speech bubble was visible when audio was cleared, hide it immediately
+  _hideCharacterBubble(/*restoreScene=*/ true);
 }
 
 function _speakTTS(text, voice = 'am_michael') {
