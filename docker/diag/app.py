@@ -2364,7 +2364,11 @@ _PAIRED_DISPLAY_TAGS = ('B', 'I', 'BI')
 
 
 def _has_unbalanced_display_tags(text: str) -> bool:
-    """True if any [B]/[I]/[BI] open tag has no matching close — text cut mid-format."""
+    """True if any [B]/[I]/[BI] open tag has no matching close — text cut mid-format.
+
+    Catches: 'The corridor is [B]ancient and narrow.' (ends with punct, but [/B] missing).
+    Does NOT catch arbitrary tag types cut in half — use _has_unclosed_bracket() for that.
+    """
     for tag in _PAIRED_DISPLAY_TAGS:
         opens  = len(re.findall(rf'\[{tag}(?:=[^\]]*)?]', text, re.IGNORECASE))
         closes = len(re.findall(rf'\[/{tag}]', text, re.IGNORECASE))
@@ -2373,24 +2377,48 @@ def _has_unbalanced_display_tags(text: str) -> bool:
     return False
 
 
+def _has_unclosed_bracket(text: str) -> bool:
+    """True if there are more [ than ] in the text — any tag was cut before its closing ].
+
+    Catches cuts inside any tag type: [CHARACTER(Name): "text cut here,
+    [GENERATE_IMAGE(description cut, [SIGHT: "cut, [/B cut mid-close-tag, etc.
+    Since all [ in narrator output are tag delimiters (the model does not use raw
+    square brackets in prose), more [ than ] reliably signals a truncated tag.
+    """
+    return text.count('[') > text.count(']')
+
+
 def _is_truncated(text: str) -> bool:
     """True if text appears cut off.
 
-    Two complementary checks — each catches what the other misses:
-    1. Sentence-ending check: last character is not punctuation / closing bracket.
-       Catches mid-word and mid-sentence cuts.
-    2. Tag-balance check: an open display-format tag ([B]/[I]/[BI]) has no
-       matching close tag.  Catches cuts that end with valid punctuation but
-       inside a format span — which the sentence check silently passes.
+    Three complementary checks — each catches what the others miss:
 
-    Neither check catches 'structurally complete but semantically short' responses
-    (e.g. only two sentences when ten were expected) — that requires a minimum
-    word-count heuristic and is handled separately if needed.
+    1. Sentence-ending check: last character is not sentence-ending punctuation.
+       Catches: mid-word cuts, mid-sentence cuts.
+
+    2. Paired display-tag balance: a [B]/[I]/[BI] open tag has no matching close.
+       Catches: cuts inside a format span that end with valid punctuation
+       e.g. '[B]ancient corridor.' — ends with '.', tag never closed.
+
+    3. Unclosed bracket: more [ than ] in the entire response.
+       Catches: any tag type cut before its closing ']' —
+       [CHARACTER(Name): "Hello  — cut mid-dialogue
+       [GENERATE_IMAGE(vast room — cut mid-image-description
+       [SIGHT: "copper walls    — cut mid-sense-tag
+       [/B                      — close-tag cut in half
+
+    The one undetectable case: structurally complete text that is semantically
+    too short (model stopped after two sentences when ten were expected). That
+    requires a minimum word-count heuristic and is a separate concern.
     """
     tail = text.rstrip()
     if not tail or len(tail) <= 100:
         return False
-    return tail[-1] not in _SENTENCE_ENDINGS or _has_unbalanced_display_tags(tail)
+    return (
+        tail[-1] not in _SENTENCE_ENDINGS
+        or _has_unbalanced_display_tags(tail)
+        or _has_unclosed_bracket(tail)
+    )
 
 
 def _build_messages() -> list[dict]:
