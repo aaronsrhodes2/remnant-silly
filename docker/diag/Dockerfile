@@ -18,32 +18,31 @@ FROM python:3.11-alpine
 # Build deps for chromadb's native extensions (hnswlib needs a C++ compiler).
 RUN apk add --no-cache gcc g++ musl-dev
 
-# Bake the git commit hash so /signature can report exactly which build
-# this container came from. Passed via --build-arg GIT_COMMIT=$(git rev-parse --short HEAD).
-ARG GIT_COMMIT=unknown
-ENV GIT_COMMIT_ENV=${GIT_COMMIT}
-
 WORKDIR /app
 
 # Install chromadb (semantic memory / RAG retrieval for narrator context).
-# Installed before COPY so Docker layer cache survives app.py edits.
+# IMPORTANT: This step must come BEFORE ARG GIT_COMMIT so Docker layer cache
+# survives both app.py edits AND build-arg changes. ARG invalidates all layers
+# below it, so any pip install below an ARG can never be cached.
 RUN pip install --no-cache-dir chromadb
+
+# Bake the git commit hash so /signature can report exactly which build
+# this container came from. Passed via --build-arg GIT_COMMIT=$(git rev-parse --short HEAD).
+# Placed AFTER pip install so the expensive install layer is always cached.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT_ENV=${GIT_COMMIT}
 
 # Copy all content + logic files that /signature fingerprints.
 # The main app.py is placed at its "correct" repo-relative path
-# (/app/docker/diag/app.py) so that Path(__file__).parent.parent.parent
-# resolves to /app — the same math that works natively in the repo.
+# (/app/docker/diag/app.py) so that Path(__file__).parent resolves to
+# /app/docker/diag/ — the same math that works natively in the repo.
+# The seed/ directory (system prompt, first_mes, world.json) is co-located
+# at /app/docker/diag/seed/ and is the authoritative source for the narrator.
 # Mirrors _SIGNATURE_FILES in app.py exactly.
 COPY docker/diag/app.py                                              /app/docker/diag/app.py
 COPY docker/diag/seed/                                               /app/docker/diag/seed/
 COPY web/index.html                                                  /app/web/index.html
 COPY extension/index.js                                              /app/extension/index.js
-COPY docker/sillytavern/content/characters/fortress_system_prompt.txt /app/docker/sillytavern/content/characters/fortress_system_prompt.txt
-COPY docker/sillytavern/content/characters/fortress_first_mes.txt    /app/docker/sillytavern/content/characters/fortress_first_mes.txt
-COPY ["docker/sillytavern/content/worlds/Nullspace Nexus.json", "/app/docker/sillytavern/content/worlds/Nullspace Nexus.json"]
-COPY ["docker/sillytavern/content/chats/The Remnant/Opening.jsonl",  "/app/docker/sillytavern/content/chats/The Remnant/Opening.jsonl"]
-COPY docker/sillytavern/content/settings.json                        /app/docker/sillytavern/content/settings.json
-COPY docker/sillytavern/config.yaml                                  /app/docker/sillytavern/config.yaml
 
 # Write the baked commit hash where _build_signature() looks for it
 RUN echo "${GIT_COMMIT}" > /app/GIT_COMMIT

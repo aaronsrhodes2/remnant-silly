@@ -538,8 +538,8 @@ _TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava",
 
 # Models known to have large context windows (≥16k tokens) — preferred when
 # OLLAMA_MODEL is not explicitly set.
-_LARGE_CONTEXT_PREFER = ("mistral", "llama3.1", "llama3.2", "mistral-nemo",
-                          "mixtral", "command-r", "gemma2", "phi3")
+_LARGE_CONTEXT_PREFER = ("qwen2.5", "qwen", "mistral", "llama3.1", "llama3.2",
+                          "mistral-nemo", "mixtral", "command-r", "gemma2", "phi3")
 
 # ---------------------------------------------------------------------------
 # Tag injection — session state
@@ -4032,12 +4032,9 @@ _SIGNATURE_FILES = [
     "docker/diag/app.py",
     "web/index.html",
     "extension/index.js",
-    "docker/sillytavern/content/characters/fortress_system_prompt.txt",
-    "docker/sillytavern/content/characters/fortress_first_mes.txt",
-    "docker/sillytavern/content/worlds/Nullspace Nexus.json",
-    "docker/sillytavern/content/chats/The Remnant/Opening.jsonl",
-    "docker/sillytavern/content/settings.json",
-    "docker/sillytavern/config.yaml",
+    "docker/diag/seed/fortress_system_prompt.txt",
+    "docker/diag/seed/fortress_first_mes.txt",
+    "docker/diag/seed/world.json",
 ]
 
 _REPO_ROOT = Path(__file__).parent.parent.parent  # docker/diag/app.py → docker/diag → docker → repo root
