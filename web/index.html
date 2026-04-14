@@ -3513,8 +3513,8 @@ async function _initVAD() {
     const _curId  = _vadStream.getAudioTracks()[0]?.getSettings()?.deviceId || '';
     const _usbMic = _inputs.find(d =>
       d.deviceId !== _curId &&
-      /usb|microphone|mic|yeti|blue|rode|focusrite|samson|audio-technica|shure|hyperx|razer/i.test(d.label) &&
-      !/realtek|hd audio|conexant|via hd/i.test(d.label)
+      /usb|yeti|blue|rode|focusrite|samson|audio-technica|shure|hyperx|razer/i.test(d.label) &&
+      !/realtek|hd audio|conexant|via hd|steam|virtual|streaming|cable|vb-audio|voicemeeter/i.test(d.label)
     );
     if (_usbMic) {
       console.log('[vad] switching to dedicated mic:', _usbMic.label);
