@@ -2085,9 +2085,10 @@ function _formatText(text) {
 }
 
 // ── TTS engine ──
-let _ttsSource = null;
-let _ttsAbort  = null;
-let _ttsGenId  = 0;   // incremented each turn; old speech loops stop when stale
+let _ttsSource            = null;
+let _ttsAbort             = null;
+let _ttsGenId             = 0;   // incremented each turn; old speech loops stop when stale
+let _ttsEchoCooldownUntil = 0;   // ms timestamp; VAD blocked until this passes (post-TTS echo)
 
 // ── TTS governor state (shared by connect() SSE handlers + top-level functions) ──
 const _ttsQ = [];                // pending items: {text,voice,ttsGen,speakerName} | {_cb}
@@ -2198,7 +2199,13 @@ function _speakTTS(text, voice = 'am_michael', speed = 1.0) {
         gain.gain.value = 0.85;
         src.connect(gain);
         gain.connect(ctx.destination);
-        src.onended = () => { _ttsSource = null; _ttsAbort = null; done(); };
+        src.onended = () => {
+          _ttsSource = null; _ttsAbort = null;
+          // Echo cooldown: block VAD for 1.8s after TTS ends so room reverb
+          // doesn't get transcribed as player speech ("Thank you very much…").
+          _ttsEchoCooldownUntil = Date.now() + 1800;
+          done();
+        };
         _ttsSource = src;
         src.start();
       }).catch(() => doneClear());
@@ -3151,8 +3158,10 @@ function _vadTick() {
   if (!_vadAnalyser) return;
   requestAnimationFrame(_vadTick);
 
-  // Don't capture while TTS is speaking (prevents echo)
-  if (_ttsSource) { _vadSpeaking = false; _vadSpeechStart = null; _vadOnsetSilStart = null; _vadSilStart = null; return; }
+  // Don't capture while TTS is speaking or during post-TTS echo cooldown
+  if (_ttsSource || Date.now() < _ttsEchoCooldownUntil) {
+    _vadSpeaking = false; _vadSpeechStart = null; _vadOnsetSilStart = null; _vadSilStart = null; return;
+  }
   // Don't overwrite if user is actively typing
   if (document.activeElement === inputEl && inputEl.value.trim()) return;
 
