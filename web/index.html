@@ -2166,28 +2166,41 @@ function _speakTTS(text, voice = 'am_michael', speed = 1.0) {
     _setStatus('speaking', true);
     const done = () => { _setLight('audio', 'idle'); _setStatus('speaking', false); resolve(); };
 
+    // Hard timeout: if flask-tts doesn't respond within 15s the queue would
+    // freeze forever.  Abort and continue to the next item instead.
+    const _ttsTimeout = setTimeout(() => {
+      console.warn('[tts] timeout — skipping item');
+      ctrl.abort();
+    }, 15_000);
+    const doneClear = () => { clearTimeout(_ttsTimeout); done(); };
+
     fetch('/api/tts/v1/audio/speech', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({model: 'kokoro', input: text, voice, speed}),
       signal: ctrl.signal,
     })
-    .then(res => { if (!res.ok) { done(); return null; } return res.arrayBuffer(); })
+    .then(res => { if (!res.ok) { doneClear(); return null; } return res.arrayBuffer(); })
     .then(buf => {
       if (!buf) return;
+      clearTimeout(_ttsTimeout);
       const ctx = _ensureAudioCtx();
       ctx.decodeAudioData(buf).then(audio => {
         const src = ctx.createBufferSource();
         src.buffer = audio;
-        src.connect(ctx.destination);
+        // Route through a gain node so TTS volume is balanced with music/SFX.
+        const gain = ctx.createGain();
+        gain.gain.value = 0.85;
+        src.connect(gain);
+        gain.connect(ctx.destination);
         src.onended = () => { _ttsSource = null; _ttsAbort = null; done(); };
         _ttsSource = src;
         src.start();
-      }).catch(() => done());
+      }).catch(() => doneClear());
     })
     .catch(e => {
       if (e.name !== 'AbortError') console.warn('[tts]', e);
-      done();
+      doneClear();
     });
   });
 }
@@ -3475,15 +3488,11 @@ async function _initVAD() {
   if (_vadStarted) return;
   _vadStarted = true;  // lock early to prevent concurrent calls
   try {
-    _vadStream = await navigator.mediaDevices.getUserMedia({
-      // sampleRate as an 'ideal' (not required) so new mics that report a
-      // different native rate don't throw OverconstrainedError.
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        sampleRate: { ideal: 16000 },
-      },
-    });
+    // Minimal constraint: let the OS pick the current default device.
+    // Any audio constraint (sampleRate, echoCancellation, etc.) risks
+    // OverconstrainedError or a cached stale stream when devices change.
+    // Echo suppression is handled in software (_ttsSource check in _vadTick).
+    _vadStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     console.warn('[vad] mic unavailable:', e.message);
     _vadStarted = false;
@@ -3503,6 +3512,27 @@ async function _initVAD() {
   console.log('[vad] always-on listening active — AudioCtx:', ctx.state,
               '— sample rate:', _vadStream.getAudioTracks()[0]?.getSettings()?.sampleRate ?? '?');
 }
+
+// ── AudioContext self-healing ──
+// Resume the AudioContext whenever the page becomes visible or the user interacts.
+// Critical for exe mode: minimising/restoring the window suspends WebAudio.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && _audioCtx && _audioCtx.state !== 'running') {
+    _audioCtx.resume().catch(() => {});
+  }
+});
+
+// ── VAD stream health-check — runs every 5s ──
+// If the mic track has ended (device unplugged, driver reset, etc.) reinitialise.
+setInterval(() => {
+  if (!_vadStream) return;
+  const tracks = _vadStream.getAudioTracks();
+  if (tracks.length === 0 || tracks.every(t => t.readyState === 'ended')) {
+    console.log('[vad] stream ended — reinitialising');
+    _stopVAD();
+    _initVAD();
+  }
+}, 5000);
 
 // ── Initialise on load ──
 _initLightToggles();
