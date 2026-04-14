@@ -100,6 +100,10 @@ _narrator_queued: bool = False          # True when a player input arrived durin
 _system_prompt: str = ""               # Loaded from fortress_system_prompt.txt at startup
 _first_mes: str = ""                   # Loaded from fortress_first_mes.txt at startup
 
+# Ollama watchdog — health-checks every 30s; broadcasts SSE warning after 2 consecutive failures.
+_ollama_healthy: bool = True
+_ollama_fail_count: int = 0
+
 # System metrics cache — refreshed at most every 4 s to avoid hammering nvidia-smi.
 _metrics_cache: dict = {}
 _metrics_cache_time: float = 0.0
@@ -3104,7 +3108,7 @@ def _generate_narrator_turn() -> None:
                     })
 
             try:
-                chunk = _stream_ollama_chat(messages, timeout=300.0,
+                chunk = _stream_ollama_chat(messages, timeout=90.0,
                                             on_prose_sentence=prose_callback)
                 full_text += chunk
             except Exception as e:
@@ -4934,6 +4938,33 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(code, payload)
 
 
+def _ollama_watchdog_loop() -> None:
+    """Ping Ollama every 30 s. Broadcast SSE warning after 2 consecutive failures.
+
+    Does NOT touch _generating — the 90 s narrator timeout handles abort cleanly
+    via the finally block in _generate_narrator_turn().
+    """
+    global _ollama_healthy, _ollama_fail_count
+    import urllib.request as _ur  # noqa: PLC0415 — stdlib, always available
+    while True:
+        time.sleep(30)
+        try:
+            with _ur.urlopen(f"{OLLAMA_URL}/api/tags", timeout=5) as _r:
+                _r.read()
+            # --- healthy ---
+            if not _ollama_healthy:
+                _log("ollama watchdog: Ollama recovered")
+                _ollama_healthy = True
+                _sse_broadcast("activity", {"text": ""})
+            _ollama_fail_count = 0
+        except Exception as _e:
+            _ollama_fail_count += 1
+            _log(f"ollama watchdog: ping failed ({_ollama_fail_count}) — {_e}")
+            if _ollama_fail_count >= 2 and _ollama_healthy:
+                _ollama_healthy = False
+                _sse_broadcast("activity", {"text": "⚠ language model reconnecting…"})
+
+
 def main() -> None:
     _load_fortress_texts()
     _restore_narrator_turns()
@@ -4950,6 +4981,8 @@ def main() -> None:
     # Start lore idle narration daemon — fires after LORE_IDLE_SECS of silence
     threading.Thread(target=_lore_idle_loop, daemon=True, name="lore-idle").start()
     threading.Thread(target=_quirkify_loop, daemon=True, name="quirkify").start()
+    # Ollama health watchdog — pings every 30 s; SSE warning after 2 consecutive failures
+    threading.Thread(target=_ollama_watchdog_loop, daemon=True, name="ollama-watchdog").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:

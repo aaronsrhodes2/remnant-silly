@@ -467,6 +467,42 @@ class ManagedProcess:
                 except Exception:
                     pass
 
+    def watchdog(self, health_url: str = "") -> None:
+        """Background watchdog: auto-restarts the process if it exits or stops responding.
+
+        Args:
+            health_url: Optional HTTP URL to ping as a liveness check (e.g. Ollama /api/tags).
+                        Two consecutive failures → kill the frozen process and restart it.
+        """
+        import urllib.request as _ur  # noqa: PLC0415 — stdlib always available
+        import time as _t
+        fail_count = 0
+        while True:
+            _t.sleep(30)
+            # ── process-level check ────────────────────────────────────────
+            if self._proc and self._proc.poll() is not None:
+                exit_code = self._proc.returncode
+                log(f"{self.name} watchdog: process exited (code {exit_code}) — restarting", "warn")
+                self.start()
+                fail_count = 0
+                continue
+            # ── HTTP health check (optional) ───────────────────────────────
+            if not health_url:
+                continue
+            try:
+                with _ur.urlopen(health_url, timeout=5) as _r:
+                    _r.read()
+                fail_count = 0
+            except Exception as _e:
+                fail_count += 1
+                log(f"{self.name} watchdog: health check failed ({fail_count}) — {_e}", "warn")
+                if fail_count >= 2:
+                    log(f"{self.name} watchdog: unresponsive — killing and restarting", "warn")
+                    self.stop()
+                    _t.sleep(2)
+                    self.start()
+                    fail_count = 0
+
 
 class ServiceManager:
     def __init__(self):
@@ -583,6 +619,13 @@ class ServiceManager:
                 log_file=RUN_DIR / "ollama.log")
             p.start()
             self._procs.append(p)
+            # Watchdog: auto-restart if Ollama dies or freezes (2 consecutive 5 s ping failures)
+            threading.Thread(
+                target=p.watchdog,
+                kwargs={"health_url": f"http://127.0.0.1:{PORTS['ollama']}/api/tags"},
+                daemon=True,
+                name="ollama-watchdog",
+            ).start()
         else:
             log(f"ollama already on :{PORTS['ollama']}", "ok")
 
