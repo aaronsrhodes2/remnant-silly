@@ -2619,7 +2619,10 @@ def _build_messages() -> list[dict]:
         "ABSOLUTE PROHIBITIONS:\n"
         "- NEVER end a response with 'What would you like to do next?' or any menu prompt.\n"
         "- NEVER offer numbered option lists.\n"
-        "- NEVER use AI-assistant phrases or break character.\n\n"
+        "- NEVER use AI-assistant phrases or break character.\n"
+        "- Write ONE narrative beat per response. One moment: one image, one NPC line, "
+        "one revelation. Stop when the player has something to react to. "
+        "Do not write the full scene in a single response.\n\n"
 
         "The Fortress has been adrift between dimensions for millennia. "
         "Every surface remembers. Every NPC has a distinct voice. "
@@ -2735,7 +2738,12 @@ def _stream_ollama_chat(
         # qwen2.5:14b supports 32K natively; 8192 is conservative.
         # Ollama only reallocates KV cache when num_ctx changes between calls —
         # keeping it fixed avoids per-call stalls.
-        "options": {"num_ctx": 8192},
+        # num_predict: hard cap at 350 new tokens (~250 words) per narrator turn.
+        # This is the primary defence against huge text blocks that saturate the GPU
+        # by firing flask-sd + flask-music simultaneously after a 60s generation.
+        # 350 tokens = one solid beat: MOOD tag + image tag + 2 prose paragraphs
+        # + one NPC line. The model stops cleanly; Ollama returns done_reason=length.
+        "options": {"num_ctx": 8192, "num_predict": 350},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
