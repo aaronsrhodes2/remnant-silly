@@ -3511,11 +3511,11 @@ async function _initVAD() {
     // Step 3: if the current stream isn't a dedicated mic, try to switch to one.
     // Only stop+reopen when necessary — keeps stream alive on the happy path.
     const _curId  = _vadStream.getAudioTracks()[0]?.getSettings()?.deviceId || '';
-    const _usbMic = _inputs.find(d =>
-      d.deviceId !== _curId &&
-      /usb|yeti|blue|rode|focusrite|samson|audio-technica|shure|hyperx|razer/i.test(d.label) &&
-      !/realtek|hd audio|conexant|via hd|steam|virtual|streaming|cable|vb-audio|voicemeeter/i.test(d.label)
-    );
+    // Prefer a real hardware mic over virtual/system devices.
+    // Exclusion list checked first — Steam, virtual cables, software mixers.
+    const _isVirtual = d => /steam|virtual|streaming|cable|vb-audio|voicemeeter|nvidia broadcast|krisp|rtx voice/i.test(d.label);
+    const _isHwMic   = d => /cmteck|usb|yeti|blue\s|rode|focusrite|samson|audio-technica|shure|hyperx|razer|microphone/i.test(d.label) && !_isVirtual(d);
+    const _usbMic = _inputs.find(d => d.deviceId !== _curId && _isHwMic(d));
     if (_usbMic) {
       console.log('[vad] switching to dedicated mic:', _usbMic.label);
       _vadStream.getTracks().forEach(t => t.stop());
