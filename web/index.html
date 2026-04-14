@@ -3120,7 +3120,7 @@ function _sttMime() {
   return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch(_){return false;} }) || '';
 }
 
-const VAD_THRESHOLD  = 0.015;  // RMS energy to count as speech
+let   _vadThreshold  = 0.012;  // RMS energy to count as speech — calibrated on init
 const VAD_ONSET_MS   = 120;    // speech must persist this long before we start recording
 const VAD_SILENCE_MS = 1400;   // silence after speech before we stop and transcribe
 
@@ -3150,7 +3150,7 @@ function _vadTick() {
   if (document.activeElement === inputEl && inputEl.value.trim()) return;
 
   const rms  = _vadRMS();
-  const loud = rms > VAD_THRESHOLD;
+  const loud = rms > _vadThreshold;
   const now  = Date.now();
 
   if (loud) {
@@ -3508,6 +3508,29 @@ async function _initVAD() {
   _vadAnalyser.fftSize = 256;
   _vadBuf       = new Float32Array(_vadAnalyser.fftSize);
   src.connect(_vadAnalyser);
+
+  // Auto-calibrate threshold: sample ambient noise for 1 second, set threshold
+  // to 4× the noise floor (minimum 0.006 to avoid false-triggers on silence).
+  // This handles any microphone sensitivity automatically — no tuning needed.
+  await new Promise(res => {
+    const samples = [];
+    const start   = performance.now();
+    function sample() {
+      _vadAnalyser.getFloatTimeDomainData(_vadBuf);
+      let s = 0;
+      for (let v of _vadBuf) s += v * v;
+      samples.push(Math.sqrt(s / _vadBuf.length));
+      if (performance.now() - start < 1000) requestAnimationFrame(sample);
+      else {
+        const ambient = samples.reduce((a, b) => a + b, 0) / samples.length;
+        _vadThreshold = Math.max(ambient * 4, 0.006);
+        console.log(`[vad] calibrated — ambient RMS: ${ambient.toFixed(5)}  threshold: ${_vadThreshold.toFixed(5)}`);
+        res();
+      }
+    }
+    requestAnimationFrame(sample);
+  });
+
   requestAnimationFrame(_vadTick);
   console.log('[vad] always-on listening active — AudioCtx:', ctx.state,
               '— sample rate:', _vadStream.getAudioTracks()[0]?.getSettings()?.sampleRate ?? '?');
