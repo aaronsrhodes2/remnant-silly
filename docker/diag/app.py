@@ -399,6 +399,8 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
     if location_name and location_name != prev_location:
         _world["current_location"] = location_name
         _sse_broadcast("location", {"name": location_name})
+        # NPCs don't follow the player unless re-introduced in the new area
+        _present_npcs.clear()
 
     # Ghost scout hook accumulator: count how often each known location is
     # mentioned in narrator turns while the player is NOT there.  Only counts
@@ -463,10 +465,12 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
             "turn_id": turn_id,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
-        # Broadcast a greeting so the frontend can voice the NPC's first words
+        # Track this NPC as present in the current area — used by banter pre-gen
         npc_ent = _world["entities"].get(npc_id, {})
-        sig_quote = npc_ent.get("signature_quote", "")
         npc_voice = npc_ent.get("voice", "am_michael")
+        _present_npcs[npc_name] = {"voice": npc_voice, "entity_id": npc_id}
+        # Broadcast a greeting so the frontend can voice the NPC's first words
+        sig_quote = npc_ent.get("signature_quote", "")
         if sig_quote:
             _sse_broadcast("npc_greeting", {
                 "name": npc_name,
@@ -607,6 +611,14 @@ _item_given_this_session: set = set()  # item keys already injected this session
 # Triggered by INTRODUCE tags + location entry; processed by _quirkify_loop daemon.
 _quirkify_queue: collections.deque = collections.deque(maxlen=40)
 _quirkified_this_session: set = set()  # entity IDs enriched this session (skip re-processing)
+
+# NPC banter — "elevator scenes" pre-generation.
+# Tracks which NPCs are in the current area; used by _banter_prefetch_loop to pick
+# conversation partners.  Cleared on location change, populated by INTRODUCE tags.
+_present_npcs: dict = {}              # npc_name → {voice, entity_id}
+_banter_queue: collections.deque = collections.deque(maxlen=5)  # ready-to-play banter items
+_npc_conversations: dict = {}         # frozenset({a,b}) → [{speaker,text,ts}]
+_banter_generating: bool = False      # True while a banter generation thread is running
 
 # Characters that are permanent crew — never get a spurious INTRODUCE tag.
 # Intentionally EMPTY: Sherri, The Remnant, and The Fortress are introduced
@@ -2719,6 +2731,7 @@ def _stream_ollama_chat(
     messages: list[dict],
     timeout: float = 180.0,
     on_prose_sentence=None,   # optional callback(text: str) — called per prose sentence
+    extra_options: dict | None = None,  # merged on top of default options (e.g. num_predict)
 ) -> str:
     """POST to Ollama /api/chat with streaming; return the full response text.
 
@@ -2743,7 +2756,7 @@ def _stream_ollama_chat(
         # by firing flask-sd + flask-music simultaneously after a 60s generation.
         # 350 tokens = one solid beat: MOOD tag + image tag + 2 prose paragraphs
         # + one NPC line. The model stops cleanly; Ollama returns done_reason=length.
-        "options": {"num_ctx": 8192, "num_predict": 350},
+        "options": {**{"num_ctx": 8192, "num_predict": 350}, **(extra_options or {})},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
@@ -4718,6 +4731,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, _latest_scene_image or {})
             return
 
+        if path == "/next-banter":
+            # Pop one ready banter item from the queue (204 No Content if empty).
+            if _banter_queue:
+                self._send_json(200, _banter_queue.popleft())
+            else:
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            return
+
         if path == "/api/music/generate":
             # Proxy music generation request to flask-music service (GET returns 405)
             self._send_json(405, {"error": "POST only"})
@@ -5109,6 +5132,105 @@ def _ollama_watchdog_loop() -> None:
                 _sse_broadcast("activity", {"text": "⚠ language model reconnecting…"})
 
 
+def _generate_npc_banter(npc_a: str, npc_b: str) -> None:
+    """Generate a short overheard conversation between two present NPCs.
+
+    Uses a minimal Ollama call (200-token budget, CHARACTER tags only) so it
+    doesn't compete with the main narrator.  Result is pushed onto _banter_queue
+    as {speakers, lines:[{speaker,text,voice}], area} for the client to play
+    via _tryPlayBanter() when the TTS channel goes idle.
+    """
+    global _banter_generating
+    try:
+        area = _world.get("current_location", "somewhere aboard the Fortress")
+        ent_a = _world["entities"].get(_loc_id(npc_a), {})
+        ent_b = _world["entities"].get(_loc_id(npc_b), {})
+
+        banter_system = (
+            "You write brief overheard NPC conversations for a dark sci-fi interactive "
+            "story aboard The Remnant Fortress. "
+            "Output ONLY dialogue lines, each formatted as: [CHARACTER(Name): \"line\"]. "
+            "No prose, no narration, no stage directions. 3-4 exchanges. Stay in character."
+        )
+        desc_a = (ent_a.get("description", "") or "")[:120]
+        desc_b = (ent_b.get("description", "") or "")[:120]
+        banter_user = (
+            f"Write a short overheard conversation between {npc_a} and {npc_b} "
+            f"in {area}.\n"
+            + (f"{npc_a}: {desc_a}\n" if desc_a else "")
+            + (f"{npc_b}: {desc_b}\n" if desc_b else "")
+            + "3-4 lines total. Natural, in-world dialogue only."
+        )
+
+        msgs = [
+            {"role": "system", "content": banter_system},
+            {"role": "user",   "content": banter_user},
+        ]
+
+        raw = _stream_ollama_chat(
+            msgs, timeout=45.0,
+            extra_options={"num_ctx": 2048, "num_predict": 200},
+        )
+        _log(f"[banter] raw response: {raw[:120]}")
+
+        char_re = re.compile(r'\[CHARACTER\(([^)]+)\)\s*:\s*"([^"]+)"\]', re.IGNORECASE)
+        lines = []
+        for m in char_re.finditer(raw):
+            speaker = m.group(1).strip()
+            text    = m.group(2).strip()
+            ent     = _world["entities"].get(_loc_id(speaker), {})
+            voice   = ent.get("voice", ent_a.get("voice", "am_michael") if speaker == npc_a
+                                       else ent_b.get("voice", "am_michael"))
+            lines.append({"speaker": speaker, "text": text, "voice": voice})
+
+        if not lines:
+            _log(f"[banter] no CHARACTER lines parsed for {npc_a}/{npc_b}")
+            return
+
+        item = {"speakers": [npc_a, npc_b], "lines": lines, "area": area}
+        _banter_queue.append(item)
+
+        # Persist to conversation history (for future narrator context)
+        key = frozenset({npc_a, npc_b})
+        _npc_conversations.setdefault(key, []).extend(
+            {"speaker": l["speaker"], "text": l["text"], "ts": time.time()}
+            for l in lines
+        )
+
+        _sse_broadcast("banter_ready", {"speakers": [npc_a, npc_b], "area": area})
+        _log(f"[banter] queued {len(lines)}-line conversation between {npc_a} and {npc_b}")
+
+    except Exception as exc:
+        _log(f"[banter] generation error: {exc}")
+    finally:
+        _banter_generating = False
+
+
+def _banter_prefetch_loop() -> None:
+    """Daemon: pre-generate NPC banter when the narrator is idle and ≥2 NPCs are present."""
+    global _banter_generating
+    while True:
+        time.sleep(60)
+        try:
+            if _banter_generating or _generating or _classifying:
+                continue
+            if len(_banter_queue) >= 2:
+                continue
+            npcs = list(_present_npcs.keys())
+            if len(npcs) < 2:
+                continue
+            npc_a, npc_b = npcs[0], npcs[1]
+            _banter_generating = True
+            threading.Thread(
+                target=_generate_npc_banter,
+                args=(npc_a, npc_b),
+                daemon=True,
+                name="banter-gen",
+            ).start()
+        except Exception as exc:
+            _log(f"[banter] prefetch loop error: {exc}")
+
+
 def _run_ghost_scout(location_name: str) -> None:
     """Background task: generate atmosphere for a hot location before the player arrives.
 
@@ -5279,6 +5401,8 @@ def main() -> None:
     threading.Thread(target=_ollama_watchdog_loop, daemon=True, name="ollama-watchdog").start()
     # Ghost scout — speculative pre-generation for hot unvisited locations
     threading.Thread(target=_ghost_scout_loop, daemon=True, name="ghost-scout").start()
+    # NPC banter pre-generation ("elevator scenes") — fires when narrator idle + ≥2 NPCs present
+    threading.Thread(target=_banter_prefetch_loop, daemon=True, name="banter-prefetch").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:

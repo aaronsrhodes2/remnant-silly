@@ -1937,6 +1937,12 @@ function connect() {
     } catch (_) {}
   });
 
+  // NPC banter: server has pre-generated a banter item — schedule a check
+  // if we're already idle (otherwise the normal drain handler will pick it up).
+  es.addEventListener('banter_ready', () => {
+    if (!_ttsActive && !_ttsQ.length) _scheduleBanterCheck();
+  });
+
   es.addEventListener('mood', e => {
     try {
       const data = JSON.parse(e.data);
@@ -2152,6 +2158,11 @@ let _lastLoreMs = 0;            // timestamp of last lore delivery (60s cooldown
 // Stored here so _setGalleryImage can serve them instantly on arrival.
 const _scoutImageCache = {};    // location_name → base64 image data
 
+// ── NPC banter ("elevator scenes") ───────────────────────────────────────────
+// After 20s of TTS silence, check for pre-generated banter and play it.
+// Cancelled on any player input or narrator turn starting.
+let _banterIdleTimer = null;
+
 // ── TTS governor functions ──────────────────────────────────────────
 // _ttsEnqueue  — add one item to the queue; kick off loop if idle
 // _ttsNext     — drain loop (one active instance at a time)
@@ -2206,6 +2217,8 @@ async function _ttsNext() {
     _ttsActive = false;
     // Queue drained — check if a pending lore whisper can now be delivered
     _tryDeliverLore();
+    // Schedule banter check after 20s of silence
+    _scheduleBanterCheck();
   }
 }
 
@@ -2216,6 +2229,9 @@ function _ttsClearTurn() {
   if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
   _ttsActive = false;
   _ttsLoopGen++; // invalidate any running loop
+  // Cancel any pending banter check — new narrator turn takes priority
+  clearTimeout(_banterIdleTimer);
+  _banterIdleTimer = null;
   // If a speech bubble was visible when audio was cleared, hide it immediately
   _hideCharacterBubble(/*restoreScene=*/ true);
 }
@@ -2497,6 +2513,35 @@ function _tryDeliverLore() {
   _ttsEnqueue(text, voice, 0, null, 0.55);
   _locationChanged = false;   // reset — next lore needs a fresh location change
   _lastLoreMs = Date.now();
+}
+
+// ── NPC banter ("elevator scenes") ───────────────────────────────────────────
+
+function _scheduleBanterCheck() {
+  // Schedule a banter check 20s after TTS goes idle.
+  // Cancelled when player sends input, narrator starts, or TTS clears.
+  clearTimeout(_banterIdleTimer);
+  _banterIdleTimer = setTimeout(_tryPlayBanter, 20_000);
+}
+
+async function _tryPlayBanter() {
+  _banterIdleTimer = null;
+  // Don't interrupt any live audio
+  if (_ttsActive || _ttsQ.length > 0 || !_sense.audio) return;
+  try {
+    const resp = await fetch('/next-banter');
+    if (resp.status === 204) return;   // queue empty — nothing to play
+    if (!resp.ok) return;
+    const data = await resp.json();
+    // data = { lines: [{speaker, text, voice}], speakers }
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    if (!lines.length) return;
+    // Enqueue all lines together — NPC voices at full volume, no gaps
+    for (const ln of lines) {
+      const voice = ln.voice || _voiceForSpeaker(ln.speaker);
+      _ttsEnqueue(ln.text, voice, 0, ln.speaker, 1.05);
+    }
+  } catch (_) {}
 }
 
 async function _onMoodEvent(moodText) {
@@ -2901,6 +2946,9 @@ async function sendInput(overrideText) {
   if (!text) return;
   _sending = true;
   _clearTimers();
+  // Cancel any pending banter — player has something to say
+  clearTimeout(_banterIdleTimer);
+  _banterIdleTimer = null;
   suggestEl.style.display = 'none';
   if (_contMode) _icClose();
   inputEl.value = '';
