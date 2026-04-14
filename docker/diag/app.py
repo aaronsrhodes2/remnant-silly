@@ -327,6 +327,7 @@ def _replay_world_log() -> None:
 
 def _ingest_narrator_turn_into_world(turn: dict) -> None:
     """Extract world-state changes from a narrator turn and persist them."""
+    global _player_dressed, _player_appearance_desc  # noqa: PLW0603
     _world["turn_count"] += 1
     turn_id = turn.get("turn_id", str(_world["turn_count"]))
     ctx = turn.get("context") or {}
@@ -465,7 +466,6 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
     for _m in _up_re.finditer(raw_text):
         _brief = _m.group(1).strip()
         if _brief:
-            global _player_dressed, _player_appearance_desc  # noqa: PLW0603
             _player_appearance_desc = _brief
             if not _player_dressed:
                 _player_dressed = True
