@@ -1664,7 +1664,7 @@ document.getElementById('light-audio').addEventListener('contextmenu', e => {
 // ── Topbar polling ──
 async function _pollServiceStatus() {
   try {
-    const res = await fetch('/ai.json');
+    const res = await fetch('/diagnostics/ai.json');
     if (!res.ok) return;
     const data = await res.json();
     const svcs = data.services || {};
