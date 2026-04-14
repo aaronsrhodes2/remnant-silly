@@ -1744,11 +1744,17 @@ function connect() {
       const text = _stripForTTS(c.text || '');
       if (!text) return;
       if (_chunkTurnId !== c.turn_id) {
-        // New streaming turn — stop old audio and reset dedup
+        // New streaming turn — drain pending queue but let current utterance finish.
+        // Clearing the queue prevents stale prose from the previous turn continuing
+        // to play, but stopping _ttsSource would cut off the current word mid-syllable.
         _chunkTurnId = c.turn_id;
-        _ttsClearTurn();
+        _ttsQ.length = 0;
+        _ttsSeenTexts.clear();
+        _ttsLoopGen++; // invalidate any pending _ttsNext loop
+        _ttsActive = false;
+        // Note: _ttsSource is intentionally NOT stopped — current word plays to completion.
       }
-      _ttsEnqueue(text, 'am_michael');
+      _ttsEnqueue(text, 'am_michael', undefined, null, 0.55);
     } catch (_) {}
   });
 
@@ -1882,9 +1888,10 @@ function connect() {
       feed.scrollTop = feed.scrollHeight;
       // Lore is permanent — no fade. Voice follows the Fortress pin.
       // Route through the TTS queue so it doesn't cut off narrator speech.
+      // speakerName=null (no character bubble for lore), volume=0.55 (whispered).
       if (_sense.audio) {
         const fortressVoice = _PINNED_VOICES['The Fortress'] || 'af_heart';
-        _ttsEnqueue(_stripForTTS(data.text), fortressVoice, 0, 'lore');
+        _ttsEnqueue(_stripForTTS(data.text), fortressVoice, 0, null, 0.55);
       }
     } catch (_) {}
   });
@@ -2107,7 +2114,7 @@ let _ttsLoopGen = 0;             // incremented on clear; stale loops self-termi
 // _ttsNext     — drain loop (one active instance at a time)
 // _ttsClearTurn — stop current audio, drain queue, reset dedup
 
-function _ttsEnqueue(text, voice, ttsGen, speakerName) {
+function _ttsEnqueue(text, voice, ttsGen, speakerName, volume) {
   const key = `${voice || 'am_michael'}:${text}`;
   if (!text || !text.trim() || _ttsSeenTexts.has(key)) return;
   _ttsSeenTexts.add(key);
@@ -2116,6 +2123,7 @@ function _ttsEnqueue(text, voice, ttsGen, speakerName) {
     voice: voice || 'am_michael',
     ttsGen: ttsGen || 0,
     speakerName: speakerName || null,
+    volume: (volume !== undefined) ? volume : (speakerName ? 1.05 : 0.55),
   });
   if (!_ttsActive) _ttsNext();
 }
@@ -2128,7 +2136,7 @@ async function _ttsNext() {
     if (_ttsLoopGen !== myGen) break; // superseded by _ttsClearTurn
     const item = _ttsQ.shift();
     if (item._cb) { item._cb(); continue; }
-    const {text, voice, ttsGen, speakerName} = item;
+    const {text, voice, ttsGen, speakerName, volume} = item;
     if (!_sense.audio) continue;
     if (ttsGen && _ttsGenId !== ttsGen) continue; // stale turn
 
@@ -2142,11 +2150,11 @@ async function _ttsNext() {
       const nextItem = _ttsQ.length > 0 ? _ttsQ[0] : null;
       const nextIsChar = nextItem && !nextItem._cb && nextItem.speakerName;
       _showCharacterBubble(speakerName, text);
-      await _speakTTS(text, voice, speed);
+      await _speakTTS(text, voice, speed, volume);
       if (_ttsLoopGen !== myGen) break;
       _hideCharacterBubble(/*restoreScene=*/ !nextIsChar);
     } else {
-      await _speakTTS(text, voice, speed);
+      await _speakTTS(text, voice, speed, volume);
       if (_ttsLoopGen !== myGen) break;
       // Nothing to fade — feed entries are permanent.
     }
@@ -2165,7 +2173,7 @@ function _ttsClearTurn() {
   _hideCharacterBubble(/*restoreScene=*/ true);
 }
 
-function _speakTTS(text, voice = 'am_michael', speed = 1.0) {
+function _speakTTS(text, voice = 'am_michael', speed = 1.0, volume = 0.85) {
   // Cancel any in-flight TTS request and stop any playing speech
   if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
   if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
@@ -2201,8 +2209,9 @@ function _speakTTS(text, voice = 'am_michael', speed = 1.0) {
         const src = ctx.createBufferSource();
         src.buffer = audio;
         // Route through a gain node so TTS volume is balanced with music/SFX.
+        // Narrator prose uses 0.55 (muted whisper), NPC dialogue uses 1.05 (direct, full).
         const gain = ctx.createGain();
-        gain.gain.value = 0.85;
+        gain.gain.value = volume;
         src.connect(gain);
         gain.connect(ctx.destination);
         src.onended = () => {
@@ -2341,12 +2350,14 @@ async function _playStartupSequence() {
   }
 }
 
-// Replace the looping ambient music track (crossfade over 4s).
+// Replace the looping ambient music track (crossfade over 2s).
+// Starts at 0.08 (barely audible) so there's no stone-silent gap at the seam,
+// then ramps to 0.72 — louder and more present than the old 0.55 ceiling.
 function _playMusicBuffer(audioBuffer) {
   const ctx = _ensureAudioCtx();
   const newGain = ctx.createGain();
-  newGain.gain.setValueAtTime(0, ctx.currentTime);
-  newGain.gain.linearRampToValueAtTime(0.55, ctx.currentTime + 4);
+  newGain.gain.setValueAtTime(0.08, ctx.currentTime);
+  newGain.gain.linearRampToValueAtTime(0.72, ctx.currentTime + 2);
   newGain.connect(ctx.destination);
   const src = ctx.createBufferSource();
   src.buffer = audioBuffer;
@@ -2354,9 +2365,9 @@ function _playMusicBuffer(audioBuffer) {
   src.connect(newGain);
   src.start();
   if (_musicGain) {
-    _musicGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 4);
+    _musicGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 2);
     const old = _musicSource;
-    setTimeout(() => { try { old.stop(); } catch (_) {} }, 5000);
+    setTimeout(() => { try { old.stop(); } catch (_) {} }, 3000);
   }
   _musicSource = src;
   _musicGain   = newGain;
@@ -2458,10 +2469,11 @@ async function _onMoodEvent(moodText) {
           _fetchMusicBuffer(moodText, 8),
         ]);
 
-        // Fade current track down while bridge plays
+        // Fade current track down while bridge plays (keep at 0.28, not 0.12,
+        // so there's always audible music — not a near-silence gap).
         if (_musicGain) {
           const ctx = _ensureAudioCtx();
-          _musicGain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.8);
+          _musicGain.gain.linearRampToValueAtTime(0.28, ctx.currentTime + 0.8);
         }
         if (bridgeResult.status === 'fulfilled') {
           await _playOnce(bridgeResult.value.buffer, {volume: 0.50});

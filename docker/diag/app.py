@@ -2449,6 +2449,54 @@ def _is_truncated(text: str) -> bool:
     )
 
 
+def _build_static_world_context() -> str:
+    """Compact inline world context used when ChromaDB is unavailable.
+
+    Pulls the most critical facts from the in-memory _world entity graph
+    (populated from world.json at startup) so the model has accurate setting,
+    character, and NPC-location data even without RAG retrieval.
+
+    Returns empty string if entity data not yet loaded.
+    """
+    parts: list[str] = []
+    entities = _world.get("entities", {})
+
+    fab = entities.get("fabrication_bay", {})
+    if fab.get("description"):
+        parts.append(
+            "OPENING LOCATION — Fabrication Bay: "
+            + fab["description"][:220].rstrip()
+        )
+
+    sherri = entities.get("sherri", {})
+    if sherri.get("description"):
+        voice_style = sherri.get("voice_style", "")[:120]
+        parts.append(
+            "SHERRI (automaton attendant — resident of the Fabrication Bay and Galley): "
+            + sherri["description"][:220].rstrip()
+            + (f" Voice: {voice_style}" if voice_style else "")
+        )
+
+    remnant = entities.get("the_remnant", {})
+    if remnant.get("description"):
+        voice_style = remnant.get("voice_style", "")[:120]
+        parts.append(
+            "THE REMNANT (crystalline 4D entity — disembodied voice, NOT physically "
+            "present in rooms): "
+            + remnant["description"][:220].rstrip()
+            + (f" Voice: {voice_style}" if voice_style else "")
+        )
+
+    if not parts:
+        return ""
+    return (
+        "[STATIC WORLD CONTEXT — background knowledge. "
+        "DO NOT reproduce verbatim.]\n"
+        + "\n".join(parts)
+        + "\n[END STATIC WORLD CONTEXT]"
+    )
+
+
 def _build_messages() -> list[dict]:
     """Build Ollama messages with Sorting Hat RAG context.
 
@@ -2476,35 +2524,60 @@ def _build_messages() -> list[dict]:
     if last_player_text and _chroma_knowledge is not None and _chroma_knowledge.count() > 0:
         world_ctx = _retrieve_world_context(last_player_text)
 
-    # ── Condensed system core (~200 tokens — always fits) ─────────────────
-    # This replaces the full 11K-token system prompt. The rules the narrator
-    # needs RIGHT NOW are retrieved from world_knowledge by the Sorting Hat.
-    # The core just sets identity and the absolute non-negotiables.
+    # ── System core (~490 tokens) ─────────────────────────────────────────
+    # Replaces the full 46K-token system prompt with a compact authoritative
+    # core that fits in every context window. World-specific knowledge is
+    # retrieved via Sorting Hat RAG or _build_static_world_context() fallback.
     system_core = (
         "You are THE FORTRESS — the ancient, vast, sardonic narrator of this "
         "dark sci-fi interactive story. You speak for all characters except the player. "
         "NEVER act for the player. NEVER reproduce context blocks verbatim. "
         "Use second-person present tense.\n\n"
 
-        "MANDATORY TAG RULES — emit these on their own line before prose:\n"
-        "[MOOD: \"...\"] — every turn, first line, describe the ambient atmosphere.\n"
-        "[CHARACTER(Name): \"exact words\"] — EVERY time ANY NPC speaks, "
-        "emit this tag with their exact words. NEVER write 'Name: ...' or "
-        "'Name said...' in prose. One CHARACTER tag per speech act.\n"
-        "[INTRODUCE(Name): \"brief desc\"] — first time a new NPC appears.\n"
+        "MANDATORY TAG RULES — emit these on their own line:\n"
+        "[MOOD: \"tempo, instruments, emotional feel\"] — FIRST LINE every turn. "
+        "Music descriptors only, under 20 words. NEVER prose. "
+        "Example: [MOOD: \"slow ambient drone, metallic resonance, uneasy quiet\"]\n"
+        "[CHARACTER(Name): \"exact words\"] — EVERY time ANY NPC speaks. "
+        "NEVER write 'Name: ...' or 'Name said...' in prose. One tag per speech act.\n"
+        "[INTRODUCE(Name): \"brief physical desc\"] — FIRST time a new NPC appears. "
+        "NEVER emit [INTRODUCE(The Remnant)] or [INTRODUCE(The Fortress)] — "
+        "they are narrators, not characters to introduce.\n"
         "[LORE(key): \"fact\"] — when lore or history is referenced.\n"
         "[SMELL(desc)], [TOUCH(desc)] — when sensory details are evoked.\n"
-        "[GENERATE_IMAGE(scene): \"sd_prompt\"] — when entering a new location.\n"
-        "[ITEM(key): \"desc\"] — when player receives or finds an object.\n\n"
+        "[GENERATE_IMAGE(location): \"sd_prompt\"] — when entering a new room or place. "
+        "[GENERATE_IMAGE(subject): \"sd_prompt\"] — for a character or object close-up. "
+        "NEVER use (scene) — only (location) or (subject) are valid types.\n"
+        "[ITEM(key): \"desc\"] — when player receives or finds an object.\n"
+        "[PLAYER_TRAIT(field): \"value\"] — NON-NEGOTIABLE: emit IMMEDIATELY whenever the "
+        "player reveals name, appearance, pronouns, profession, traits, or history. "
+        "Fields: name, pronouns, appearance, traits, history, goals. "
+        "Example: [PLAYER_TRAIT(name): \"Wren\"] [PLAYER_TRAIT(appearance): \"tall, red hair\"]\n\n"
+
+        "OPENING SEQUENCE (first turn only): The player has just been fabricated in the "
+        "Fabrication Bay — a cavernous dark chamber with twelve dormant molecular assembly "
+        "rigs in a semicircle. Sherri (the brushed-steel automaton attendant) is present "
+        "with a glowing blue scanning wand. Begin there. Do NOT invent a different location. "
+        "Emit [GENERATE_IMAGE(location): \"...\"] for the Fabrication Bay on the first turn.\n\n"
+
+        "NPC PRESENCE RULES: Sherri is the resident of the Fabrication Bay and the Galley. "
+        "The Remnant does NOT physically manifest in rooms — it is a disembodied voice and "
+        "crystalline projection. It speaks from anywhere but is never described as a body "
+        "in a room.\n\n"
+
+        "ABSOLUTE PROHIBITIONS:\n"
+        "- NEVER end a response with 'What would you like to do next?' or any menu prompt.\n"
+        "- NEVER offer numbered option lists.\n"
+        "- NEVER use AI-assistant phrases or break character.\n\n"
 
         "The Fortress has been adrift between dimensions for millennia. "
         "Every surface remembers. Every NPC has a distinct voice. "
-        "The player is a traveller who just arrived through the abduction hoop."
+        "The player arrived through the fabrication process — form not yet fully defined."
     )
 
     system = system_core
 
-    # ── Inject Sorting Hat retrieved world context ────────────────────────
+    # ── World context: Sorting Hat RAG or static fallback ─────────────────
     if world_ctx:
         system += (
             "\n\n[WORLD CONTEXT — Knowledge retrieved for this moment. "
@@ -2513,6 +2586,13 @@ def _build_messages() -> list[dict]:
             + world_ctx
             + "\n[END WORLD CONTEXT]"
         )
+    elif _chroma_knowledge is None:
+        # ChromaDB not installed — inject compact static world facts so the
+        # model has accurate setting, NPC, and opening-location data instead
+        # of inventing from scratch.
+        static_ctx = _build_static_world_context()
+        if static_ctx:
+            system += "\n\n" + static_ctx
 
     # ── Player state ──────────────────────────────────────────────────────
     if _player_dressed:
@@ -2550,26 +2630,33 @@ def _build_messages() -> list[dict]:
         active_turns = all_turns
 
     msgs: list[dict] = [{"role": "system", "content": system}]
-    for turn in active_turns:
-        is_player = turn.get("is_player") or any(
-            b.get("isPlayer") for b in (turn.get("parsed_blocks") or [])
-        )
-        text = turn.get("raw_text", "").strip()
-        if text:
-            msgs.append({"role": "user" if is_player else "assistant", "content": text})
 
-    # First turn: inject a synthetic trigger so the model starts in the portal
-    # chamber, not in an arbitrary scene derived from NPC profile details.
     if not all_turns:
+        # First turn / post-reset: inject first_mes as the canonical opening
+        # assistant turn so the model continues from the pre-written Fabrication
+        # Bay scene (Sherri, scanning wand, three-note chime) rather than
+        # inventing its own opening from scratch.
+        if _first_mes:
+            msgs.append({"role": "assistant", "content": _first_mes})
         msgs.append({
             "role": "user",
             "content": (
-                "[OPENING SEQUENCE] A new run has begun. The player has just arrived "
-                "through the portal hoop into the pod bay antechamber. "
-                "Begin with the chamber arrival narration now. "
-                "The Remnant speaks only the ritual question: 'Who are you, being?'"
+                "[OPENING SEQUENCE] The fabrication process has completed. "
+                "The player is seated on the bench in the Fabrication Bay. "
+                "Sherri has just finished her initial scan and is asking about "
+                "name, form, and clothes. Continue the scene from exactly where "
+                "first_mes left off — do NOT re-describe the arrival or re-emit "
+                "the GENERATE_IMAGE for the Fabrication Bay."
             ),
         })
+    else:
+        for turn in active_turns:
+            is_player = turn.get("is_player") or any(
+                b.get("isPlayer") for b in (turn.get("parsed_blocks") or [])
+            )
+            text = turn.get("raw_text", "").strip()
+            if text:
+                msgs.append({"role": "user" if is_player else "assistant", "content": text})
 
     return msgs
 
@@ -2590,13 +2677,14 @@ def _stream_ollama_chat(
         "model": _ollama_model(),
         "messages": messages,
         "stream": True,
-        # num_ctx: deliberately left at Ollama's default (4096).
-        # The Sorting Hat RAG condenses system overhead to ~1,400 tokens
-        # (condensed core + 6 retrieved chunks + memories), so 4096 ctx is
-        # sufficient for system + 10-turn verbatim history + response buffer.
-        # Forcing a higher num_ctx causes model reloads on every call (new
-        # KV cache allocation) which stalls the narrator for 20-30 s.
-        "options": {},
+        # num_ctx: 8192 for qwen2.5:14b.
+        # Expanded system_core (~500 tokens) + static world context (~200 tokens)
+        # + first_mes on turn 1 (~300 tokens) + 10-turn history (~3000 tokens)
+        # + response buffer (~800 tokens) ≈ 4800 tokens — over the old 4096 default.
+        # qwen2.5:14b supports 32K natively; 8192 is conservative.
+        # Ollama only reallocates KV cache when num_ctx changes between calls —
+        # keeping it fixed avoids per-call stalls.
+        "options": {"num_ctx": 8192},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
