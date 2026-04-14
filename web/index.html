@@ -498,12 +498,12 @@ html, body {
 .entry.say        .entry-text { color: var(--c-say); }
 .entry.do         .entry-text { color: var(--c-do); font-style: italic; }
 .entry.insights   .entry-text { color: var(--c-ins); font-style: italic; }
-.entry.sense-touch       .entry-text { color: var(--c-touch); font-style: italic; }
-.entry.sense-smell       .entry-text { color: var(--c-smell); font-style: italic; }
-.entry.sense-sound       .entry-text { color: var(--c-sound); font-style: italic; }
-.entry.sense-sight       .entry-text { color: var(--c-sight); font-style: italic; }
-.entry.sense-taste       .entry-text { color: var(--c-taste); font-style: italic; }
-.entry.sense-environment .entry-text { color: var(--c-env);   font-style: italic; }
+.entry.sense-touch       .entry-text { color: var(--c-touch); }
+.entry.sense-smell       .entry-text { color: var(--c-smell); }
+.entry.sense-sound       .entry-text { color: var(--c-sound); }
+.entry.sense-sight       .entry-text { color: var(--c-sight); }
+.entry.sense-taste       .entry-text { color: var(--c-taste); }
+.entry.sense-environment .entry-text { color: var(--c-env);   }
 .entry.is-player  .entry-text { color: var(--c-player); font-style: normal; }
 
 /* NPC character dialogue — distinct speaker colour, slightly indented feel */
@@ -541,16 +541,42 @@ html, body {
 .c-teal     { color: rgba( 80, 220, 200, 0.90); }
 .c-whisper  { color: rgba(255, 255, 255, 0.28); font-style: italic; }
 
-/* Lore whisper — The Fortress narrating history during quiet moments */
-.entry.lore-whisper {
-  border-left: 2px solid rgba(255,200,80,0.25);
-  padding-left: 16px;
-  color: rgba(255,200,80,0.5);
-  font-style: italic;
-  font-size: 12px;
-  margin-top: 6px;
+/* Lore whisper — The Fortress narrating history; same weight as narrator prose */
+.entry.lore-whisper { color: rgba(255, 200, 80, 0.70); }
+.lore-icon { margin-right: 4px; opacity: 0.40; }
+
+/* Sense receipt chips — dim per-turn accountability row */
+.sense-receipt {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  padding-left: 104px; /* align with .entry-text column (avatar+gap+speaker+gap) */
+  opacity: 0.38;
 }
-.lore-icon { margin-right: 6px; opacity: 0.35; }
+.sense-chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  cursor: default;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: max-width 0.25s ease, opacity 0.2s;
+}
+.sense-receipt:hover { opacity: 0.70; }
+.sense-chip:hover    { max-width: 420px; }
+.sense-chip.chip-sight       { color: var(--c-sight); }
+.sense-chip.chip-smell       { color: var(--c-smell); }
+.sense-chip.chip-sound       { color: var(--c-sound); }
+.sense-chip.chip-touch       { color: var(--c-touch); }
+.sense-chip.chip-taste       { color: var(--c-taste); }
+.sense-chip.chip-environment { color: var(--c-env);   }
+.sense-chip.chip-mood        { color: rgba(255, 180,  90, 0.90); }
+.sense-chip.chip-image       { color: rgba(180, 160, 255, 0.90); }
 
 /* ── Input bar ── */
 #bottombar {
@@ -1000,7 +1026,7 @@ const _pendingPlayerTexts = new Set();
 // All other speakers get a deterministic voice from the pool via name hash.
 const _PINNED_VOICES = {
   'The Remnant':  'am_echo',    // sharp, crisp, rapid-fire — arrogant AI
-  'The Fortress': 'bf_alice',   // warm British female — maternal historian
+  'The Fortress': 'af_heart',   // warm American female — gentle, vast, primary narrator
   'Sherri':       'af_sarah',   // warm American female — cheerful automaton
 };
 
@@ -1293,13 +1319,13 @@ function renderTurn(turn, instant) {
       const voice = isCharSeg
         ? _voiceForSpeaker(b.speaker || 'NPC')
         : 'am_michael';
-      // Character lines stay in the feed permanently (bubble is the transient visual).
-      // Pass speakerName so _ttsNext() knows to drive the portrait + bubble.
+      // ALL feed entries are permanent — the text feed is the story transcript.
+      // Speech bubbles are the transient visual; TTS is the transient audio.
+      // Nothing ever fades from the feed.
       segments.push({
         text,
         voice,
-        el: isCharSeg ? null : div,        // fadeEl only for non-character entries
-        fadeAfter: false,                   // never fade character feed entries
+        el: null,                           // no fadeEl — permanent transcript
         speakerName: isCharSeg ? (b.speaker || 'NPC') : null,
       });
     }
@@ -1308,6 +1334,40 @@ function renderTurn(turn, instant) {
   if (added) {
     emptyMsg.style.display = 'none';
     feed.scrollTop = feed.scrollHeight;
+  }
+
+  // Sense receipt chips — compact dim row confirming which sense channels
+  // were captured and written into entity memory this turn.
+  if (isNarratorTurn && !instant && added) {
+    const rawUp = (turn.raw_text || '').toUpperCase();
+    const CHIP_META = {
+      sight: '👁', smell: '👃', sound: '👂',
+      touch: '✋', taste: '👅', environment: '🌐',
+    };
+    const chips = [];
+    const seenSense = new Set();
+    for (const b of blocks) {
+      const st = b.senseType ? b.senseType.toLowerCase() : null;
+      if (st && !seenSense.has(st)) {
+        seenSense.add(st);
+        chips.push({type: st, text: (b.text || '').replace(/<[^>]+>/g, '').trim()});
+      }
+    }
+    // Mood and image from raw tags
+    const moodMatch = (turn.raw_text || '').match(/\[MOOD\s*:\s*"([^"]+)"\]/i);
+    if (moodMatch) chips.push({type: 'mood', text: moodMatch[1]});
+    if (rawUp.includes('[GENERATE_IMAGE')) chips.push({type: 'image', text: 'image generating…'});
+
+    if (chips.length) {
+      const receipt = document.createElement('div');
+      receipt.className = 'sense-receipt arriving';
+      receipt.innerHTML = chips.map(c => {
+        const icon = CHIP_META[c.type] || (c.type === 'mood' ? '🎵' : '🖼');
+        const preview = c.text.slice(0, 55) + (c.text.length > 55 ? '…' : '');
+        return `<span class="sense-chip chip-${c.type}" title="${esc(c.text)}">${icon} ${esc(preview)}</span>`;
+      }).join('');
+      feed.appendChild(receipt);
+    }
   }
 
   // Speak narrator + NPC text for new (non-history) turns, then dissolve
@@ -1322,12 +1382,12 @@ function renderTurn(turn, instant) {
         // Character segments are identified by having speakerName (not fadeAfter — that's gone).
         const charSegs = segments.filter(s => s.speakerName);
         charSegs.forEach(seg =>
-          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el, seg.speakerName));
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.speakerName));
       } else {
         // Non-streamed: clear stale audio and enqueue everything fresh.
         _ttsClearTurn();
         segments.forEach(seg =>
-          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.el, seg.speakerName));
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.speakerName));
       }
       // Sentinel: fires ttsReady once all this turn's audio has played.
       _ttsQ.push({_cb: () => {
@@ -1665,12 +1725,10 @@ function connect() {
       el.innerHTML = '<span class="lore-icon">📖</span><span class="entry-text">' + _formatText(data.text) + '</span>';
       feed.appendChild(el);
       feed.scrollTop = feed.scrollHeight;
+      // Lore is permanent — no fade. Voice follows the Fortress pin.
       if (_sense.audio) {
-        _speakTTS(_stripForTTS(data.text), 'bf_alice').then(() => {
-          setTimeout(() => el.classList.add('fading-out'), 4000);
-        });
-      } else {
-        setTimeout(() => el.classList.add('fading-out'), 18000);
+        const fortressVoice = _PINNED_VOICES['The Fortress'] || 'af_heart';
+        _speakTTS(_stripForTTS(data.text), fortressVoice, 0.88);
       }
     } catch (_) {}
   });
@@ -1882,7 +1940,7 @@ let _ttsAbort  = null;
 let _ttsGenId  = 0;   // incremented each turn; old speech loops stop when stale
 
 // ── TTS governor state (shared by connect() SSE handlers + top-level functions) ──
-const _ttsQ = [];                // pending items: {text,voice,ttsGen,fadeEl,speakerName} | {_cb}
+const _ttsQ = [];                // pending items: {text,voice,ttsGen,speakerName} | {_cb}
 let _ttsActive = false;          // true while _ttsNext loop owns the queue
 const _ttsSeenTexts = new Set(); // dedup within a turn boundary
 let _ttsLoopGen = 0;             // incremented on clear; stale loops self-terminate
@@ -1892,7 +1950,7 @@ let _ttsLoopGen = 0;             // incremented on clear; stale loops self-termi
 // _ttsNext     — drain loop (one active instance at a time)
 // _ttsClearTurn — stop current audio, drain queue, reset dedup
 
-function _ttsEnqueue(text, voice, ttsGen, fadeEl, speakerName) {
+function _ttsEnqueue(text, voice, ttsGen, speakerName) {
   const key = `${voice || 'am_michael'}:${text}`;
   if (!text || !text.trim() || _ttsSeenTexts.has(key)) return;
   _ttsSeenTexts.add(key);
@@ -1900,7 +1958,6 @@ function _ttsEnqueue(text, voice, ttsGen, fadeEl, speakerName) {
     text,
     voice: voice || 'am_michael',
     ttsGen: ttsGen || 0,
-    fadeEl: fadeEl || null,
     speakerName: speakerName || null,
   });
   if (!_ttsActive) _ttsNext();
@@ -1914,9 +1971,12 @@ async function _ttsNext() {
     if (_ttsLoopGen !== myGen) break; // superseded by _ttsClearTurn
     const item = _ttsQ.shift();
     if (item._cb) { item._cb(); continue; }
-    const {text, voice, ttsGen, fadeEl, speakerName} = item;
+    const {text, voice, ttsGen, speakerName} = item;
     if (!_sense.audio) continue;
     if (ttsGen && _ttsGenId !== ttsGen) continue; // stale turn
+
+    // Voice-specific speed: The Fortress speaks slowly for gravitas
+    const speed = (voice === 'af_heart') ? 0.88 : 1.0;
 
     if (speakerName) {
       // Comic bubble path: show portrait + bubble, speak, hide bubble after.
@@ -1925,13 +1985,13 @@ async function _ttsNext() {
       const nextItem = _ttsQ.length > 0 ? _ttsQ[0] : null;
       const nextIsChar = nextItem && !nextItem._cb && nextItem.speakerName;
       _showCharacterBubble(speakerName, text);
-      await _speakTTS(text, voice);
+      await _speakTTS(text, voice, speed);
       if (_ttsLoopGen !== myGen) break;
       _hideCharacterBubble(/*restoreScene=*/ !nextIsChar);
     } else {
-      await _speakTTS(text, voice);
+      await _speakTTS(text, voice, speed);
       if (_ttsLoopGen !== myGen) break;
-      if (fadeEl) setTimeout(() => fadeEl.classList.add('fading-out'), 1800);
+      // Nothing to fade — feed entries are permanent.
     }
   }
   if (_ttsLoopGen === myGen) _ttsActive = false;
@@ -1948,7 +2008,7 @@ function _ttsClearTurn() {
   _hideCharacterBubble(/*restoreScene=*/ true);
 }
 
-function _speakTTS(text, voice = 'am_michael') {
+function _speakTTS(text, voice = 'am_michael', speed = 1.0) {
   // Cancel any in-flight TTS request and stop any playing speech
   if (_ttsAbort) { _ttsAbort.abort(); _ttsAbort = null; }
   if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
@@ -1964,7 +2024,7 @@ function _speakTTS(text, voice = 'am_michael') {
     fetch('/api/tts/v1/audio/speech', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({model: 'kokoro', input: text, voice}),
+      body: JSON.stringify({model: 'kokoro', input: text, voice, speed}),
       signal: ctrl.signal,
     })
     .then(res => { if (!res.ok) { done(); return null; } return res.arrayBuffer(); })

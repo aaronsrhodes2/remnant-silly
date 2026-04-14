@@ -110,13 +110,15 @@ def speak():
     data = request.get_json(force=True, silent=True) or {}
     text  = (data.get("input") or "").strip()
     voice = data.get("voice") or DEFAULT_VOICE
+    speed = float(data.get("speed") or 1.0)
+    speed = max(0.5, min(2.0, speed))  # clamp to sane range
 
     if not text:
         return jsonify({"error": "no input text"}), 400
 
     try:
         tts = _get_tts()
-        samples, sample_rate = tts.create(text, voice=voice, speed=1.0, lang="en-us")
+        samples, sample_rate = tts.create(text, voice=voice, speed=speed, lang="en-us")
         wav_bytes = _to_wav(samples, sample_rate)
     except Exception as exc:
         log.exception("TTS failed: %s", exc)
