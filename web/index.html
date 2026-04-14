@@ -272,7 +272,26 @@ html, body {
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: opacity 0.4s ease;
+  transition: opacity 0.4s ease, filter 0.5s ease;
+  cursor: pointer;
+}
+#gallery-img.regen-pending {
+  filter: blur(8px) brightness(0.45) grayscale(0.4);
+  cursor: wait;
+}
+#gallery-current::after {
+  content: '';
+  display: none;
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0);
+  pointer-events: none;
+}
+#gallery-img.regen-pending ~ #gallery-status::before {
+  content: '\21BB  regenerating\2026';
+  display: block;
+  font-size: 10px;
+  color: rgba(255,255,255,0.55);
+  letter-spacing: 0.5px;
 }
 
 #gallery-status {
@@ -287,21 +306,6 @@ html, body {
   letter-spacing: 0.4px;
   pointer-events: none;
 }
-#gallery-regen {
-  display: none;
-  position: absolute;
-  bottom: 30px; right: 8px;
-  background: rgba(0,0,0,0.65);
-  color: rgba(255,255,255,0.65);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 4px;
-  font-size: 13px; padding: 2px 6px;
-  cursor: pointer; z-index: 3;
-  transition: color 0.15s, border-color 0.15s;
-}
-#gallery-current:hover #gallery-regen { display: block; }
-#gallery-regen:hover { color: #fff; border-color: rgba(255,255,255,0.35); }
-
 /* ── Comic speech bubble ── */
 #speech-bubble {
   position: absolute;
@@ -480,20 +484,6 @@ html, body {
   display: block;
 }
 .thumb-wrap:hover .gallery-thumb { opacity: 1; }
-.thumb-del {
-  display: none;
-  position: absolute;
-  top: 2px; right: 2px;
-  width: 16px; height: 16px;
-  font-size: 11px; line-height: 15px; text-align: center;
-  background: rgba(0,0,0,0.80);
-  color: rgba(255,255,255,0.75);
-  border: none; border-radius: 2px;
-  cursor: pointer; padding: 0;
-  z-index: 2;
-}
-.thumb-wrap:hover .thumb-del { display: block; }
-.thumb-del:hover { color: #fff; background: rgba(180,40,40,0.85); }
 
 /* ── Entry rows ── */
 .entry {
@@ -1039,8 +1029,7 @@ html, body {
 
     <div id="gallery-panel">
       <div id="gallery-current">
-        <img id="gallery-img" src="/game/assets/fortress-interior.jpg" alt="Current scene">
-        <button id="gallery-regen" title="Regenerate this scene">&#x1F504;</button>
+        <img id="gallery-img" src="/game/assets/fortress-interior.jpg" alt="Current scene" title="Click to regenerate">
         <div id="gallery-status"></div>
         <div id="speech-bubble" role="status" aria-live="polite" aria-atomic="true">
           <div id="bubble-speaker"></div>
@@ -1114,13 +1103,30 @@ const _portraitMap = {
   '__player__':   _PLAYER_AVATAR,
 };
 
+/**
+ * Look up a portrait URL for a speaker name.
+ * Tries exact match first, then word-overlap fallback so "Artisan Kaelo"
+ * matches a map entry keyed as "Kaelo" or vice-versa.
+ */
+function _lookupPortrait(name) {
+  if (!name) return '';
+  if (_portraitMap[name]) return _portraitMap[name];
+  const parts = name.trim().split(/\s+/);
+  for (const [k, v] of Object.entries(_portraitMap)) {
+    if (k === '__player__') continue;
+    const kparts = k.split(/\s+/);
+    if (parts.some(p => kparts.includes(p))) return v;
+  }
+  return '';
+}
+
 // Scene image URL saved before a character portrait swaps in, so we can restore it.
 let _preSpeakerImg = null;
 
 // ── Comic speech bubble helpers ──────────────────────────────────────────────
 
 function _showCharacterBubble(speakerName, text) {
-  const portrait = _portraitMap[speakerName];
+  const portrait = _lookupPortrait(speakerName);
 
   // Crossfade gallery to character portrait (save scene image on first swap per turn)
   if (portrait) {
@@ -1238,12 +1244,22 @@ function _renderNpcPresence() {
     const wrap = document.createElement('div');
     wrap.className = 'npc-avatar-wrap';
     wrap.dataset.tip = npc.description || npc.name;
-    if (npc.portraitUrl) {
+    const portraitUrl = npc.portraitUrl || _lookupPortrait(npc.name);
+    if (portraitUrl) {
       const img = document.createElement('img');
       img.className = 'npc-avatar-img';
-      img.src = npc.portraitUrl;
+      img.src = portraitUrl;
       img.alt = npc.name;
       wrap.appendChild(img);
+      wrap.style.cursor = 'pointer';
+      wrap.addEventListener('click', () => {
+        galleryImg.style.opacity = '0';
+        setTimeout(() => {
+          galleryImg.src = portraitUrl;
+          galleryImg.title = npc.name;
+          galleryImg.style.opacity = '1';
+        }, 150);
+      });
     } else {
       wrap.classList.add('no-portrait');
       wrap.dataset.initial = (npc.name[0] || '?').toUpperCase();
@@ -1268,7 +1284,7 @@ function _extractIntroductions(rawText) {
       _presentNPCs.set(name, {
         name,
         description: desc,
-        portraitUrl: _portraitMap[name] || '',
+        portraitUrl: _lookupPortrait(name),
       });
       changed = true;
     }
@@ -1353,7 +1369,7 @@ function renderTurn(turn, instant) {
     const speaker = b.isPlayer
       ? (_playerName || 'You')
       : (isCharacter ? (b.speaker || 'NPC') : (turn.narrator_name || 'The Fortress'));
-    const avatarUrl = b.isPlayer ? (_portraitMap['__player__'] || _PLAYER_AVATAR) : (_portraitMap[speaker] || '');
+    const avatarUrl = b.isPlayer ? (_portraitMap['__player__'] || _PLAYER_AVATAR) : _lookupPortrait(speaker);
     const speakerChanged = speaker !== _lastSpeaker;
     _lastSpeaker = speaker;
     div.innerHTML =
@@ -1482,10 +1498,17 @@ function renderMetaEvent(data) {
 
   if (data.type === 'portrait' && data.name && data.url) {
     _portraitMap[data.name] = data.url;
-    if (_presentNPCs.has(data.name)) {
-      _presentNPCs.get(data.name).portraitUrl = data.url;
-      _renderNpcPresence();
+    // Update any NPC whose name fuzzy-matches (handles "Artisan Kaelo" ↔ "Kaelo" etc.)
+    const nameParts = data.name.trim().split(/\s+/);
+    let npcsUpdated = false;
+    for (const [k, npc] of _presentNPCs.entries()) {
+      const kparts = k.trim().split(/\s+/);
+      if (k === data.name || kparts.some(p => nameParts.includes(p))) {
+        npc.portraitUrl = data.url;
+        npcsUpdated = true;
+      }
     }
+    if (npcsUpdated) _renderNpcPresence();
   }
 
   if ((data.type === 'player_alias' || data.type === 'player_switch' || data.type === 'player_restore') && data.name) {
@@ -1547,6 +1570,8 @@ const galleryThumbs = document.getElementById('gallery-thumbs');
 const _galleryHistory = [];
 
 function _setGalleryImage(dataUrl, kind, description) {
+  // Clear any pending-regen blur so the incoming image arrives cleanly.
+  galleryImg.classList.remove('regen-pending');
   galleryImg.style.opacity = '0';
   setTimeout(() => {
     galleryImg.src = dataUrl;
@@ -1558,6 +1583,8 @@ function _setGalleryImage(dataUrl, kind, description) {
                             description: description || ''});
   if (_galleryHistory.length > 20) _galleryHistory.pop();
   _renderGalleryThumbs();
+  // Persist gallery so it survives a page reload (best-effort; fails silently on quota).
+  try { localStorage.setItem('remnant_gallery', JSON.stringify(_galleryHistory.slice(0, 10))); } catch (_) {}
 }
 
 function _renderGalleryThumbs() {
@@ -1577,41 +1604,42 @@ function _renderGalleryThumbs() {
       wrap.classList.add('active');
     });
 
-    const del = document.createElement('button');
-    del.className = 'thumb-del';
-    del.textContent = '\u00d7';
-    del.title = 'Hide from gallery';
-    del.addEventListener('click', e => {
-      e.stopPropagation();
-      const wasActive = wrap.classList.contains('active');
-      _galleryHistory.splice(i, 1);
-      _renderGalleryThumbs();
-      if (wasActive && _galleryHistory.length > 0) {
-        galleryImg.src = _galleryHistory[0].dataUrl;
-        if (_galleryHistory[0].description) galleryImg.title = _galleryHistory[0].description;
-      }
-    });
-
     wrap.appendChild(img);
-    wrap.appendChild(del);
     galleryThumbs.appendChild(wrap);
   });
 }
 
-// Regenerate current scene image via flask-sd
-document.getElementById('gallery-regen').addEventListener('click', async () => {
+// Restore gallery from previous session (best-effort).
+// Done here — after _renderGalleryThumbs and galleryImg are defined — so the
+// gallery strip is populated immediately on load, before SSE events arrive.
+try {
+  const _saved = JSON.parse(localStorage.getItem('remnant_gallery') || '[]');
+  if (Array.isArray(_saved) && _saved.length) {
+    _galleryHistory.push(..._saved);
+    _renderGalleryThumbs();
+    const _first = _galleryHistory[0];
+    if (_first) {
+      galleryImg.src = _first.dataUrl;
+      if (_first.description) galleryImg.title = _first.description;
+    }
+  }
+} catch (_) {}
+
+// Click main gallery image → blur it in-place and request regeneration.
+// The blurred original stays visible while SD renders; incoming scene_image SSE
+// clears the filter and swaps the image normally.
+galleryImg.addEventListener('click', async () => {
+  if (galleryImg.classList.contains('regen-pending')) return; // already pending
+  galleryImg.classList.add('regen-pending');
   const desc = galleryImg.title || '';
-  if (!desc) return;
-  galleryStatus.textContent = '\u29d7 regenerating\u2026';
   try {
     await fetch('/regenerate-scene', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({description: desc}),
     });
-    // New scene_image SSE event will update the gallery when SD finishes (~20-40s)
   } catch (_) {
-    galleryStatus.textContent = '';
+    galleryImg.classList.remove('regen-pending'); // server error — restore
   }
 });
 
@@ -1842,9 +1870,10 @@ function connect() {
       feed.appendChild(el);
       feed.scrollTop = feed.scrollHeight;
       // Lore is permanent — no fade. Voice follows the Fortress pin.
+      // Route through the TTS queue so it doesn't cut off narrator speech.
       if (_sense.audio) {
         const fortressVoice = _PINNED_VOICES['The Fortress'] || 'af_heart';
-        _speakTTS(_stripForTTS(data.text), fortressVoice, 0.88);
+        _ttsEnqueue(_stripForTTS(data.text), fortressVoice, 0, 'lore');
       }
     } catch (_) {}
   });
@@ -1853,13 +1882,10 @@ function connect() {
     try {
       const data = JSON.parse(e.data);
       if (!data.text || !_sense.audio) return;
-      // Play greeting in the NPC's voice after a short pause for dramatic effect.
-      // No text entry — pure audio. This fires after the main turn TTS finishes
-      // because SSE events are processed in order and TTS is async.
-      setTimeout(() => {
-        const voice = _PINNED_VOICES[data.name] || _voiceForSpeaker(data.name);
-        _speakTTS(_stripForTTS(data.text), voice);
-      }, 800);
+      // Play greeting in the NPC's voice after narrator TTS finishes.
+      // Route through queue so it doesn't cut off narrator speech.
+      const voice = _PINNED_VOICES[data.name] || _voiceForSpeaker(data.name);
+      _ttsEnqueue(_stripForTTS(data.text), voice, 0, data.name);
     } catch (_) {}
   });
 
@@ -2037,6 +2063,9 @@ function _stripForTTS(text) {
  * as a fallback so it at least renders correctly rather than showing raw *.
  */
 function _formatText(text) {
+  // 0. Strip any machine directive tags the server may have missed (e.g. GENERATEIMAGE without underscore,
+  //    or tags appearing mid-prose that bypass the line-start filter).
+  text = text.replace(/\[\/?\s*[A-Z][A-Z_]{2,}(?:\([^)]*\))?\s*(?::\s*"[^"]*")?\]/g, '').trim();
   // 1. HTML-escape (handles &, <, >, ")
   let s = esc(text);
   // 2. Square-bracket display tags → HTML (order matters: BI before B/I)

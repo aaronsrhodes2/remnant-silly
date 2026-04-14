@@ -2670,7 +2670,7 @@ _CHARACTER_RE = re.compile(
 # in _build_messages() so the model sees its own previous output in canonical form.
 # Only parsed_blocks (cleaned) is shown to the player or read by TTS.
 _STRIP_DISPLAY_TAGS_RE = re.compile(
-    r'\[/?(?:GENERATE_IMAGE|INTRODUCE|ITEM|LORE|SFX|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
+    r'\[/?(?:GENERATE_?IMAGE|INTRODUCE|ITEM|LORE|SFX|WORLD_EVENT|QUEST|PLAYER_SWITCH|CHARACTER'
     r'|PLAYER_TRAIT|UPDATE_PLAYER|PERMANENCE|LOCATION|NPC|ENTITY|META'
     r'|MOOD|SOUND|SIGHT|SMELL|TASTE|TOUCH|ENVIRONMENT)[^\]]*\]'
     r'(?:\s*:\s*"[^"]*")?',
