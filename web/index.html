@@ -3120,18 +3120,20 @@ function _sttMime() {
   return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch(_){return false;} }) || '';
 }
 
-let   _vadThreshold  = 0.012;  // RMS energy to count as speech — calibrated on init
-const VAD_ONSET_MS   = 120;    // speech must persist this long before we start recording
+let   _vadThreshold  = 0.008;  // RMS energy to count as speech — calibrated on init
+const VAD_ONSET_MS   = 60;     // speech must persist this long before we start recording
+const VAD_ONSET_GAP  = 120;    // ms of quiet tolerated mid-onset before resetting timer
 const VAD_SILENCE_MS = 1400;   // silence after speech before we stop and transcribe
 
-let _vadStream      = null;
-let _vadAnalyser    = null;
-let _vadRecorder    = null;
-let _vadChunks      = [];
-let _vadSpeaking    = false;
-let _vadSpeechStart = null;
-let _vadSilStart    = null;
-let _vadBuf         = null;
+let _vadStream       = null;
+let _vadAnalyser     = null;
+let _vadRecorder     = null;
+let _vadChunks       = [];
+let _vadSpeaking     = false;
+let _vadSpeechStart  = null;
+let _vadSilStart     = null;
+let _vadOnsetSilStart= null;   // grace-period timer: brief quiet during onset
+let _vadBuf          = null;
 
 function _vadRMS() {
   _vadAnalyser.getFloatTimeDomainData(_vadBuf);
@@ -3145,7 +3147,7 @@ function _vadTick() {
   requestAnimationFrame(_vadTick);
 
   // Don't capture while TTS is speaking (prevents echo)
-  if (_ttsSource) { _vadSpeaking = false; _vadSpeechStart = null; _vadSilStart = null; return; }
+  if (_ttsSource) { _vadSpeaking = false; _vadSpeechStart = null; _vadOnsetSilStart = null; _vadSilStart = null; return; }
   // Don't overwrite if user is actively typing
   if (document.activeElement === inputEl && inputEl.value.trim()) return;
 
@@ -3166,14 +3168,24 @@ function _vadTick() {
   const now  = Date.now();
 
   if (loud) {
-    _vadSilStart = null;
+    _vadSilStart      = null;
+    _vadOnsetSilStart = null;   // reset onset grace period — we're loud again
     if (!_vadSpeaking) {
       if (!_vadSpeechStart) { _vadSpeechStart = now; }
       else if (now - _vadSpeechStart >= VAD_ONSET_MS) { _vadBeginRecord(); }
     }
   } else {
-    _vadSpeechStart = null;
-    if (_vadSpeaking) {
+    if (!_vadSpeaking) {
+      // Pre-speech: tolerate brief quiet frames (inter-phoneme gaps, plosives).
+      // Only cancel the onset timer if silence lasts longer than VAD_ONSET_GAP.
+      if (_vadSpeechStart) {
+        if (!_vadOnsetSilStart) { _vadOnsetSilStart = now; }
+        else if (now - _vadOnsetSilStart >= VAD_ONSET_GAP) {
+          _vadSpeechStart = null; _vadOnsetSilStart = null;
+        }
+      }
+    } else {
+      // Mid-speech: end recording after sustained silence.
       if (!_vadSilStart) { _vadSilStart = now; }
       else if (now - _vadSilStart >= VAD_SILENCE_MS) { _vadEndRecord(); }
     }
@@ -3555,7 +3567,9 @@ async function _initVAD() {
       if (performance.now() - start < 1000) requestAnimationFrame(sample);
       else {
         const ambient = samples.reduce((a, b) => a + b, 0) / samples.length;
-        _vadThreshold = Math.max(ambient * 4, 0.006);
+        // USB mics in quiet rooms have near-zero ambient — use 2.5× with a low floor
+        // so normal conversational distance (not right up on the mic) triggers reliably.
+        _vadThreshold = Math.max(ambient * 2.5, 0.003);
         console.log(`[vad] calibrated — ambient RMS: ${ambient.toFixed(5)}  threshold: ${_vadThreshold.toFixed(5)}`);
         res();
       }
