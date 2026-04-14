@@ -1142,8 +1142,9 @@ function _showCharacterBubble(speakerName, text) {
         galleryImg.setAttribute('data-speaker', speakerName);
         galleryImg.style.opacity = '1';
       }, 180);
-      // Add portrait to gallery thumbnail history
-      if (_galleryHistory && typeof _renderGalleryThumbs === 'function') {
+      // Add SD-generated portraits (data URLs) to gallery history.
+      // Skip static asset paths (/game/assets/…) — they render as broken thumbs.
+      if (_galleryHistory && typeof _renderGalleryThumbs === 'function' && portrait.startsWith('data:')) {
         _galleryHistory.unshift({dataUrl: portrait, ts: Date.now(), kind: 'character', description: speakerName});
         if (_galleryHistory.length > 20) _galleryHistory.pop();
         _renderGalleryThumbs();
@@ -3518,7 +3519,6 @@ async function _initVAD() {
     // Step 2: enumerate all audio inputs now that we have permission (labels need it).
     const _devices = await navigator.mediaDevices.enumerateDevices();
     const _inputs  = _devices.filter(d => d.kind === 'audioinput');
-    console.log('[vad] audio inputs:', _inputs.map(d => d.label || d.deviceId).join(' | '));
 
     // Step 3: if the current stream isn't a dedicated mic, try to switch to one.
     // Only stop+reopen when necessary — keeps stream alive on the happy path.
@@ -3529,13 +3529,13 @@ async function _initVAD() {
     const _isHwMic   = d => /cmteck|usb|yeti|blue\s|rode|focusrite|samson|audio-technica|shure|hyperx|razer|microphone/i.test(d.label) && !_isVirtual(d);
     const _usbMic = _inputs.find(d => d.deviceId !== _curId && _isHwMic(d));
     if (_usbMic) {
-      console.log('[vad] switching to dedicated mic:', _usbMic.label);
+      console.log('[vad] mic:', _usbMic.label);
       _vadStream.getTracks().forEach(t => t.stop());
       _vadStream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { ideal: _usbMic.deviceId } },
       });
     } else {
-      console.log('[vad] using stream:', _vadStream.getAudioTracks()[0]?.label || 'default');
+      console.log('[vad] mic:', _vadStream.getAudioTracks()[0]?.label || 'default');
     }
   } catch (e) {
     console.warn('[vad] mic unavailable:', e.message);
