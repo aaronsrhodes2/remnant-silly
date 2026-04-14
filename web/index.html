@@ -1332,6 +1332,8 @@ function renderTurn(turn, instant) {
       _lastSpeaker = ''; // reset so first speaker after location break shows avatar
       // Location changed — clear NPCs (they haven't followed unless re-introduced)
       _presentNPCs.clear();
+      // Gate lore delivery: player is in a new place, pending lore becomes eligible
+      if (!instant) _locationChanged = true;
       _renderNpcPresence();
       const locEl = document.createElement('div');
       locEl.className = 'meta-event' + (instant ? '' : ' arriving');
@@ -1886,12 +1888,16 @@ function connect() {
       el.innerHTML = '<span class="lore-icon">📖</span><span class="entry-text">' + _formatText(data.text) + '</span>';
       feed.appendChild(el);
       feed.scrollTop = feed.scrollHeight;
-      // Lore is permanent — no fade. Voice follows the Fortress pin.
-      // Route through the TTS queue so it doesn't cut off narrator speech.
-      // speakerName=null (no character bubble for lore), volume=0.55 (whispered).
+      // Lore audio goes into the HOLDING BUFFER, not the live TTS queue.
+      // _tryDeliverLore() will speak it only when:
+      //   • player has moved to a new location
+      //   • TTS channel is completely idle
+      //   • scene is fully settled (image + music ready)
+      //   • 60-second cooldown has elapsed
+      // This prevents lore from interrupting conversations or appearing mid-turn.
       if (_sense.audio) {
         const fortressVoice = _PINNED_VOICES['The Fortress'] || 'af_heart';
-        _ttsEnqueue(_stripForTTS(data.text), fortressVoice, 0, null, 0.55);
+        _pendingLore.push({ text: _stripForTTS(data.text), voice: fortressVoice });
       }
     } catch (_) {}
   });
@@ -1904,6 +1910,30 @@ function connect() {
       // Route through queue so it doesn't cut off narrator speech.
       const voice = _PINNED_VOICES[data.name] || _voiceForSpeaker(data.name);
       _ttsEnqueue(_stripForTTS(data.text), voice, 0, data.name);
+    } catch (_) {}
+  });
+
+  // Location change from server — sets the lore delivery gate independently of
+  // turn rendering (catches location changes that arrive out of band).
+  es.addEventListener('location', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.name) _locationChanged = true;
+    } catch (_) {}
+  });
+
+  // Ghost scout: server pre-generated content for a hot unvisited location.
+  // Store the image silently so _setGalleryImage can serve it instantly on arrival.
+  es.addEventListener('scout_ready', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.location && data.image) {
+        _scoutImageCache[data.location] = data.image;
+        // Preload the image into the browser decode cache (no visible change)
+        const preloader = new Image();
+        preloader.src = data.image.startsWith('data:') ? data.image
+                      : 'data:image/jpeg;base64,' + data.image;
+      }
     } catch (_) {}
   });
 
@@ -2109,6 +2139,19 @@ let _ttsActive = false;          // true while _ttsNext loop owns the queue
 const _ttsSeenTexts = new Set(); // dedup within a turn boundary
 let _ttsLoopGen = 0;             // incremented on clear; stale loops self-terminate
 
+// ── Lore lazy delivery state ──────────────────────────────────────────────────
+// Lore whispers are held in a buffer and only spoken after the player has moved
+// to a new location AND the TTS channel is fully idle AND the scene has settled.
+// This prevents lore from interrupting conversations or overwhelming the player.
+const _pendingLore = [];   // {text, voice} items waiting to be spoken
+let _locationChanged = false;   // true after player enters a new location
+let _lastLoreMs = 0;            // timestamp of last lore delivery (60s cooldown)
+
+// ── Ghost scout preload cache ─────────────────────────────────────────────────
+// scout_ready SSE events deliver pre-generated images for hot unvisited locations.
+// Stored here so _setGalleryImage can serve them instantly on arrival.
+const _scoutImageCache = {};    // location_name → base64 image data
+
 // ── TTS governor functions ──────────────────────────────────────────
 // _ttsEnqueue  — add one item to the queue; kick off loop if idle
 // _ttsNext     — drain loop (one active instance at a time)
@@ -2159,7 +2202,11 @@ async function _ttsNext() {
       // Nothing to fade — feed entries are permanent.
     }
   }
-  if (_ttsLoopGen === myGen) _ttsActive = false;
+  if (_ttsLoopGen === myGen) {
+    _ttsActive = false;
+    // Queue drained — check if a pending lore whisper can now be delivered
+    _tryDeliverLore();
+  }
 }
 
 function _ttsClearTurn() {
@@ -2427,7 +2474,29 @@ function _checkTurnComplete() {
       inp.classList.add('turn-complete');
       setTimeout(() => inp.classList.remove('turn-complete'), 2500);
     }
+    // Scene fully settled — check if lore can be delivered
+    _tryDeliverLore();
   }
+}
+
+// Deliver the oldest pending lore whisper when all conditions are met:
+//   1. Player has moved to a new location since last delivery
+//   2. TTS channel is completely idle (nothing queued or playing)
+//   3. Scene is fully set (image rendered, music playing)
+//   4. 60-second cooldown has elapsed since last lore delivery
+// This ensures lore never interrupts a conversation, never pops in mid-turn,
+// and never floods the player on rapid location changes.
+function _tryDeliverLore() {
+  if (!_pendingLore.length) return;
+  if (!_locationChanged) return;
+  if (_ttsActive || _ttsQ.length > 0) return;
+  if (!(_turnState.imageReady && _turnState.musicReady)) return;
+  if (Date.now() - _lastLoreMs < 60_000) return;
+
+  const { text, voice } = _pendingLore.shift();
+  _ttsEnqueue(text, voice, 0, null, 0.55);
+  _locationChanged = false;   // reset — next lore needs a fresh location change
+  _lastLoreMs = Date.now();
 }
 
 async function _onMoodEvent(moodText) {

@@ -113,6 +113,18 @@ _last_player_ts: float = time.time()  # reset on every player-input
 _spoken_lore_keys: set = set()        # avoid re-reading recently narrated lore
 LORE_IDLE_SECS = 50                   # seconds of silence before lore fires
 
+# Ghost scout — speculative pre-generation for locations the narrator is pushing.
+# When a known location accumulates ≥ HOOK_HEAT_THRESHOLD mentions across turns
+# (without the player being there), a silent background scout runs: it asks Ollama
+# for atmosphere tags and calls flask-sd for images, storing results in a prefetch
+# cache.  On arrival the Sorting Hat serves cached content immediately.
+_hook_heat: dict            = {}   # location_name → mention count (decays on visit)
+_location_prefetch_cache: dict = {}  # location_name → {images, mood, sense_beats, generated_at}
+_scout_running: bool        = False  # True while a scout thread is active
+HOOK_HEAT_THRESHOLD         = 3     # mentions before scout fires
+SCOUT_CACHE_EXPIRE_SECS     = 600   # 10-minute TTL (stale world = wrong atmosphere)
+SCOUT_MAX_CACHE             = 3     # max simultaneous cached locations
+
 def _sse_broadcast(event_type: str, data: object) -> None:
     """Push one SSE event to every connected client. Drops slow/dead clients."""
     raw = f"event: {event_type}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n".encode()
@@ -379,6 +391,45 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
                 "turn_id": turn_id,
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
+
+    # ── Location change broadcast + ghost scout hook heat ─────────────
+    # Broadcast a "location" SSE event when the player moves so the client can
+    # gate lore delivery and track _locationChanged.
+    prev_location = _world.get("current_location", "")
+    if location_name and location_name != prev_location:
+        _world["current_location"] = location_name
+        _sse_broadcast("location", {"name": location_name})
+
+    # Ghost scout hook accumulator: count how often each known location is
+    # mentioned in narrator turns while the player is NOT there.  Only counts
+    # when we know the current location (avoids false positives on turn 1).
+    if location_name and loc_id:
+        for _ent_id, _ent in list(_world["entities"].items()):
+            if _ent.get("type") != "location" or _ent_id == loc_id:
+                continue
+            _ent_name = _ent.get("canonical_name", "")
+            if _ent_name and _ent_name.lower() in raw_text.lower():
+                _hook_heat[_ent_name] = _hook_heat.get(_ent_name, 0) + 1
+                _log(f"[ghost-scout] hook heat '{_ent_name}' → {_hook_heat[_ent_name]}")
+
+    # Ghost scout cache consumption: when the player arrives at a scouted location,
+    # serve prefetched images and sense beats immediately.  Cache entry is consumed
+    # (popped) so it doesn't persist into subsequent visits.
+    if location_name and location_name in _location_prefetch_cache:
+        _cached = _location_prefetch_cache.pop(location_name)
+        _log(f"[ghost-scout] cache hit for '{location_name}' — serving prefetched content")
+        for _img in _cached.get("images", []):
+            _sse_broadcast("scene_image", {
+                "image": _img,
+                "kind": "location",
+                "description": f"scout: {location_name}",
+            })
+        for _beat in _cached.get("sense_beats", []):
+            _sse_broadcast("lore_whisper", {
+                "text": _beat["text"],
+                "key": f"scout_{loc_id}_{_beat['type'].lower()}",
+            })
+        _hook_heat.pop(location_name, None)  # reset heat — player arrived
 
     # ── NPC entities from INTRODUCE markers ───────────────────────────
     # Raw text: [INTRODUCE(Name): "description"]
@@ -5050,6 +5101,156 @@ def _ollama_watchdog_loop() -> None:
                 _sse_broadcast("activity", {"text": "⚠ language model reconnecting…"})
 
 
+def _run_ghost_scout(location_name: str) -> None:
+    """Background task: generate atmosphere for a hot location before the player arrives.
+
+    Sends a minimal Ollama prompt to get MOOD / GENERATE_IMAGE / SMELL / TOUCH tags,
+    then calls flask-sd for any image tags.  Results are stored in
+    _location_prefetch_cache[location_name] and served instantly when the player arrives.
+
+    Ghost scout NEVER writes to _narrator_turns, _world current state, _present_npcs,
+    or any entity graph — it is a read-only shadow pass.
+    """
+    global _scout_running
+    try:
+        _log(f"[ghost-scout] scouting '{location_name}'")
+        _sse_broadcast("activity", {"text": f"👁 scouting {location_name}…"})
+
+        # Pull any world.json description for this location as grounding context
+        loc_ent = _world["entities"].get(_loc_id(location_name), {})
+        loc_desc = loc_ent.get("description", "")
+        loc_sd_prompt = loc_ent.get("sd_prompt", "")
+
+        scout_system = (
+            "You are a silent observer generating atmosphere data for a game location. "
+            "Output ONLY the listed tags — no prose, no character dialogue, no player references. "
+            "Do not describe anyone being present. Under 120 tokens total."
+        )
+        scout_user = (
+            f"Generate atmosphere tags for: {location_name}\n"
+            + (f"Background: {loc_desc[:200]}\n" if loc_desc else "")
+            + "Required tags (each on its own line):\n"
+            "[MOOD: \"music tempo, instruments, emotional texture — under 15 words\"]\n"
+            "[GENERATE_IMAGE(location): \"sd_prompt — dark sci-fi painterly, no people\"]\n"
+            "[SMELL(brief sensory detail)]\n"
+            "[TOUCH(brief sensory detail)]"
+        )
+
+        msgs = [
+            {"role": "system", "content": scout_system},
+            {"role": "user",   "content": scout_user},
+        ]
+
+        raw = _stream_ollama_chat(msgs, timeout=60.0)
+        _log(f"[ghost-scout] '{location_name}' response: {raw[:120]}")
+
+        result: dict = {"images": [], "mood": None, "sense_beats": [], "generated_at": time.time()}
+
+        # Parse MOOD
+        m = re.search(r'\[MOOD\s*:\s*"([^"]+)"\]', raw, re.IGNORECASE)
+        if m:
+            result["mood"] = m.group(1).strip()
+
+        # Parse SMELL / TOUCH → sense beats (held for lore_whisper delivery)
+        for tag in ("SMELL", "TOUCH"):
+            mt = re.search(rf'\[{tag}\(([^)]+)\)\]', raw, re.IGNORECASE)
+            if mt:
+                result["sense_beats"].append({"type": tag, "text": mt.group(1).strip()})
+
+        # Parse GENERATE_IMAGE → call flask-sd (only when Ollama is idle)
+        img_m = re.search(
+            r'\[GENERATE_IMAGE\(location\)\s*:\s*"([^"]+)"\]', raw, re.IGNORECASE
+        )
+        sd_hint = img_m.group(1).strip() if img_m else loc_sd_prompt
+        if sd_hint:
+            # Wait for Ollama to be idle before touching the GPU
+            deadline = time.time() + 30.0
+            while (_generating or _classifying) and time.time() < deadline:
+                time.sleep(1)
+            if not (_generating or _classifying):
+                try:
+                    sd_prompt = _SD_STYLE_PREFIX + sd_hint
+                    payload = json.dumps({"prompt": sd_prompt, "width": 768, "height": 512}).encode()
+                    code, resp_body, _ = _http("POST", f"{FLASK_SD_URL}/api/generate",
+                                               body=payload, timeout=120.0)
+                    if code == 200:
+                        img_url = (json.loads(resp_body) or {}).get("image") or \
+                                  (json.loads(resp_body) or {}).get("image_url") or ""
+                        if img_url:
+                            result["images"].append(img_url)
+                            _log(f"[ghost-scout] image ready for '{location_name}'")
+                except Exception as exc:
+                    _log(f"[ghost-scout] flask-sd failed for '{location_name}': {exc}")
+
+        # Store in cache (evict oldest if full)
+        if len(_location_prefetch_cache) >= SCOUT_MAX_CACHE:
+            oldest = min(_location_prefetch_cache.items(),
+                         key=lambda x: x[1].get("generated_at", 0))
+            _location_prefetch_cache.pop(oldest[0], None)
+            _log(f"[ghost-scout] evicted '{oldest[0]}' from cache (full)")
+
+        _location_prefetch_cache[location_name] = result
+
+        # Notify client so it can preload the image silently
+        payload_sse: dict = {"location": location_name}
+        if result["images"]:
+            payload_sse["image"] = result["images"][0]
+        _sse_broadcast("scout_ready", payload_sse)
+        _sse_broadcast("activity", {"text": ""})
+        _log(
+            f"[ghost-scout] cached '{location_name}' — "
+            f"mood={result['mood']}, images={len(result['images'])}, "
+            f"beats={len(result['sense_beats'])}"
+        )
+
+    except Exception as exc:
+        _log(f"[ghost-scout] error for '{location_name}': {exc}")
+        _sse_broadcast("activity", {"text": ""})
+    finally:
+        _scout_running = False
+
+
+def _ghost_scout_loop() -> None:
+    """Wake every 90s; dispatch a ghost scout for the hottest eligible location."""
+    global _scout_running
+    while True:
+        time.sleep(90)
+        try:
+            # Don't compete with active generation or an in-flight scout
+            if _scout_running or _generating or _classifying:
+                continue
+
+            current_loc = _world.get("current_location", "")
+            current_id  = _loc_id(current_loc) if current_loc else ""
+            now = time.time()
+
+            # Find eligible locations: hot, not current, not freshly cached
+            eligible = [
+                (name, heat) for name, heat in _hook_heat.items()
+                if heat >= HOOK_HEAT_THRESHOLD
+                and _loc_id(name) != current_id
+                and (
+                    name not in _location_prefetch_cache
+                    or now - _location_prefetch_cache[name].get("generated_at", 0)
+                    > SCOUT_CACHE_EXPIRE_SECS
+                )
+            ]
+            if not eligible:
+                continue
+
+            target = max(eligible, key=lambda x: x[1])[0]
+            _scout_running = True
+            threading.Thread(
+                target=_run_ghost_scout,
+                args=(target,),
+                daemon=True,
+                name=f"ghost-scout-{target[:20]}",
+            ).start()
+
+        except Exception as exc:
+            _log(f"[ghost-scout] loop error: {exc}")
+
+
 def main() -> None:
     _load_fortress_texts()
     _restore_narrator_turns()
@@ -5068,6 +5269,8 @@ def main() -> None:
     threading.Thread(target=_quirkify_loop, daemon=True, name="quirkify").start()
     # Ollama health watchdog — pings every 30 s; SSE warning after 2 consecutive failures
     threading.Thread(target=_ollama_watchdog_loop, daemon=True, name="ollama-watchdog").start()
+    # Ghost scout — speculative pre-generation for hot unvisited locations
+    threading.Thread(target=_ghost_scout_loop, daemon=True, name="ghost-scout").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:
