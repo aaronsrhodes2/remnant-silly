@@ -3150,6 +3150,18 @@ function _vadTick() {
   if (document.activeElement === inputEl && inputEl.value.trim()) return;
 
   const rms  = _vadRMS();
+  // Temporary: log peak RMS every 2s so we can tune the threshold.
+  // Remove once calibrated. Check console and speak — we need to see your mic's range.
+  if (!_vadTick._logT || now - _vadTick._logT > 2000) {
+    _vadTick._peakRms = Math.max(_vadTick._peakRms || 0, rms);
+    if (_vadTick._logT) {
+      console.log(`[vad-diag] peak RMS last 2s: ${_vadTick._peakRms.toFixed(6)}  threshold: ${_vadThreshold.toFixed(6)}  loud: ${_vadTick._peakRms > _vadThreshold}`);
+      _vadTick._peakRms = 0;
+    }
+    _vadTick._logT = now;
+  } else {
+    _vadTick._peakRms = Math.max(_vadTick._peakRms || 0, rms);
+  }
   const loud = rms > _vadThreshold;
   const now  = Date.now();
 
@@ -3488,11 +3500,28 @@ async function _initVAD() {
   if (_vadStarted) return;
   _vadStarted = true;  // lock early to prevent concurrent calls
   try {
-    // Minimal constraint: let the OS pick the current default device.
-    // Any audio constraint (sampleRate, echoCancellation, etc.) risks
-    // OverconstrainedError or a cached stale stream when devices change.
-    // Echo suppression is handled in software (_ttsSource check in _vadTick).
-    _vadStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Step 1: minimal request just to unlock device enumeration (labels need permission).
+    const _perm = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _perm.getTracks().forEach(t => t.stop());
+
+    // Step 2: enumerate all audio inputs now that we have permission.
+    const _devices = await navigator.mediaDevices.enumerateDevices();
+    const _inputs  = _devices.filter(d => d.kind === 'audioinput');
+    console.log('[vad] audio inputs:', _inputs.map(d => d.label || d.deviceId).join(' | '));
+
+    // Step 3: prefer a dedicated USB/external microphone over the system default.
+    // USB mics show up as distinct devices; audio-jack mics are typically Realtek/HD Audio.
+    const _usbMic = _inputs.find(d =>
+      /usb|microphone|mic|yeti|blue|rode|focusrite|samson|audio-technica|shure|hyperx|razer/i.test(d.label) &&
+      !/realtek|hd audio|conexant|via hd/i.test(d.label)
+    );
+    if (_usbMic) console.log('[vad] selected:', _usbMic.label);
+    else         console.log('[vad] no USB mic found — using system default');
+
+    // Step 4: open the chosen device. Use 'ideal' so a missing device falls back gracefully.
+    _vadStream = await navigator.mediaDevices.getUserMedia({
+      audio: _usbMic ? { deviceId: { ideal: _usbMic.deviceId } } : true,
+    });
   } catch (e) {
     console.warn('[vad] mic unavailable:', e.message);
     _vadStarted = false;
