@@ -3150,18 +3150,18 @@ function _vadTick() {
   if (document.activeElement === inputEl && inputEl.value.trim()) return;
 
   const rms  = _vadRMS();
-  // Temporary: log peak RMS every 2s so we can tune the threshold.
-  // Remove once calibrated. Check console and speak — we need to see your mic's range.
-  if (!_vadTick._logT || now - _vadTick._logT > 2000) {
-    _vadTick._peakRms = Math.max(_vadTick._peakRms || 0, rms);
-    if (_vadTick._logT) {
-      console.log(`[vad-diag] peak RMS last 2s: ${_vadTick._peakRms.toFixed(6)}  threshold: ${_vadThreshold.toFixed(6)}  loud: ${_vadTick._peakRms > _vadThreshold}`);
-      _vadTick._peakRms = 0;
-    }
-    _vadTick._logT = now;
-  } else {
-    _vadTick._peakRms = Math.max(_vadTick._peakRms || 0, rms);
+
+  // Visual mic level — glow scales with sound level well below speech threshold.
+  // If even a shout produces no glow the analyser is returning silence (AudioContext issue).
+  // At speech level the border turns fully orange via data-vad-state; this is just the
+  // sub-threshold indicator so we can see the audio pipeline is alive.
+  if (!_vadSpeaking) {
+    const lvl = Math.min(rms / Math.max(_vadThreshold, 0.001), 1.0);
+    inputEl.style.boxShadow = lvl > 0.02
+      ? `0 0 0 ${(lvl * 4).toFixed(1)}px rgba(68,187,204,${(lvl * 0.55).toFixed(2)})`
+      : '';
   }
+
   const loud = rms > _vadThreshold;
   const now  = Date.now();
 
@@ -3500,28 +3500,31 @@ async function _initVAD() {
   if (_vadStarted) return;
   _vadStarted = true;  // lock early to prevent concurrent calls
   try {
-    // Step 1: minimal request just to unlock device enumeration (labels need permission).
-    const _perm = await navigator.mediaDevices.getUserMedia({ audio: true });
-    _perm.getTracks().forEach(t => t.stop());
+    // Step 1: open default stream — this grants permission AND gives us a live stream.
+    _vadStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    // Step 2: enumerate all audio inputs now that we have permission.
+    // Step 2: enumerate all audio inputs now that we have permission (labels need it).
     const _devices = await navigator.mediaDevices.enumerateDevices();
     const _inputs  = _devices.filter(d => d.kind === 'audioinput');
     console.log('[vad] audio inputs:', _inputs.map(d => d.label || d.deviceId).join(' | '));
 
-    // Step 3: prefer a dedicated USB/external microphone over the system default.
-    // USB mics show up as distinct devices; audio-jack mics are typically Realtek/HD Audio.
+    // Step 3: if the current stream isn't a dedicated mic, try to switch to one.
+    // Only stop+reopen when necessary — keeps stream alive on the happy path.
+    const _curId  = _vadStream.getAudioTracks()[0]?.getSettings()?.deviceId || '';
     const _usbMic = _inputs.find(d =>
+      d.deviceId !== _curId &&
       /usb|microphone|mic|yeti|blue|rode|focusrite|samson|audio-technica|shure|hyperx|razer/i.test(d.label) &&
       !/realtek|hd audio|conexant|via hd/i.test(d.label)
     );
-    if (_usbMic) console.log('[vad] selected:', _usbMic.label);
-    else         console.log('[vad] no USB mic found — using system default');
-
-    // Step 4: open the chosen device. Use 'ideal' so a missing device falls back gracefully.
-    _vadStream = await navigator.mediaDevices.getUserMedia({
-      audio: _usbMic ? { deviceId: { ideal: _usbMic.deviceId } } : true,
-    });
+    if (_usbMic) {
+      console.log('[vad] switching to dedicated mic:', _usbMic.label);
+      _vadStream.getTracks().forEach(t => t.stop());
+      _vadStream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { ideal: _usbMic.deviceId } },
+      });
+    } else {
+      console.log('[vad] using stream:', _vadStream.getAudioTracks()[0]?.label || 'default');
+    }
   } catch (e) {
     console.warn('[vad] mic unavailable:', e.message);
     _vadStarted = false;
