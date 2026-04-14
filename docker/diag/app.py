@@ -2358,11 +2358,39 @@ def _restore_narrator_turns() -> None:
 
 _SENTENCE_ENDINGS = frozenset('.!?"\')}\\]\u2019\u201d\u2026\u2014')
 
+# Display-format open/close tag pairs that must always be balanced.
+# Unbalanced open > close means the response was cut off inside a format block.
+_PAIRED_DISPLAY_TAGS = ('B', 'I', 'BI')
+
+
+def _has_unbalanced_display_tags(text: str) -> bool:
+    """True if any [B]/[I]/[BI] open tag has no matching close — text cut mid-format."""
+    for tag in _PAIRED_DISPLAY_TAGS:
+        opens  = len(re.findall(rf'\[{tag}(?:=[^\]]*)?]', text, re.IGNORECASE))
+        closes = len(re.findall(rf'\[/{tag}]', text, re.IGNORECASE))
+        if opens > closes:
+            return True
+    return False
+
 
 def _is_truncated(text: str) -> bool:
-    """True if text appears cut off mid-sentence."""
+    """True if text appears cut off.
+
+    Two complementary checks — each catches what the other misses:
+    1. Sentence-ending check: last character is not punctuation / closing bracket.
+       Catches mid-word and mid-sentence cuts.
+    2. Tag-balance check: an open display-format tag ([B]/[I]/[BI]) has no
+       matching close tag.  Catches cuts that end with valid punctuation but
+       inside a format span — which the sentence check silently passes.
+
+    Neither check catches 'structurally complete but semantically short' responses
+    (e.g. only two sentences when ten were expected) — that requires a minimum
+    word-count heuristic and is handled separately if needed.
+    """
     tail = text.rstrip()
-    return bool(tail) and len(tail) > 100 and tail[-1] not in _SENTENCE_ENDINGS
+    if not tail or len(tail) <= 100:
+        return False
+    return tail[-1] not in _SENTENCE_ENDINGS or _has_unbalanced_display_tags(tail)
 
 
 def _build_messages() -> list[dict]:
