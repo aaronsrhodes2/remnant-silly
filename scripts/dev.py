@@ -237,6 +237,27 @@ def cmd_docker(args) -> int:
 
     model_env = _detect_model_env()
     env = {**os.environ, **model_env, "PYTHONIOENCODING": "utf-8"}
+
+    # Always rebuild the diag image from current source files before starting.
+    # The build is zero-internet (COPY-only Dockerfile), so this adds <5 s and
+    # guarantees the running container always matches the repo — no hot-patching.
+    try:
+        git_commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT, capture_output=True, text=True,
+        ).stdout.strip() or "unknown"
+    except Exception:
+        git_commit = "unknown"
+    print(f"  {_dim('building diag image…')} (commit {git_commit})")
+    build = subprocess.run(
+        ["docker", "compose", "build",
+         "--build-arg", f"GIT_COMMIT={git_commit}", "diag"],
+        cwd=ROOT, env=env,
+    )
+    if build.returncode != 0:
+        print(_err("✗ docker compose build diag failed"))
+        return 2
+
     print(f"  {_dim('cmd:')} docker compose up -d\n")
     result = subprocess.run(["docker", "compose", "up", "-d"], cwd=ROOT, env=env)
     if result.returncode != 0:

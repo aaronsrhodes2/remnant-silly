@@ -205,6 +205,7 @@ services:
     build:
       context: .
       dockerfile: docker/diag/Dockerfile
+    image: remnant-diag:latest
     container_name: remnant-diag
     restart: unless-stopped
     expose:

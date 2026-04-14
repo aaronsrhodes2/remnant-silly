@@ -12,25 +12,15 @@
 # Attaches to play-net only (no egress), reads/writes the shared
 # remnant-status volume, and reaches the other runtime services over
 # docker DNS. nginx proxies host:1582/diagnostics/* to this service.
+#
+# ZERO internet dependencies at build time — all steps are COPY-only.
+# chromadb is imported at runtime with graceful fallback (semantic memory
+# degrades to disabled if the package is absent). Install it via the
+# bootstrap profile or by adding a pip-cache layer to docker-compose.bootstrap.yml.
 
 FROM python:3.11-alpine
 
-# Build deps for chromadb's native extensions (hnswlib needs a C++ compiler).
-RUN apk add --no-cache gcc g++ musl-dev
-
 WORKDIR /app
-
-# Install chromadb (semantic memory / RAG retrieval for narrator context).
-# IMPORTANT: This step must come BEFORE ARG GIT_COMMIT so Docker layer cache
-# survives both app.py edits AND build-arg changes. ARG invalidates all layers
-# below it, so any pip install below an ARG can never be cached.
-RUN pip install --no-cache-dir chromadb
-
-# Bake the git commit hash so /signature can report exactly which build
-# this container came from. Passed via --build-arg GIT_COMMIT=$(git rev-parse --short HEAD).
-# Placed AFTER pip install so the expensive install layer is always cached.
-ARG GIT_COMMIT=unknown
-ENV GIT_COMMIT_ENV=${GIT_COMMIT}
 
 # Copy all content + logic files that /signature fingerprints.
 # The main app.py is placed at its "correct" repo-relative path
@@ -44,7 +34,12 @@ COPY docker/diag/seed/                                               /app/docker
 COPY web/index.html                                                  /app/web/index.html
 COPY extension/index.js                                              /app/extension/index.js
 
-# Write the baked commit hash where _build_signature() looks for it
+# Bake the git commit hash so /signature can report exactly which build
+# this container came from. Passed via --build-arg GIT_COMMIT=$(git rev-parse --short HEAD).
+# Placed AFTER the COPY steps so layer cache for source files is never
+# invalidated by build-arg changes.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT_ENV=${GIT_COMMIT}
 RUN echo "${GIT_COMMIT}" > /app/GIT_COMMIT
 
 EXPOSE 1591
