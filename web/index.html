@@ -1378,8 +1378,9 @@ function renderTurn(turn, instant) {
     const speakerChanged = speaker !== _lastSpeaker;
     _lastSpeaker = speaker;
     div.innerHTML =
-      '<img class="entry-avatar' + (!speakerChanged || !avatarUrl ? ' hidden' : '') + '" src="' +
-      (avatarUrl ? esc(avatarUrl) : '') + '" alt="">' +
+      '<img class="entry-avatar' + (!speakerChanged || !avatarUrl ? ' hidden' : '') + '"' +
+      (b.isPlayer ? ' data-player-avatar="1"' : '') +
+      ' src="' + (avatarUrl ? esc(avatarUrl) : '') + '" alt="">' +
       '<span class="entry-speaker"' + (!speakerChanged ? ' style="visibility:hidden"' : '') + '>' + esc(speaker) + '</span>' +
       '<span class="entry-text">' + _formatText(text) + '</span>';
 
@@ -1525,6 +1526,11 @@ function renderMetaEvent(data) {
     // Sherri finished outfitting — replace SVG placeholder with real SD portrait
     _portraitMap['__player__'] = data.url;
     _lastSpeaker = ''; // force re-render with new avatar on next player turn
+    // Backfill: update all already-rendered player avatar imgs in the feed
+    document.querySelectorAll('img[data-player-avatar="1"]').forEach(img => {
+      img.src = data.url;
+      img.classList.remove('hidden');
+    });
   }
 
   if (data.type === 'reset' && (data.level === 'world' || data.level === 'all')) {
