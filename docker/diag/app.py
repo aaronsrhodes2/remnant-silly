@@ -455,6 +455,30 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
                 )
                 break  # one trigger per turn
 
+    # [UPDATE_PLAYER: "SD portrait brief"] — regenerate player avatar.
+    # The narrator emits this tag on first appearance reveal AND on every subsequent
+    # update (new hair colour, outfit change, injury, etc.).  The tag content is
+    # already an SD-style portrait brief, so we use it directly without an Ollama
+    # conversion step — faster and more accurate than re-summarising prose.
+    # This is the primary re-generation path; it fires even when _player_dressed=True.
+    _up_re = re.compile(r'\[UPDATE_PLAYER\s*:\s*"([^"]{10,})"\]', re.IGNORECASE)
+    for _m in _up_re.finditer(raw_text):
+        _brief = _m.group(1).strip()
+        if _brief:
+            global _player_dressed, _player_appearance_desc  # noqa: PLW0603
+            _player_appearance_desc = _brief
+            if not _player_dressed:
+                _player_dressed = True
+                _sse_broadcast("meta", {"type": "player_dressed"})
+            print(f"[diag] UPDATE_PLAYER → queuing avatar re-generation")
+            threading.Thread(
+                target=_generate_player_avatar,
+                args=(_brief,),
+                daemon=True,
+                name="player-avatar-update",
+            ).start()
+            break  # one portrait regeneration per turn
+
     # ── Item codex entries ─────────────────────────────────────────────
     item_re = re.compile(r'\[ITEM\(([^)]+)\)\s*(?::\s*"?([^"\]]*)"?)?\]', re.IGNORECASE)
     for match in item_re.finditer(raw_text):
@@ -3020,14 +3044,16 @@ def _generate_player_avatar(appearance_prose: str) -> None:
     img_code, img_resp, _ = _http("POST", f"{FLASK_SD_URL}/api/generate", body=gen_payload, timeout=120.0)
     if img_code == 200:
         data = json.loads(img_resp)
-        img_url = data.get("image_url") or data.get("url") or ""
+        img_url = data.get("image") or data.get("image_url") or data.get("url") or ""
         if img_url:
-            print(f"[diag] player avatar generated: {img_url}")
+            print(f"[diag] player avatar generated ({len(img_url)} chars)")
             _sse_broadcast("meta", {
                 "type": "player_portrait",
                 "url": img_url,
                 "prompt": sd_prompt,
             })
+        else:
+            print(f"[diag] player avatar SD returned 200 but no image key — keys: {list(data.keys())}")
     else:
         print(f"[diag] player avatar SD failed: {img_code}")
 
@@ -3330,11 +3356,11 @@ def _prewarm_visuals() -> None:
         )
         if img_code == 200:
             data = json.loads(img_resp)
-            img_url = data.get("image_url") or data.get("url") or ""
+            img_url = data.get("image") or data.get("image_url") or data.get("url") or ""
             if img_url:
                 _sse_broadcast("scene_image", {"image": img_url, "kind": "location",
                                                "description": "pre-warmed scene"})
-                print(f"[diag/prewarm] location image ready: {img_url}")
+                print(f"[diag/prewarm] location image ready ({len(img_url)} chars)")
     except Exception as exc:
         print(f"[diag/prewarm] flask-sd prewarm failed: {exc}")
 

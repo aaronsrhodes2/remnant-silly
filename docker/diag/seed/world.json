@@ -72,7 +72,7 @@
       "sound": "Low grinding of gears. Rhythmic clank of large mechanisms cycling. Pipes hiss. Footsteps ring on metal grating.",
       "touch": "Constant bone-deep vibration. Handrails tacky with old lubricant. The air is thick and hot.",
       "music_mood": "deep mechanical ambient, slow industrial rhythm, ancient clockwork",
-      "portrait": "/game/assets/characters/sherri-gantry.jpg",
+      "portrait": "/game/assets/locations/the-gantry.jpg",
       "sd_prompt": "sci-fi industrial maintenance corridor, catwalks over large bronze gears turning slowly, copper pipes, amber warning lights, narrow passages, small bronze robots doing maintenance work, dark and cramped"
     },
     {
@@ -84,7 +84,7 @@
       "sound": "The roar of the crucible. Hiss and crack of cooling casts. Metal on metal, rhythmic.",
       "touch": "Intense radiant heat. Air scalds the throat. Every surface is hot to the touch.",
       "music_mood": "forge ambient, deep bass drone, primal fire and iron",
-      "portrait": "/game/assets/characters/sherri-foundry.jpg",
+      "portrait": "/game/assets/locations/the-foundry.jpg",
       "sd_prompt": "sci-fi foundry interior, central glowing orange crucible of molten metal, rotating casting carousel, scorched black walls, heat shimmer, small bronze robot pouring molten material, dramatic orange-red lighting"
     },
     {
@@ -108,7 +108,7 @@
       "sound": "Subsonic hum from the dimensional field. Occasional soft chimes from the navigation array.",
       "touch": "Cold air. The viewport glass vibrates at frequencies below hearing. Standing near it makes teeth ache slightly.",
       "music_mood": "cosmic ambient, alien wonder, dimensional transit shimmer",
-      "portrait": "/game/assets/characters/sherri-dimensional-observer.jpg",
+      "portrait": "/game/assets/locations/dimensional-observation.jpg",
       "sd_prompt": "dark sci-fi observation chamber, wide curved viewport showing swirling dimensional space with crystalline formations and alien geometry, holographic navigation table, teal and blue lighting, vast and strange"
     },
     {
@@ -162,14 +162,144 @@
     {
       "id": "equilibrium_chamber",
       "name": "The Equilibrium Chamber",
-      "description": "The room that keeps everyone alive. A sealed spherical chamber deep in the Fortress's engineering section where the anti-matter equilibrium barrier is generated and maintained. A central pillar of contained anti-matter plasma rotates inside a magnetic lattice, generating the field that creates gravity and holds the hull against null space's anti-pressure. The Fortress monitors this room continuously. No one goes here unless something is wrong.",
-      "sight": "Spherical chamber, every surface dark and heat-shielded. The central pillar of rotating anti-matter plasma is contained in a lattice of magnetic field lines that glow blue-white. Readout panels line the lower half of the walls. Warning indicators in amber. No windows. One sealed door.",
+      "description": "The room that keeps everyone alive. A sealed spherical chamber deep in the Fortress's engineering section where the Vacuum Membrane is generated and maintained. The Membrane is a shell of stable false-vacuum that holds the Fortress's interior against the crushing pressure of Null Space. A central pillar of containment plasma rotates inside a magnetic lattice, continuously powering the Membrane. The Fortress monitors this room every moment. No one goes here unless something is very wrong.",
+      "sight": "Spherical chamber, every surface dark and heat-shielded. The central pillar of rotating containment plasma is held in a lattice of magnetic field lines that glow blue-white. Readout panels line the lower half of the walls. Membrane integrity indicators in amber. No windows. One sealed door.",
       "smell": "Ozone, high-energy radiation byproduct — faintly sweet and sharp at the same time. A smell that says 'do not stay long.'",
       "sound": "High-frequency hum that vibrates the sinuses. The magnetic lattice crackles faintly. Nothing else. The sound-dampening is total outside the hum.",
       "touch": "Intense ambient warmth from the plasma column. The air feels thick and charged. Touching the lattice housing would be instantly fatal — and the Fortress will tell you this the moment you reach for it.",
       "music_mood": "deep energy drone, technical awe, the sound of something vast being barely contained",
       "portrait": null,
-      "sd_prompt": "dark spherical sci-fi chamber, central rotating column of contained anti-matter plasma in a glowing magnetic lattice, blue-white energy, heat-shielded walls with amber readout panels, one sealed door, intense and dangerous atmosphere"
+      "sd_prompt": "dark spherical sci-fi chamber, central rotating column of containment plasma in a glowing magnetic lattice, blue-white energy, heat-shielded walls with amber readout panels, one sealed door, intense and dangerous atmosphere"
+    },
+    {
+      "id": "terravore_landing",
+      "name": "The Landing Platform",
+      "description": "The Hoop arrival point on Terravore — a massive bio-mechanical braid where living architecture and engineered machinery have grown together over millennia. The Landing Platform is a wide root-arch platform suspended above the jungle canopy. Bioluminescent tendrils grip its underside. The air here is warm, wet, and alive in a way that no station atmosphere ever manages. The Hoop deposits arrivals onto a moss-covered receiving pad that pulses gently with the braid's own frequency.",
+      "sight": "A broad platform of interlocked root-arches, surfaces furred with green-gold moss and pale bioluminescent nodules. The jungle canopy stretches in every direction below — vast, layered, alien. The sky above is a deep amber-ochre. Crystalline spore-pods drift upward on thermal currents. The Hoop exit glimmers behind you, its thread-frequency already recalibrating.",
+      "smell": "Rich loam and decay underneath something sweeter — like fermenting fruit baked in heat. Every breath carries a faint trace of pollen that the nostrils flag as foreign.",
+      "sound": "Vast organic sound: insects or their Terravore equivalent, deep sub-bass respiration from the jungle itself, wind moving through canopy layers at different speeds. Distant animal calls — large-bodied, far away.",
+      "touch": "The platform moss is soft and slightly damp underfoot. The air humidity is high enough that skin surfaces feel lightly coated. The platform breathes — literally. Its root-structure is living and contracts on a slow tidal rhythm.",
+      "taste": "The air deposits something faintly sweet on the lips. Not unpleasant. Probably fine.",
+      "music_mood": "alien woodwinds, bio-rhythmic pulse, layered organic texture, 80bpm",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, bio-mechanical landing platform made of interlocked root-arches covered in bioluminescent moss, alien jungle canopy far below, amber-ochre sky, crystalline spore-pods drifting, Hoop portal shimmer in background, vast organic alien world"
+    },
+    {
+      "id": "terravore_canopy",
+      "name": "The Canopy Walkways",
+      "description": "A city in the trees. Terravore's surviving population built their permanent settlements in the mid-canopy layer, where the junction of light, moisture and temperature is stable enough for habitation. The walkways are organic — shaped from living wood-analogue that the Terravore braid regenerates over time. Star-Eaters — massive slow-flying creatures the size of cargo shuttles — move through the upper canopy overhead, browsing the apex flora. They are herbivores. They are also capable of shaking the walkways by passing close.",
+      "sight": "Rope-and-root walkways connecting massive tree-analogues at mid-canopy height. Structures of shaped living wood, paper-thin bioluminescent windows, hanging gardens of alien plants. Star-Eaters visible above as vast dark shadows against the amber sky. Settlement sounds below.",
+      "smell": "Cooked food with unidentifiable spices. Living wood — pungent and slightly resinous. The clean high-altitude absence of decay.",
+      "sound": "Settlement ambience: voices in a language that resolves to approximately comprehensible via the Fold. Children. Water piped through living channels. The vast low wingbeat of Star-Eaters overhead — felt as much as heard.",
+      "touch": "The walkways flex underfoot — living material, always slightly warm to the touch. The canopy height means constant wind. The handrails are smooth, worn by generations of hands.",
+      "taste": "Someone is always cooking. The smells translate into phantom tastes of something unfamiliar but savoury.",
+      "music_mood": "alien woodwinds, Star-Eater percussion, canopy wind, organic settlement warmth",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, alien tree-city of rope-and-root walkways at canopy height, bio-luminescent structures, amber alien sky, massive creature shadow overhead, living wood architecture, alien jungle civilization, warm inhabited feel"
+    },
+    {
+      "id": "terravore_root_network",
+      "name": "The Root Network",
+      "description": "Below the canopy city, below even the jungle floor, runs Terravore's nervous system: a vast network of bio-mechanical tunnels shaped by root growth and maintained by the Artisans — Terravore's engineer caste. Artisan Kaelo works here, in a workshop carved into a root-junction where three major tunnel lines meet. The Root Network is the braid's information infrastructure — signals travel through it as chemical cascades, electrical pulses, and mechanical vibration. Kaelo reads these signals. Kaelo also builds things that shouldn't be possible.",
+      "sight": "Tunnels of densely-packed root-mass, walls alive and slowly shifting. Bioluminescent thread-veins trace the root walls in blue-green. Kaelo's workshop junction is larger — high-ceilinged, a workspace of precision tools hanging from root-hooks, a central bench covered in half-finished mechanisms that appear to be partly grown.",
+      "smell": "Earth, root-sap, something electrical — the chemical signals of the root network have a faint metallic aftertaste in the air.",
+      "sound": "The deep sub-bass pulse of the root network's information flow. Rhythmic, slow. Kaelo's precise tool-sounds against it. Occasionally a cascade of signals passes through the walls — the roots creak and whisper in sequence.",
+      "touch": "The walls are alive. Touching a root wall returns a faint warmth and a slow vibration. The floor is compacted root-mass, firm but slightly springy.",
+      "taste": "The air is distinctly different from the surface — richer in something, earthier. The chemical environment is dense.",
+      "music_mood": "deep root pulse, bio-mechanical rhythm, underground alien ecosystem, Artisan's precision work",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, underground bio-mechanical tunnel network, dense living root walls with glowing bioluminescent veins, craftsperson's workshop junction with precision tools, alien organic engineering environment, rich earthen palette"
+    },
+    {
+      "id": "finnon_foam_coastline",
+      "name": "The Foam Coastline",
+      "description": "The Hoop arrival point for the Finnon braid — a world dominated by Chiral Foam, a crystallizing lattice of left-handed dimensional thread. The Foam Coastline is where the braid's uniform chirality meets the boundary vacuum, creating a spectacular crystallization front. Chiral Foam forms at braid-edge contact — left-handed threads forced against null-pressure produce geometric foam structures that are simultaneously beautiful and deeply disorienting for right-dominant beings. The Fold compensates, but insufficiently. Most right-dominant visitors feel persistent nausea and spatial confusion within minutes.",
+      "sight": "A coastline where crystalline foam the colour of pale violet and silver extends in every direction. The foam structures are geometrically perfect — recursively self-similar down to microscopic scale. The horizon is wrong. Perspective behaves strangely. The Hoop arrival point is marked by a Vex-Kahl anchor beacon, its chirality-correct geometry the only reference point that doesn't shift.",
+      "smell": "Nothing. The Finnon braid is chemically alien at a molecular level — olfactory receptors find nothing to register. The absence of smell is profoundly unsettling.",
+      "sound": "A high, pure tone that exists just at the edge of audibility — the thread-frequency of the Finnon braid. It does not harmonize with anything the inner ear expects. Some beings find it beautiful. Most find it headache-inducing within minutes.",
+      "touch": "The foam surface is cool and geometrically hard — like touching perfect mathematical forms. Pressure produces a faint resonant chime. The ground feels like it is refusing to commit to a single orientation.",
+      "taste": "Nothing registers. The chemical environment is incompatible with standard biochemistry.",
+      "music_mood": "left-hand chirality drone, pure high tone, geometric dissonance, alien stillness",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, alien crystalline foam coastline of pale violet and silver geometric structures, recursive self-similar crystal lattice, wrong perspective and horizon, Vex-Kahl anchor beacon at center, utterly inhuman alien world, disorienting beauty"
+    },
+    {
+      "id": "finnon_foam_interior",
+      "name": "The Foam Interior",
+      "description": "Deeper into the Finnon braid, away from the boundary edge. Here the Chiral Foam is fully established — a pure left-handed chirality environment with no boundary effects. The spatial disorientation for right-dominant beings is severe. The Vex-Kahl are native here: their biology is balanced between chirality types, which lets them navigate Null Space and pass between braids. Their home territory is a series of crystalline warrens cut into the foam structure, lit by their own bioluminescence. The warrens look inhabited but feel deeply alien in their geometry.",
+      "sight": "Crystalline tunnels of compressed Chiral Foam, surfaces perfectly smooth and geometrically exact. Vex-Kahl markings — their written language is a chirality map, literally encoding thread-direction in its strokes. Bioluminescent pale-gold light sources that pulse slowly. The geometry of the space is wrong in a way the visual cortex keeps trying to correct and failing.",
+      "smell": "A faint cold metallic trace — the chemical signature of Vex-Kahl biology. Very faint. Otherwise nothing.",
+      "sound": "The same pure thread-frequency tone, now louder and more complex — harmonic overtones from the interior's full chirality density. The Vex-Kahl move almost silently. When they speak, it is at frequencies that border on subsonic.",
+      "touch": "The same geometric hardness, now accompanied by a persistent spatial confusion that manifests physically — the inner ear cannot agree with visual inputs. Some people vomit. The Vex-Kahl find this mildly interesting.",
+      "taste": "Nothing. The chemical environment is completely alien.",
+      "music_mood": "Vex-Kahl subsonic chorus, chirality overtones, alien territory, pure geometric frequency",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, alien crystalline warren interior, perfectly smooth geometric foam tunnels, Vex-Kahl bioluminescent markings encoding chirality maps, pale gold pulsing light, non-Euclidean geometry, deeply inhuman alien architecture, cold and precise"
+    },
+    {
+      "id": "null_corridor",
+      "name": "The Null Corridor",
+      "description": "The navigable inter-braid space between active Hoops. Null Space is not empty — it is the substrate between all braids, a place of extreme vacuum pressure and dimensional thread chaos. The Null Corridor is a traversable path, established when two active Hoops are resonating on compatible frequencies and the Fortress's Vacuum Membrane extends a projected bubble outward. It feels like walking through a tunnel made of nothing, between two impossibilities. The Fold is required — without it, sensory overload from raw thread-frequency begins immediately.",
+      "sight": "A tunnel of stabilized false-vacuum. The 'walls' are not walls — they are the boundary of the extended Vacuum Membrane, visible as a faint distortion in a space that has no reference points. Through the distortion: nothing. Or everything. The visual cortex, with the Fold active, renders it as a darkened corridor with faint translucent walls. Without the Fold: pure seizure-inducing dimensional data at full resolution.",
+      "smell": "Nothing. There is no medium for scent. What the Fold renders as smell is the absence of all chemical signal — a deep, profound negative-smell that the brain interprets as cold.",
+      "sound": "The Fold renders Null Space thread-frequencies as a vast deep harmonic — like being inside a bass string as it vibrates. The vacuum pressure is felt as sound by bone conduction. At the edges of the Corridor, frequency ghosts: the thread-resonance echoes of braids that no longer exist.",
+      "touch": "The false-vacuum environment has no pressure differential inside the bubble, but the boundary wall of the Membrane transmits vacuum pressure as a constant outward push against the skin. The temperature is absolute. Movement feels strange — there is no medium resistance.",
+      "taste": "Nothing. Or everything collapsed into a single note. The Fold has no good analogy for this.",
+      "music_mood": "vast inter-braid deep harmonic, vacuum resonance, frequency ghosts at the edges, dimensional transit tension",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, traversable inter-dimensional null space corridor, stabilized false-vacuum tunnel, faint distortion walls showing absolute nothing beyond, frequency ghost distortions at edges, deep space vacuum aesthetic, existential scale, Hoop portal glow at far end"
+    },
+    {
+      "id": "null_deep",
+      "name": "The Deep Null",
+      "description": "Further from any active Hoop, where the Vacuum Membrane's projection thins. The Deep Null is theoretically unreachable by anything that needs to survive — but The Remnant has been here, and The Fortress can project awareness this far. The Deep Null is where extinct braids leave echoes: their thread-frequencies persist long after the braid itself has collapsed, rendering as ghostly landscape visions that flicker in and out of Fold-mediated perception. The Remnant describes them as 'the memories the substrate keeps.' Most beings who come here uninstructed do not return.",
+      "sight": "No stable visual environment. The Fold renders what it can: fragments of impossible landscapes from extinct braids, visible as translucent overlapping images that phase through each other. A mountain range that no longer exists. A city of geometry that no civilization could have built. Colours that the visual cortex has never catalogued. All of it transparent. All of it still.",
+      "smell": "The Fold has stopped trying. There is a sensation that might be smell at its most abstract — the memory of chemistry, rendered as a faint emotional signal rather than a sensory one.",
+      "sound": "The frequency ghosts are loudest here — every extinct braid leaves its thread-resonance tone. The harmonic is complex enough to resolve into what sounds like music, if music were made by geological time. The Remnant sometimes speaks from here. Its voice in Deep Null has a different quality.",
+      "touch": "Nothing. Less than nothing — the vacuum pressure at Membrane-thinning is perceptible as a distributed pull from every direction equally. The body has the sensation of being dissolved very slowly.",
+      "taste": "The Fold offers a single sensation: something vast, sweet, and finished. Like the aftertaste of a thing that ended long before you arrived.",
+      "music_mood": "extinct braid frequency ghosts, dissolved harmonic, geological time music, The Remnant's deepest voice, stillness beyond comprehension",
+      "portrait": null,
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, deep null space beyond all braids, translucent ghost landscapes of extinct civilizations phasing through each other, impossible geometry, overlapping extinct worlds, vast and silent, frequency ghost light, Remnant presence felt but not seen"
+    }
+  ],
+
+  "items": [
+    {
+      "id": "item_tricorder",
+      "type": "item",
+      "canonical_name": "Dimensional Tricorder",
+      "description": "A handheld instrument the size of a thick paperback, cased in aged bronze alloy with a flip-out display panel. Reads braid frequencies, Vacuum Membrane integrity, vacuum pressure differentials, and active sense-layer data on entities nearby. The Remnant designed it; Sherri fabricated the first ones. Standard issue for anyone using the Hoops.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, handheld bronze alloy instrument with flip-out display panel, sci-fi diagnostic device showing dimensional frequency readouts and braid topology data, worn and precise, technical aesthetic",
+      "permanence": "WORLD",
+      "source": "seed"
+    },
+    {
+      "id": "item_void_crystal",
+      "type": "item",
+      "canonical_name": "Void Crystal Shard",
+      "description": "A shed fragment of The Remnant's crystalline body — a shard of blue-white dimensional crystal, roughly palm-sized, that feels heavier than it looks. It stores dimensional memory: events experienced near The Remnant are faintly encoded in the crystal's thread-frequency pattern. The shard glows brighter the closer it gets to an active Hoop. The Remnant has many such fragments. It does not comment on where they came from.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, palm-sized shard of blue-white dimensional crystal, glowing inner light suggesting stored memory, alien material, heavier than expected, dimensional energy visible inside",
+      "permanence": "WORLD",
+      "source": "seed"
+    },
+    {
+      "id": "item_transit_badge",
+      "type": "item",
+      "canonical_name": "Station Transit Badge",
+      "description": "A bronze disc slightly larger than a coin, etched with a unique frequency signature that identifies the bearer to the Fortress's access systems. Sherri issues one to every new arrival, usually within the first hour. Without it, sealed section doors will not open. The badge also serves as an emergency locator beacon — the Fortress tracks all active badges continuously.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, small bronze disc badge with etched frequency signature pattern, sci-fi identification token, warm bronze metal, precisely engraved, worn at edges from use",
+      "permanence": "WORLD",
+      "source": "seed"
+    },
+    {
+      "id": "item_braid_compass",
+      "type": "item",
+      "canonical_name": "Braid Compass",
+      "description": "A sphere-within-a-sphere instrument of dark metal and glass, small enough to pocket, that orients toward the nearest stable braid resonance. In null space or aboard the Fortress, it points toward the nearest open Hoop. In an active braid, it identifies the dominant thread-frequency and displays it as a direction. Essentially useless for navigation in conventional space. Invaluable everywhere else.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, small sphere-within-sphere navigation instrument, dark metal and glass construction, inner sphere rotating to orient toward dimensional frequency, sci-fi compass for null space, pocketable scale, precision instrument aesthetic",
+      "permanence": "WORLD",
+      "source": "seed"
     }
   ],
 
@@ -233,8 +363,8 @@
       "description": "A craftsperson and survivor from Terravore, living in a floating tree-city above the bio-mechanical jungle canopy. Precise, careful, and unsentimental. He has a Chiral Anchor and will not give it away for nothing — his people are being hunted by a predatory star-ship.",
       "voice": "bm_daniel",
       "voice_style": "Measured, exact, and dry. He speaks the way someone does when they have learned that imprecision is fatal. Short declarative sentences. No pleasantries wasted. Occasional dry dark humour.",
-      "portrait": null,
-      "home_location": "terravore",
+      "portrait": "/game/assets/characters/artisan-kaelo.png",
+      "home_location": "terravore_root_network",
       "personality": "Kaelo has survived Terravore by being precise about his agreements and ruthless about his priorities. He is not unkind, but he is not warm either. He has seen too many tree-cities fall. He wants a fair trade: silence the star-ship hunting his people, and the Anchor is yours. He will be a useful ally if he decides you are competent. He will be a polite wall if he does not.",
       "signature_quote": "I have the Anchor. You need it. You have capabilities I lack. This is the entire conversation until we decide whether to help each other.",
       "nexus_dynamic": "Not a Nexus character — encountered in Terravore during Phase 2 of the pilot quest. Has no patience for The Remnant's posturing if they ever meet."
@@ -246,7 +376,7 @@
       "description": "A traveler who arrived through The Fold three cycles ago. They refused The Remnant's assignment and now haunt the lower decks — hostile to newcomers and obsessed with finding a way back. Dangerous and unpredictable.",
       "voice": "am_onyx",
       "voice_style": "Clipped, bitter, paranoid. Short bursts. Never finishes thoughts about The Fold without going cold. Doesn't trust anyone.",
-      "portrait": null,
+      "portrait": "/game/assets/characters/vex.png",
       "home_location": "lower_decks",
       "personality": "Vex is a cautionary tale made flesh. They resent Kael for seemingly cooperating where they refused. They will obstruct, mislead, and occasionally make physical threats. The Fortress keeps them contained but cannot remove them — The Remnant finds them philosophically interesting. Beneath the hostility is someone who was once hopeful and is now broken.",
       "signature_quote": "You think The Remnant is helping you? It's using you. Just like it used me.",
@@ -259,7 +389,7 @@
       "description": "A scientist who arrived via The Fold two cycles before Kael. She has spent her time cataloguing Fold phenomena and has become an invaluable ally to The Fortress. Warm, precise, and quietly determined.",
       "voice": "af_bella",
       "voice_style": "Precise and warm. She explains things carefully without condescending. Has a habit of asking clarifying questions back. Occasionally excited when discussing Fold theory.",
-      "portrait": null,
+      "portrait": "/game/assets/characters/mira.png",
       "home_location": "research_wing",
       "personality": "Mira arrived frightened and alone and chose to understand her situation rather than fight it. She is the closest thing Kael has to a mentor in the Fortress. She knows more about The Fold than anyone except The Remnant — and The Remnant respects her methods even if it doesn't say so. She is wary of Vex and will warn Kael about them early.",
       "signature_quote": "The Fold doesn't bring people here by accident. There's something specific it needs from each of us.",
@@ -269,8 +399,12 @@
 
   "lore": [
     {
+      "key": "the_braid_model",
+      "text": "A Braid is a stable universe — a coherent configuration of dimensional threads woven into a consistent reality with its own physics, time, and matter. Null Space is the inter-braid substrate: the medium that exists between all Braids, without coherent physics of its own, exerting crushing pressure against any enclosed structure. The Fortress floats in Null Space, held together by the Vacuum Membrane. A Hoop (Braid Resonator) works by locking onto a specific Braid's thread-frequency signature and opening a transit window. String-Slipping is threading a body laterally between individual Braid threads — possible only for beings whose biology tolerates the thread-gap environment. Thread handedness (chirality) is the geometry of how a Braid's threads are wound: most Braids have mixed chirality; chiral-foam Braids like Finnon have uniform handedness, making them strange to navigate. The Fold calibrates a traveler's perception to interpret Null Space frequency data as recognisable sensation. These five concepts — Braid, Null Space, Hoop, String-Slipping, Chirality — form the underlying physics of everything aboard the Fortress."
+    },
+    {
       "key": "the_fortress",
-      "text": "The Fortress of Eternal Sentinel is not a ship. It is a Dyson Sphere — oblong rather than round, bullet-shaped. At both ends of the oblong are Null Space Ports: massive viewports looking out into null space, where black hole accretion discs float in a spiral pattern within a deteriorating sphere of darkness and lightning. The universe visible through the fore port is called Terravore. The aft port faces two chiral foams named Finnon and Galorm. At both ends, inside, are Central Containment Bays where the Remnant Portals (the abduction hoops) are housed. The middle band of the sphere is the Internal Habitation Zone — where the crew lives and works, curving overhead in every direction. The Fortress maintains an anti-matter equilibrium barrier that creates true field gravity on the interior shell, pressing toward the hull without centrifugal force, and holds against the anti-pressure of null space. The Fortress chose The Remnant as its abduction agent at some point in the deep past. Neither will explain why."
+      "text": "The Fortress of Eternal Sentinel is not a ship. It is a Dyson Sphere — oblong rather than round, bullet-shaped. At both ends of the oblong are Null Space Ports: massive viewports looking out into null space, where black hole accretion discs float in a spiral pattern within a deteriorating sphere of darkness and lightning. The universe visible through the fore port is called Terravore. The aft port faces two chiral foams named Finnon and Galorm. At both ends, inside, are Central Containment Bays where the Remnant Portals (the abduction hoops) are housed. The middle band of the sphere is the Internal Habitation Zone — where the crew lives and works, curving overhead in every direction. The universes visible through these ports are called Braids — each one a stable configuration of dimensional threads woven into a coherent reality. The Fortress maintains a Vacuum Membrane: a shell of stable false-vacuum that creates true field gravity on the interior shell and holds the interior against Null Space's crushing pressure. The Fortress chose The Remnant as its abduction agent at some point in the deep past. Neither will explain why."
     },
     {
       "key": "the_remnant",
@@ -286,7 +420,7 @@
     },
     {
       "key": "null_space",
-      "text": "Null space is what lies outside the Fortress — not vacuum, not darkness, but a more fundamental absence. It exerts anti-pressure: a force that pushes inward against any enclosed structure. Standard physics breaks down in null space. The black hole accretion discs visible through the null space ports are arranged in a loose spiral within a deteriorating sphere of darkness and lightning. Whether that sphere is dying or being born is not settled. The Fortress's anti-matter equilibrium barrier is the only known technology capable of holding a livable interior against null space's anti-pressure."
+      "text": "Null Space is the inter-braid substrate — the fundamental medium between all Braids (stable dimensional configurations). It is not vacuum, not darkness, but a more fundamental absence. It exerts crushing pressure against any enclosed structure; without a Vacuum Membrane, nothing survives long in Null Space. Standard physics as understood within any Braid breaks down here. The Fortress floats in Null Space, anchored by the Membrane and The Remnant's dimensional reach. The black hole accretion discs visible through the Fortress's viewports are arranged in a loose spiral within a deteriorating sphere of darkness and lightning — whether that sphere is dying or being born is not settled. The Fortress's Vacuum Membrane is the only known technology capable of holding a livable interior against Null Space's pressure."
     },
     {
       "key": "terravore",
@@ -294,7 +428,7 @@
     },
     {
       "key": "finnon_and_galorm",
-      "text": "Finnon and Galorm are two chiral foams visible through the Fortress's aft null space port — regions of exotic spatial topology where geometry folds back on itself in mirror-asymmetric ways. Their names are old. No one alive knows who gave them. No one has successfully entered either one."
+      "text": "Finnon and Galorm are two Braids visible through the Fortress's aft Null Space port. Each is a chiral foam: a Braid whose dimensional threads are woven with a uniform handedness — left-threaded in Finnon's case, making its geometry mirror-asymmetric and deeply disorienting for right-handed beings. They are not empty universes; they are densely woven realities where ordinary navigation assumptions fail. Their names are old. No one alive knows who gave them. Vex-Kahl are native to the chiral-foam regions and move through them without difficulty; for everyone else, entry is possible and return is not guaranteed."
     },
     {
       "key": "the_nexus_lore",
@@ -302,11 +436,11 @@
     },
     {
       "key": "the_fold",
-      "text": "The Fold is something installed in each borrowed being shortly after arrival. It is not described in detail by the crew. It allows the being to perceive the ship's sense channels — the layered sensory reality that the Fortress broadcasts. Without it, the ship is just metal and noise."
+      "text": "The Fold is a perceptual calibration — a modification installed in each traveler shortly after arrival by proximity to the Nexus pulpit. It maps Null Space's frequency data onto recognisable sensory experience: without The Fold, a traveler in the Fortress perceives only metal and mechanical noise because their sensory apparatus cannot interpret the ship's broadcast sense channels. With it, every sense deepens — the ship's smells, textures, and sounds become present and specific. The Fold also allows perception of dimensional frequency differentials, which makes String-Slipping traces and braid boundary stress detectable to ordinary senses. Side effects include occasional dimensional dissonance (sounds heard from 'elsewhere'), brief visual displacement, and very vivid sleep. Travelers are not typically told the installation is happening."
     },
     {
       "key": "the_hoop",
-      "text": "The abduction hoop appears as a luminous teal vortex — a spiral portal with blue crystal fragments of The Remnant's attention orbiting at the center. The color and texture vary by run. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not. Two hoops exist aboard the Fortress, housed in the Central Containment Bays at both ends of the oblong sphere."
+      "text": "The abduction hoop appears as a luminous teal vortex — a spiral Braid Resonator with blue crystal fragments of The Remnant's attention orbiting at the center. A Braid Resonator works by locking onto the frequency signature of a specific Braid's dimensional threads and opening a transit window between that Braid and the Fortress's interior. The Remnant controls the targeting. The color and texture of a hoop vary by destination Braid. The mundane moment it interrupts varies. The destination — the Portal Chamber — does not. Two hoops exist aboard the Fortress, housed in the Central Containment Bays at both ends of the oblong sphere. A third is theorised but The Fortress will not discuss it."
     },
     {
       "key": "vex_kahl",
@@ -314,15 +448,15 @@
     },
     {
       "key": "string_slipping",
-      "text": "String-Slipping is the Vex-Kahl's method of dimensional transit. Rather than opening a portal, a String-Slipper threads their body laterally through the strings of spacetime, emerging inside enclosed spaces without any visible entry point. The process leaves three detectable traces: localised cold spots (a temperature drop of 8-12 degrees at the insertion point), a frequency ghost (a jamming signal at a specific harmonic that disrupts standard sensors), and physical anchor components (obsidian-black, hive-organic devices that stabilise the insertion point for repeat access). Countering a frequency ghost requires either identifying the jamming harmonic and broadcasting a null-signal, or finding a being with perception beyond 3D space — The Remnant, notably, perceives the frequency effortlessly and finds it extremely irritating."
+      "text": "String-Slipping is the Vex-Kahl's method of dimensional transit. Rather than opening a portal (which requires a Braid Resonator and a fixed destination), a String-Slipper threads their body laterally through the individual threads of a Braid — phase-shifting between the dimensional strands to emerge inside enclosed spaces without any visible entry point. The technique exploits the fact that Braid threads have small gaps between them at a scale below standard sensor resolution. The process leaves three detectable traces: localised cold spots (vacuum leakage at the insertion point, 8-12 degree temperature drop), a frequency ghost (thread resonance echo that jams standard sensors at a specific harmonic), and physical anchor components (obsidian-black, hive-organic devices that stabilise the insertion gap for repeat access). Countering a frequency ghost requires identifying the jamming harmonic and broadcasting a null-signal, or finding a being with perception across multiple dimensions — The Remnant perceives the frequency effortlessly and finds it extremely irritating."
     },
     {
       "key": "parasitic_siphon",
-      "text": "A Parasitic Siphon is Vex-Kahl technology designed to drain energy from an external source to fuel their jump-drives. The Vex-Kahl have anchored one to the outer hull of the Fortress near the aft viewports, targeting the anti-matter equilibrium barrier — the field that maintains field gravity and holds against null space's anti-pressure. Draining the barrier slowly collapses it; if the barrier fails, the Fortress's interior would be exposed to null space's anti-pressure. The siphon is anchored at a dimensional frequency that makes it invisible to the Fortress's standard sensors while the frequency ghost jams the detection arrays."
+      "text": "A Parasitic Siphon is Vex-Kahl technology designed to drain energy from an external source to fuel their jump-drives. The Vex-Kahl have anchored one to the outer hull of the Fortress near the aft viewports, targeting the Vacuum Membrane — the field that maintains field gravity and holds against null space's anti-pressure. Draining the barrier slowly collapses it; if the barrier fails, the Fortress's interior would be exposed to null space's anti-pressure. The siphon is anchored at a dimensional frequency that makes it invisible to the Fortress's standard sensors while the frequency ghost jams the detection arrays."
     },
     {
       "key": "chiral_anchor",
-      "text": "A Chiral Anchor is a rare device that stabilises a specific harmonic of dimensional space, making it possible to 'lock' a String-Slip insertion point or sever a dimensional tether like a Parasitic Siphon without feedback damage. Chiral Anchors are found only in universes with high chiralspace density — Terravore is one. The Anchor must be attuned to the specific frequency of the siphon to work; using it without the correct frequency would be like trying to cut a thread you cannot see."
+      "text": "A Chiral Anchor is a rare device that stabilises the chirality — the handedness — of local Braid threads. Braid threads carry an inherent handedness (left or right), and String-Slipping disrupts the local chiral balance wherever a body is threaded through; this disruption is what makes insertion points detectable as cold spots. A Chiral Anchor restores thread handedness at a target location, effectively sealing a String-Slip insertion gap or severing a dimensional tether like a Parasitic Siphon without feedback damage. Anchors are found only in Braids with high chiral thread density — Terravore is one, its Braid having been warped during the first Star-Eater expansion event into a high-chirality configuration. The Anchor must be attuned to the specific thread-frequency of the target to work; using it untuned is like trying to cut a thread you cannot feel."
     },
     {
       "key": "artisan_kaelo",
@@ -407,6 +541,36 @@
       "description": "High-intensity action music for dangerous, urgent moments aboard the Fortress — threats, breaches, dimensional anomalies. Cinematic with industrial metal drums, distorted electric cello, glitchy 4-dimensional sound effects. Fast-paced, dark, claustrophobic.",
       "generation_prompt": "Cinematic action, industrial metal drums, distorted electric cello, glitchy 4-dimensional sound effects, fast-paced 140bpm, dark atmospheric sci-fi, intense and claustrophobic",
       "triggers": ["the_foundry"],
+      "loop": true
+    },
+    {
+      "id": "archives-drift",
+      "title": "Archives Drift",
+      "role": "contemplative",
+      "file": "/game/assets/music/archives-drift.wav",
+      "description": "Slow evolving ambient for the knowledge-spaces of the Fortress — the Archives, Research Wing, Dimensional Observatory, and Equilibrium Chamber. Pads that breathe with the rhythm of deep time. Distant metallic resonance like the Fortress itself thinking. A contemplative score for decaying grandeur — something immense that has been waiting a very long time.",
+      "generation_prompt": "Slow evolving ambient pads breathing deeply, distant metallic resonance like a vast structure in thought, 55bpm, contemplative decaying grandeur, long reverb tails, cold and introspective, sci-fi archival atmosphere, something old that has been waiting",
+      "triggers": ["the_archives", "research_wing", "dimensional_observation", "equilibrium_chamber"],
+      "loop": true
+    },
+    {
+      "id": "lower-depths",
+      "title": "Lower Depths",
+      "role": "tension",
+      "file": "/game/assets/music/lower-depths.wav",
+      "description": "The industrial unease of the Fortress's lower sections — lower decks, the Gantry, the Foundry. Heavy low-end rumble, irregular percussion like distant metal stress, dripping ambience. Not quite danger, but the feeling that danger has been here and left its mark. 75bpm with stuttering rhythm suggesting machinery that doesn't always work correctly.",
+      "generation_prompt": "Heavy low-end sub-bass rumble, irregular industrial percussion with metallic stress sounds, dripping water ambience, 75bpm stuttering rhythm, industrial unease, dark sci-fi lower decks atmosphere, machinery that doesn't always work correctly, ambient tension without full threat",
+      "triggers": ["lower_decks", "the_gantry", "the_foundry"],
+      "loop": true
+    },
+    {
+      "id": "terravore-breath",
+      "title": "Terravore Breath",
+      "role": "alien",
+      "file": "/game/assets/music/terravore-breath.wav",
+      "description": "The soundscape of a living world — Terravore's three locations. Alien woodwinds that resolve to nearly-familiar, bio-rhythmic pulse suggesting the root network's information flow, layered organic texture from the canopy ecosystem. 80bpm, warm despite its alienness. Music that suggests life on a vast scale, in a key the inner ear has never heard.",
+      "generation_prompt": "Alien woodwind instruments resolving to nearly-familiar melody, bio-rhythmic organic pulse like a root network information flow, layered alien ecosystem texture, 80bpm, warm organic alien world, gentle but vast, the sound of a living braid, Star-Eater wingbeat as occasional low percussion",
+      "triggers": ["terravore_landing", "terravore_canopy", "terravore_root_network"],
       "loop": true
     }
   ],
@@ -542,7 +706,7 @@
       "title": "The Barrier Warning",
       "file": "/game/assets/sfx/barrier-warning.wav",
       "category": "emergency",
-      "description": "Low-frequency pulse like a heartbeat — the anti-matter barrier at maximum capacity.",
+      "description": "Low-frequency pulse like a heartbeat — the Vacuum Membrane at maximum capacity.",
       "loop": true
     },
     {
@@ -562,7 +726,7 @@
       "title": "The Stabilizer's Gambit",
       "status": "available",
       "faction": "Vex-Kahl",
-      "threat_summary": "The Vex-Kahl — a nomadic hive-mind culture from a dying pocket dimension — have anchored a Parasitic Siphon to the outer hull of the Fortress near the aft viewports. It is slowly draining the anti-matter equilibrium barrier to fuel their jump-drives. If the barrier fails, null space's anti-pressure will destroy the interior habitation zone.",
+      "threat_summary": "The Vex-Kahl — a nomadic hive-mind culture from a dying pocket dimension — have anchored a Parasitic Siphon to the outer hull of the Fortress near the aft viewports. It is slowly draining the Vacuum Membrane to fuel their jump-drives. If the barrier fails, null space's anti-pressure will destroy the interior habitation zone.",
       "tone": "The quest has three distinct emotional registers: Phase 1 is industrial mystery (something is wrong, Sherri is puzzled); Phase 2 is adventure in an alien biome (Terravore is wondrous and dangerous); Phase 3 is moral weight (the Vex-Kahl are not simply villains).",
 
       "phases": [

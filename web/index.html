@@ -2095,6 +2095,9 @@ const _STATIC_TRACKS = {
   'heart-of-null-space': '/game/assets/music/heart-of-null-space.wav',
   'sherris-routine':     '/game/assets/music/sherris-routine.wav',
   'breach-chiral-foam':  '/game/assets/music/breach-chiral-foam.wav',
+  'archives-drift':      '/game/assets/music/archives-drift.wav',
+  'lower-depths':        '/game/assets/music/lower-depths.wav',
+  'terravore-breath':    '/game/assets/music/terravore-breath.wav',
 };
 
 // Keyword matchers: if a mood text contains any of these, serve the static track
@@ -2103,6 +2106,9 @@ const _MOOD_TO_TRACK = [
   { id: 'breach-chiral-foam',  keys: ['action', 'intense', 'breach', 'claustrophobic', 'danger', 'threat', 'primal fire', 'forge'] },
   { id: 'heart-of-null-space', keys: ['cosmic', 'null space', 'crystalline resonance', 'awe', 'dimensional', 'arrival tension', 'black hole', 'void', 'vast'] },
   { id: 'sherris-routine',     keys: ['kitchen', 'clockwork', 'workshop', 'mechanical tinkering', 'fabrication', 'inspection', 'cozy industrial', 'lo-fi mechanical'] },
+  { id: 'archives-drift',      keys: ['archives', 'research wing', 'contemplative', 'decaying grandeur', 'observatory', 'equilibrium', 'data crystal', 'ancient waiting'] },
+  { id: 'lower-depths',        keys: ['lower decks', 'lower depths', 'industrial unease', 'gantry', 'dripping', 'sub-bass rumble', 'machinery fault', 'depths'] },
+  { id: 'terravore-breath',    keys: ['terravore', 'alien woodwind', 'bio-rhythmic', 'root network', 'canopy', 'star-eater', 'living braid', 'organic pulse'] },
 ];
 
 function _matchStaticTrack(moodText) {
