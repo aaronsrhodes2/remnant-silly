@@ -287,6 +287,20 @@ html, body {
   letter-spacing: 0.4px;
   pointer-events: none;
 }
+#gallery-regen {
+  display: none;
+  position: absolute;
+  bottom: 30px; right: 8px;
+  background: rgba(0,0,0,0.65);
+  color: rgba(255,255,255,0.65);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  font-size: 13px; padding: 2px 6px;
+  cursor: pointer; z-index: 3;
+  transition: color 0.15s, border-color 0.15s;
+}
+#gallery-current:hover #gallery-regen { display: block; }
+#gallery-regen:hover { color: #fff; border-color: rgba(255,255,255,0.35); }
 
 /* ── Comic speech bubble ── */
 #speech-bubble {
@@ -448,19 +462,38 @@ html, body {
 }
 #gallery-thumbs::-webkit-scrollbar { display: none; }
 
+.thumb-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 64px; height: 64px;
+}
+.thumb-wrap.active .gallery-thumb { opacity: 1; border-color: rgba(255,255,255,0.3); }
 .gallery-thumb {
   height: 64px;
   width: 64px;
-  flex-shrink: 0;
   object-fit: cover;
   border-radius: 3px;
   cursor: pointer;
   opacity: 0.65;
   transition: opacity 0.2s;
   border: 1px solid transparent;
+  display: block;
 }
-.gallery-thumb:hover { opacity: 1; }
-.gallery-thumb.active { opacity: 1; border-color: rgba(255,255,255,0.3); }
+.thumb-wrap:hover .gallery-thumb { opacity: 1; }
+.thumb-del {
+  display: none;
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 16px; height: 16px;
+  font-size: 11px; line-height: 15px; text-align: center;
+  background: rgba(0,0,0,0.80);
+  color: rgba(255,255,255,0.75);
+  border: none; border-radius: 2px;
+  cursor: pointer; padding: 0;
+  z-index: 2;
+}
+.thumb-wrap:hover .thumb-del { display: block; }
+.thumb-del:hover { color: #fff; background: rgba(180,40,40,0.85); }
 
 /* ── Entry rows ── */
 .entry {
@@ -1007,6 +1040,7 @@ html, body {
     <div id="gallery-panel">
       <div id="gallery-current">
         <img id="gallery-img" src="/game/assets/fortress-interior.jpg" alt="Current scene">
+        <button id="gallery-regen" title="Regenerate this scene">&#x1F504;</button>
         <div id="gallery-status"></div>
         <div id="speech-bubble" role="status" aria-live="polite" aria-atomic="true">
           <div id="bubble-speaker"></div>
@@ -1529,19 +1563,70 @@ function _setGalleryImage(dataUrl, kind, description) {
 function _renderGalleryThumbs() {
   galleryThumbs.innerHTML = '';
   _galleryHistory.forEach((item, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'thumb-wrap' + (i === 0 ? ' active' : '');
+
     const img = document.createElement('img');
     img.src = item.dataUrl;
-    img.className = 'gallery-thumb' + (i === 0 ? ' active' : '');
+    img.className = 'gallery-thumb';
     if (item.description) img.title = item.description;
     img.addEventListener('click', () => {
       galleryImg.src = item.dataUrl;
       if (item.description) galleryImg.title = item.description;
-      galleryThumbs.querySelectorAll('.gallery-thumb').forEach(t => t.classList.remove('active'));
-      img.classList.add('active');
+      galleryThumbs.querySelectorAll('.thumb-wrap').forEach(w => w.classList.remove('active'));
+      wrap.classList.add('active');
     });
-    galleryThumbs.appendChild(img);
+
+    const del = document.createElement('button');
+    del.className = 'thumb-del';
+    del.textContent = '\u00d7';
+    del.title = 'Hide from gallery';
+    del.addEventListener('click', e => {
+      e.stopPropagation();
+      const wasActive = wrap.classList.contains('active');
+      _galleryHistory.splice(i, 1);
+      _renderGalleryThumbs();
+      if (wasActive && _galleryHistory.length > 0) {
+        galleryImg.src = _galleryHistory[0].dataUrl;
+        if (_galleryHistory[0].description) galleryImg.title = _galleryHistory[0].description;
+      }
+    });
+
+    wrap.appendChild(img);
+    wrap.appendChild(del);
+    galleryThumbs.appendChild(wrap);
   });
 }
+
+// Regenerate current scene image via flask-sd
+document.getElementById('gallery-regen').addEventListener('click', async () => {
+  const desc = galleryImg.title || '';
+  if (!desc) return;
+  galleryStatus.textContent = '\u29d7 regenerating\u2026';
+  try {
+    await fetch('/regenerate-scene', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({description: desc}),
+    });
+    // New scene_image SSE event will update the gallery when SD finishes (~20-40s)
+  } catch (_) {
+    galleryStatus.textContent = '';
+  }
+});
+
+// Music skip — right-click audio sense icon to crossfade to next track
+function _skipToNextTrack() {
+  const keys = Object.keys(_STATIC_TRACKS);
+  if (!keys.length) return;
+  const next = keys.find(k => k !== _currentMoodText) || keys[0];
+  _currentMoodText = next;
+  _onMoodEvent(next);
+}
+document.getElementById('light-audio').addEventListener('contextmenu', e => {
+  e.preventDefault();
+  _skipToNextTrack();
+});
 
 // ── Topbar polling ──
 async function _pollServiceStatus() {
@@ -1697,7 +1782,7 @@ function connect() {
       const data = JSON.parse(e.data);
       if (data.caption && _galleryHistory.length) {
         _galleryHistory[0].description = data.caption;
-        const thumbs = galleryThumbs.querySelectorAll('.gallery-thumb');
+        const thumbs = galleryThumbs.querySelectorAll('.thumb-wrap .gallery-thumb');
         if (thumbs.length) thumbs[0].title = data.caption;
         if (galleryImg.src === _galleryHistory[0].dataUrl) galleryImg.title = data.caption;
       }

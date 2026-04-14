@@ -4818,6 +4818,43 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"ok": False, "error": str(e)})
             return
 
+        if path == "/regenerate-scene":
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                body = json.loads(raw.decode("utf-8")) if raw else {}
+                desc = (body.get("description") or "").strip()
+                if desc:
+                    # Re-use existing image generation pipeline — VRAM guard and SSE
+                    # broadcast are included. Wraps desc in GENERATE_IMAGE tag so the
+                    # full pipeline (style prefix, blocklist, player-appearance injection)
+                    # applies exactly as in normal narrator-driven generation.
+                    safe_desc = desc.replace('"', "'")[:350]
+                    threading.Thread(
+                        target=_do_image_generation,
+                        args=(f'[GENERATE_IMAGE(location): "{safe_desc}"]',),
+                        daemon=True,
+                        name="regen-scene",
+                    ).start()
+                    self._send_json(200, {"ok": True, "description": desc[:80]})
+                else:
+                    # No description — regenerate from latest scene image description
+                    fallback = (_latest_scene_image or {}).get("description", "")
+                    if fallback:
+                        safe = fallback.replace('"', "'")[:350]
+                        threading.Thread(
+                            target=_do_image_generation,
+                            args=(f'[GENERATE_IMAGE(location): "{safe}"]',),
+                            daemon=True,
+                            name="regen-scene",
+                        ).start()
+                        self._send_json(200, {"ok": True, "description": fallback[:80]})
+                    else:
+                        self._send_json(400, {"ok": False, "error": "no description available"})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+            return
+
         if path == "/api/music/generate":
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
