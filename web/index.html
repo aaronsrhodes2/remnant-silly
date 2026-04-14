@@ -3460,12 +3460,29 @@ async function _vadProcess() {
 
 let _vadStarted = false;
 
+function _stopVAD() {
+  // Tear down any active VAD stream so _initVAD can restart cleanly.
+  _vadAnalyser = null;
+  _vadBuf      = null;
+  if (_vadStream) {
+    _vadStream.getTracks().forEach(t => t.stop());
+    _vadStream = null;
+  }
+  _vadStarted = false;
+}
+
 async function _initVAD() {
   if (_vadStarted) return;
-  _vadStarted = true;
+  _vadStarted = true;  // lock early to prevent concurrent calls
   try {
     _vadStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
+      // sampleRate as an 'ideal' (not required) so new mics that report a
+      // different native rate don't throw OverconstrainedError.
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        sampleRate: { ideal: 16000 },
+      },
     });
   } catch (e) {
     console.warn('[vad] mic unavailable:', e.message);
@@ -3483,7 +3500,8 @@ async function _initVAD() {
   _vadBuf       = new Float32Array(_vadAnalyser.fftSize);
   src.connect(_vadAnalyser);
   requestAnimationFrame(_vadTick);
-  console.log('[vad] always-on listening active — AudioCtx:', ctx.state);
+  console.log('[vad] always-on listening active — AudioCtx:', ctx.state,
+              '— sample rate:', _vadStream.getAudioTracks()[0]?.getSettings()?.sampleRate ?? '?');
 }
 
 // ── Initialise on load ──
@@ -3492,8 +3510,18 @@ _initLightToggles();
 // Try VAD immediately; also try on first user gesture in case AudioContext
 // is suspended (WebView2 policy varies by Windows version)
 _initVAD();
-document.addEventListener('click', () => _initVAD(), { once: true });
+document.addEventListener('click',   () => _initVAD(), { once: true });
 document.addEventListener('keydown', () => _initVAD(), { once: true });
+
+// Re-init when a new audio device is plugged in (e.g. switching microphones).
+// Stop the current stream first so getUserMedia picks the new default device.
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', async () => {
+    console.log('[vad] audio device change detected — reinitialising mic');
+    _stopVAD();
+    await _initVAD();
+  });
+}
 </script>
 
 <!-- Discovery notes — fixed-position slide-in entity cards -->
