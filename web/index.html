@@ -578,6 +578,25 @@ html, body {
 .sense-chip.chip-mood        { color: rgba(255, 180,  90, 0.90); }
 .sense-chip.chip-image       { color: rgba(180, 160, 255, 0.90); }
 
+/* Narrator prose collapses to a dim one-liner after being voiced.
+   Click any spoken entry to expand it back. */
+.entry.narrator.spoken .entry-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.38;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.entry.narrator.spoken:hover .entry-text  { opacity: 0.60; }
+.entry.narrator.spoken.expanded .entry-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  opacity: 0.85;
+  cursor: default;
+}
+
 /* ── Input bar ── */
 #bottombar {
   flex-shrink: 0;
@@ -1275,7 +1294,8 @@ function renderTurn(turn, instant) {
 
   // Build entries and TTS segment list in a single pass so each DOM element
   // can be paired with its audio segment for post-speech dissolve.
-  const segments = []; // {text, voice, el, fadeAfter}
+  const segments  = []; // {text, voice, speakerName}
+  const _proseEls = []; // narrator prose divs — collapsed to one-liner after TTS plays
   for (const b of blocks) {
     const text = (b.text || '').trim();
     if (!text) continue;
@@ -1321,13 +1341,19 @@ function renderTurn(turn, instant) {
         : 'am_michael';
       // ALL feed entries are permanent — the text feed is the story transcript.
       // Speech bubbles are the transient visual; TTS is the transient audio.
-      // Nothing ever fades from the feed.
+      // Narrator prose collapses to a dim one-liner after being voiced (click to expand).
       segments.push({
         text,
         voice,
-        el: null,                           // no fadeEl — permanent transcript
         speakerName: isCharSeg ? (b.speaker || 'NPC') : null,
       });
+      if (!isCharSeg) {
+        // Track prose divs for post-TTS collapse; click toggles expand.
+        _proseEls.push(div);
+        div.addEventListener('click', () => {
+          if (div.classList.contains('spoken')) div.classList.toggle('expanded');
+        });
+      }
     }
   }
 
@@ -1390,8 +1416,13 @@ function renderTurn(turn, instant) {
           _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.speakerName));
       }
       // Sentinel: fires ttsReady once all this turn's audio has played.
+      // Also collapses narrator prose to dim one-liners (click any to re-expand).
       _ttsQ.push({_cb: () => {
-        if (_ttsGenId === myTTSGen) { _turnState.ttsReady = true; _checkTurnComplete(); }
+        if (_ttsGenId === myTTSGen) {
+          _turnState.ttsReady = true;
+          _checkTurnComplete();
+          _proseEls.forEach(el => el.classList.add('spoken'));
+        }
       }});
       if (!_ttsActive) _ttsNext();
     } else {
