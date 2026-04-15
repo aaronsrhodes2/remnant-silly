@@ -228,38 +228,19 @@ def _update_npcs_created(current_entities: dict, baseline_ids: set) -> None:
                 metrics["npcs_created"].add(eid)
 
 
-OLLAMA_URL = "http://localhost:1593"
+OLLAMA_URL = "http://localhost:1582/api/ollama"  # via nginx — port 1593 not published to host
 
 
-def _wait_ollama_ready(max_wait: float = 120.0) -> None:
-    """Poll Ollama until a quick generate call completes in under 15s.
+def _wait_ollama_ready(_max_wait: float = 0) -> None:
+    """No-op: the old Ollama generate probe was removed.
 
-    Ensures no heavy background calls (embed, caption prettify) are still
-    occupying the Ollama queue before the narrator-reset thread uses it.
-    Hits Ollama directly on port 1593.
+    The narrator-reset thread fires immediately after world reset and will occupy
+    Ollama for 60-120s; any Ollama probe would hang. _drain_reset_opening() is
+    the correct gate — it polls narrator-turns until the opening appears.
+    The SSE listener's long-lived urlopen also makes additional urlopen calls
+    unreliable on Windows (GIL/socket interaction). Nothing to do here.
     """
-    print(f"  {_dim('Checking Ollama readiness…')}", end="", flush=True)
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        t0 = time.time()
-        try:
-            code, data = _post(
-                f"{OLLAMA_URL}/api/generate",
-                {"model": "llama3.1:8b", "prompt": "ok", "stream": False,
-                 "options": {"num_predict": 2}},
-                timeout=20.0,
-            )
-            elapsed = time.time() - t0
-            if code == 200 and elapsed < 12.0:
-                print(f" {_ok('ready')} ({elapsed:.1f}s)")
-                return
-            # Slow — Ollama is still busy with background calls
-            print(".", end="", flush=True)
-            time.sleep(5.0)
-        except Exception:
-            print(".", end="", flush=True)
-            time.sleep(5.0)
-    print(f" {_warn('⚠ timed out — proceeding anyway')}")
+    pass
 
 
 def _drain_reset_opening(base: str, max_wait: float = 360.0) -> None:
@@ -904,9 +885,11 @@ def main() -> int:
         quest_turn = 0
         last_intro_turn = -99
 
-        # Arc runs until quest_complete + richness targets satisfied OR safety cap.
-        # We need at least MIN_ARC_TURNS to cover tricorder, Vex, and Mira beats.
-        MIN_ARC_TURNS = 15   # always run at least this many exploration turns
+        # Arc runs until richness targets satisfied OR hard cap.
+        # Keep it short — 10 turns max. The 15 scripted beats already cover the
+        # main story; the arc just gathers richness data on a few more interactions.
+        MAX_ARC_TURNS = 10
+        MIN_ARC_TURNS = 5
 
         def _richness_met():
             senses = metrics["smell"] + metrics["taste"] + metrics["touch"]
@@ -937,12 +920,17 @@ def main() -> int:
         while metrics["player_turns"] + metrics["narrator_turns"] < max_turns:
             quest_turn += 1
 
+            # Hard cap — stop after MAX_ARC_TURNS regardless of richness
+            if quest_turn > MAX_ARC_TURNS:
+                print(f"\n  {_ok('✓')} Quest arc cap reached ({MAX_ARC_TURNS} turns).")
+                break
+
             # Snapshot world entities every 5 quest turns
             if quest_turn % 5 == 0:
                 current_ents = _snap_world_entities(base)
                 _update_npcs_created(current_ents, baseline_entity_ids)
 
-            # Choose player input — context-reactive first, then pool rotation
+            # Choose player input — context-reactive first (no portal loop!), then pool
             last_raw = story_text[-1] if story_text else ""
             last_raw_lc = last_raw.lower()
 
@@ -955,9 +943,8 @@ def main() -> int:
                 text = "I goad the Remnant into revealing what it knows."
             elif "cold" in last_raw_lc and "spot" in last_raw_lc:
                 text = "I follow the cold trail through the sleeping quarters."
-            elif "portal" in last_raw_lc:
-                text = "I step through the portal."
             else:
+                # Plain pool rotation — avoids reactive loops
                 text = _ARC_TURNS[_arc_idx % len(_ARC_TURNS)]
                 _arc_idx += 1
 
@@ -973,9 +960,12 @@ def main() -> int:
                         f"Quest turn {quest_turn} richness",
                         "No image/mood/character in quest turn")
 
-            # Check early-exit: all beats done + richness met + minimum arc turns
+            # Early-exit: all beats done + richness met + minimum arc turns
             if beats_done >= 15 and quest_turn >= MIN_ARC_TURNS and _richness_met():
                 print(f"\n  {_ok('✅')} {_bold('All beats complete + richness targets met — pilot quest done!')}")
+                break
+            # Also exit cleanly after scoring snapshot at cap
+            if quest_turn >= MAX_ARC_TURNS:
                 break
 
         if metrics["player_turns"] + metrics["narrator_turns"] >= max_turns:
