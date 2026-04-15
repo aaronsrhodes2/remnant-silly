@@ -2707,11 +2707,16 @@ def _build_messages() -> list[dict]:
 
     msgs: list[dict] = [{"role": "system", "content": system}]
 
-    if not all_turns:
-        # First turn / post-reset: inject first_mes as the canonical opening
-        # assistant turn so the model continues from the pre-written Fabrication
-        # Bay scene (Sherri, scanning wand, three-note chime) rather than
-        # inventing its own opening from scratch.
+    # Inject first_mes on the FIRST NARRATOR TURN (no prior non-player turns).
+    # The player's first input arrives BEFORE the narrator responds, so all_turns
+    # is never truly empty when _generate_narrator_turn() is called.
+    # We check for absence of narrator turns specifically, not absence of all turns.
+    has_narrator_turns = any(not t.get("is_player") for t in all_turns)
+
+    if not has_narrator_turns:
+        # First narrator turn / post-reset: inject first_mes as the canonical
+        # opening assistant turn so the model continues from the pre-written
+        # Fabrication Bay scene rather than inventing its own opening.
         if _first_mes:
             msgs.append({"role": "assistant", "content": _first_mes})
         msgs.append({
@@ -2725,6 +2730,15 @@ def _build_messages() -> list[dict]:
                 "the GENERATE_IMAGE for the Fabrication Bay."
             ),
         })
+        # Also inject the player's actual first message so the model sees it
+        for turn in all_turns:
+            if turn.get("is_player") or any(
+                b.get("isPlayer") for b in (turn.get("parsed_blocks") or [])
+            ):
+                txt = turn.get("raw_text", "").strip()
+                if txt:
+                    msgs.append({"role": "user", "content": txt})
+                break   # only the first player message; rest handled by else branch
     else:
         for turn in active_turns:
             is_player = turn.get("is_player") or any(
@@ -2761,12 +2775,13 @@ def _stream_ollama_chat(
         # qwen2.5:14b supports 32K natively; 8192 is conservative.
         # Ollama only reallocates KV cache when num_ctx changes between calls —
         # keeping it fixed avoids per-call stalls.
-        # num_predict: hard cap at 350 new tokens (~250 words) per narrator turn.
-        # This is the primary defence against huge text blocks that saturate the GPU
-        # by firing flask-sd + flask-music simultaneously after a 60s generation.
-        # 350 tokens = one solid beat: MOOD tag + image tag + 2 prose paragraphs
-        # + one NPC line. The model stops cleanly; Ollama returns done_reason=length.
-        "options": {**{"num_ctx": 8192, "num_predict": 350}, **(extra_options or {})},
+        # num_predict: hard cap at 450 new tokens (~320 words) per narrator turn.
+        # 350 was too tight — model consistently skipped GENERATE_IMAGE tags to fit
+        # more prose, causing zero image output. 450 = MOOD + GENERATE_IMAGE +
+        # INTRODUCE + 2 prose paragraphs + one NPC line + any LORE/SFX/SMELL tags.
+        # The SD worker + narrator_done condition replace the need for a tight cap
+        # to prevent simultaneous GPU saturation.
+        "options": {**{"num_ctx": 8192, "num_predict": 450}, **(extra_options or {})},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
