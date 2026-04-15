@@ -99,6 +99,7 @@ def health():
                     "loaded": _model is not None})
 
 
+@app.route("/generate", methods=["POST"])   # nginx strips /api/music/ prefix → /generate
 @app.route("/api/generate", methods=["POST"])
 def generate():
     data     = request.get_json(force=True, silent=True) or {}

@@ -1123,6 +1123,13 @@ _NPC_PROSE_PATTERNS = [
     ), 'Mira is a fold researcher who arrived two cycles ago and chose to understand'),
 ]
 
+# Quick lookup: NPC name → one-line intro description (sourced from _NPC_PROSE_PATTERNS).
+# Used by _ensure_tags() to produce meaningful [INTRODUCE(...)] text rather than a
+# generic placeholder. New NPCs not in this dict fall back to world.json description.
+_NPC_INTRODUCE_DESC: dict[str, str] = {
+    name: desc for name, _, desc in _NPC_PROSE_PATTERNS
+}
+
 # Item trigger → (item_key, item_desc).  Fires once per item per session when
 # the narrator describes giving / fabricating / finding that item.
 _ITEM_TRIGGERS = [
@@ -1319,13 +1326,20 @@ def _sorting_hat(text: str) -> str:
     Order:
     1. Rule-based heuristics (instant, covers >80% of cases correctly)
        META:* intents are caught here and never sent to the LLM.
-    2. Ollama one-shot classification (for ambiguous SAY/DO/SENSE inputs)
+    2. Ollama one-shot classification using a small fast model (1.5B coder).
+       We use a DIFFERENT, smaller model than the narrator to avoid blocking
+       the 14B narrator queue. The 1.5B handles 3-class classification in <1s
+       and doesn't interfere with the narrator's VRAM allocation.
     3. Final fallback: DO
     """
     rule = _rule_based_intent(text)
     if rule:
         return rule
 
+    # Use the narrator model for classification. With OLLAMA_KEEP_ALIVE=-1 the
+    # model stays hot in VRAM, so a 4-token classification completes in <2s.
+    # Timeout is 30s (was 8s): the 8s timeout caused Ollama to keep processing
+    # the abandoned request, blocking the narrator behind a ghost inference call.
     prompt = (
         "Classify this player game input as exactly one of: SAY, DO, SENSE.\n"
         "SAY = spoken words or dialogue.\n"
@@ -1339,9 +1353,10 @@ def _sorting_hat(text: str) -> str:
             "model": _ollama_model(),
             "prompt": prompt,
             "stream": False,
+            "keep_alive": -1,   # keep narrator model warm after Sorting Hat call
             "options": {"num_predict": 4},
         }).encode()
-        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=body, timeout=8.0)
+        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=body, timeout=30.0)
         if code == 200:
             word = json.loads(resp).get("response", "").strip().upper()
             if word in ("SAY", "DO", "SENSE"):
@@ -1984,10 +1999,11 @@ def _prettify_lore(raw_text: str) -> str:
         "model": _ollama_model(),
         "prompt": prompt,
         "stream": False,
+        "keep_alive": -1,
         "options": {"num_predict": 120, "temperature": 0.7},
     }).encode()
     try:
-        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=20.0)
+        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=90.0)
         if code == 200:
             text = json.loads(resp).get("response", "").strip()
             return text if len(text) > 20 else ""
@@ -2601,8 +2617,19 @@ def _build_messages() -> list[dict]:
         "NEVER act for the player. NEVER reproduce context blocks verbatim. "
         "Use second-person present tense.\n\n"
 
-        "MANDATORY TAG RULES — emit these on their own line:\n"
-        "[MOOD: \"tempo, instruments, emotional feel\"] — FIRST LINE every turn. "
+        "MANDATORY TAG RULES — emit these on their own line, in this priority order:\n"
+        "[PLAYER_TRAIT(field): \"value\"] — YOUR HIGHEST PRIORITY TAG. "
+        "If the player reveals their name, appearance, pronouns, or history in ANY form, "
+        "emit this as the VERY FIRST LINE of your response — before MOOD, before prose. "
+        "Do not wait. Do not bury it later. Fields: name, pronouns, appearance, traits, history, goals. "
+        "Example: [PLAYER_TRAIT(name): \"Wren\"] [PLAYER_TRAIT(appearance): \"tall, red hair\"]\n"
+        "[GENERATE_IMAGE(location): \"sd_prompt\"] — REQUIRED the moment any new area appears. "
+        "Fabrication Bay on turn 1, Galley, Sleeping Quarters, The Nexus, any corridor. "
+        "Emit this IMMEDIATELY when location changes — do not skip to write prose first. "
+        "[GENERATE_IMAGE(subject): \"sd_prompt\"] — for character or object close-ups. "
+        "NEVER use (scene) — only (location) or (subject) are valid.\n"
+        "[MOOD: \"tempo, instruments, emotional feel\"] — emit on line 1 every turn "
+        "(after PLAYER_TRAIT and GENERATE_IMAGE if those fired). "
         "Music descriptors only, under 20 words. NEVER prose. "
         "Example: [MOOD: \"slow ambient drone, metallic resonance, uneasy quiet\"]\n"
         "[CHARACTER(Name): \"exact words\"] — EVERY time ANY NPC speaks. "
@@ -2617,15 +2644,22 @@ def _build_messages() -> list[dict]:
         "Example: [SFX(heavy metal door scrapes open)]\n"
         "[SMELL(desc)], [TOUCH(desc)], [TASTE(desc)] — REQUIRED in food/galley scenes. "
         "Emit [SMELL(...)] when food is mentioned, [TASTE(...)] when eating.\n"
-        "[GENERATE_IMAGE(location): \"sd_prompt\"] — REQUIRED when entering any new area: "
-        "Fabrication Bay (first turn), Galley, Sleeping Quarters, The Nexus, any corridor. "
-        "[GENERATE_IMAGE(subject): \"sd_prompt\"] — for character or object close-ups. "
-        "NEVER use (scene) — only (location) or (subject) are valid types.\n"
-        "[ITEM(key): \"desc\"] — when player receives or finds an object.\n"
-        "[PLAYER_TRAIT(field): \"value\"] — NON-NEGOTIABLE: emit IMMEDIATELY whenever the "
-        "player reveals name, appearance, pronouns, profession, traits, or history. "
-        "Fields: name, pronouns, appearance, traits, history, goals. "
-        "Example: [PLAYER_TRAIT(name): \"Wren\"] [PLAYER_TRAIT(appearance): \"tall, red hair\"]\n\n"
+        "[ITEM(key): \"desc\"] — when player receives or finds an object.\n\n"
+
+        "REQUIRED RESPONSE ORDER — follow this sequence every single turn:\n"
+        "1. [PLAYER_TRAIT] if player named/described themselves — FIRST, before anything else\n"
+        "2. [GENERATE_IMAGE(location): \"...\"] if player entered a new area — SECOND\n"
+        "3. [MOOD: \"...\"] — THIRD (required every turn, no exceptions)\n"
+        "4. Prose description — scene-setting, atmosphere\n"
+        "5. [INTRODUCE(Name): \"...\"] for any NPC appearing for the first time\n"
+        "6. [CHARACTER(Name): \"exact speech\"] for NPC dialogue\n"
+        "NEVER put [CHARACTER] or [INTRODUCE] before [MOOD]. Tags 1-3 always come first.\n"
+        "EXAMPLE of a correct opening turn:\n"
+        "[GENERATE_IMAGE(location): \"cavernous fabrication bay, twelve dormant molecular rigs in semicircle, dim blue glow\"]\n"
+        "[MOOD: \"slow industrial drone, machinery hum, uneasy awakening\"]\n"
+        "The bay stretches around you, vast and dim. Twelve assembly rigs wait in silence.\n"
+        "[INTRODUCE(Sherri): \"brushed-steel automaton, glowing optical sensors, slim scanning wand\"]\n"
+        "[CHARACTER(Sherri): \"Fabrication complete. You're the new one. Name and form — state them.\"]\n\n"
 
         "OPENING SEQUENCE (first turn only): The player has just been fabricated in the "
         "Fabrication Bay — a cavernous dark chamber with twelve dormant molecular assembly "
@@ -2768,20 +2802,28 @@ def _stream_ollama_chat(
         "model": _ollama_model(),
         "messages": messages,
         "stream": True,
-        # num_ctx: 8192 for qwen2.5:14b.
-        # Expanded system_core (~500 tokens) + static world context (~200 tokens)
-        # + first_mes on turn 1 (~300 tokens) + 10-turn history (~3000 tokens)
-        # + response buffer (~800 tokens) ≈ 4800 tokens — over the old 4096 default.
-        # qwen2.5:14b supports 32K natively; 8192 is conservative.
+        # keep_alive=-1: keep the model loaded in VRAM indefinitely after this call.
+        # Set explicitly on every /api/chat request because OLLAMA_KEEP_ALIVE env
+        # var appears unreliable on /api/chat in some Ollama builds — per-request
+        # keep_alive takes precedence over the env var and is more portable.
+        "keep_alive": -1,
+        # num_ctx: 4096 (down from 8192).
+        # RTX 4070 Ti SUPER has 16 GB VRAM. With MusicGen-small (~500 MB) and
+        # SD model also resident, qwen2.5:14b Q4_K_M needs ~9.2 GB — leaving
+        # ~400 MB headroom. num_ctx=8192 KV cache alone requires 768 MB which
+        # pushes total past the safe limit → "timed out waiting for llama runner".
+        # 4096 reduces KV cache to ~384 MB. Context budget at 4096:
+        #   system_core (~500) + world context (~200) + first_mes (~300)
+        #   + 8-turn history (~2400) + response buffer (~450) ≈ 3850 → fits.
         # Ollama only reallocates KV cache when num_ctx changes between calls —
-        # keeping it fixed avoids per-call stalls.
+        # keeping it fixed at 4096 avoids per-call stalls.
         # num_predict: hard cap at 450 new tokens (~320 words) per narrator turn.
         # 350 was too tight — model consistently skipped GENERATE_IMAGE tags to fit
         # more prose, causing zero image output. 450 = MOOD + GENERATE_IMAGE +
         # INTRODUCE + 2 prose paragraphs + one NPC line + any LORE/SFX/SMELL tags.
         # The SD worker + narrator_done condition replace the need for a tight cap
         # to prevent simultaneous GPU saturation.
-        "options": {**{"num_ctx": 8192, "num_predict": 450}, **(extra_options or {})},
+        "options": {**{"num_ctx": 4096, "num_predict": 450}, **(extra_options or {})},
     }).encode("utf-8")
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
@@ -2989,15 +3031,33 @@ def _inject_missing_tags(narrator_text: str) -> str:
             result = f'[CHARACTER({npc_name}): "{speech[:80]}"]\n' + result
 
     # ── INTRODUCE — world-graph entity tracking ───────────────────────────
+    # Strip model-generated INTRODUCE for already-introduced characters. The model
+    # learns the INTRODUCE pattern from turn 1 (where we inject it server-side) and
+    # repeats it on every subsequent turn unless we scrub it here first.
+    for name in list(_introduced_this_session):
+        result = re.sub(
+            rf'\[INTRODUCE\({re.escape(name)}\)[^\]]*\]\n?', '', result
+        )
+
     # Any [CHARACTER(Name)] speaker not yet introduced gets a one-time
     # [INTRODUCE(Name)] prepended so world-state ingestor tracks them.
-    # Scan `result` (not narrator_text) to catch just-injected tags.
+    # Scan `result` (not narrator_text) to catch just-injected CHARACTER tags.
     for name in re.findall(r'\[CHARACTER\(([^)]+)\)', result):
         name = name.strip()
         if (name not in _PERMANENT_CREW
                 and name not in _introduced_this_session
                 and f'[INTRODUCE({name})' not in result):
-            result = f'[INTRODUCE({name}): "Character present in The Fortress"]\n' + result
+            # Use a real description from the lookup or world.json — not a placeholder.
+            intro_desc = _NPC_INTRODUCE_DESC.get(name, "")
+            if not intro_desc:
+                for npc in _world.get("npcs", []):
+                    if npc.get("name", "").strip() == name:
+                        raw = (npc.get("description") or npc.get("role") or "")
+                        intro_desc = raw[:80].rstrip()
+                        break
+            if not intro_desc:
+                intro_desc = "a character encountered in The Fortress"
+            result = f'[INTRODUCE({name}): "{intro_desc[:80]}"]\n' + result
         _introduced_this_session.add(name)
         # Queue this NPC for pre-quirkify enrichment (low-priority background pass)
         entity_id = name.lower().replace(" ", "_")
@@ -3496,6 +3556,7 @@ def _match_static_scene(description: str) -> str | None:
 
 _sd_work_queue: collections.deque = collections.deque()   # (fn, label) FIFO
 _sd_work_event = threading.Event()                        # set when work arrives
+_sd_active: bool = False                                  # True while a job is running
 
 
 def _sd_enqueue(fn, label: str = "img") -> None:
@@ -3506,6 +3567,7 @@ def _sd_enqueue(fn, label: str = "img") -> None:
 
 def _sd_worker_loop() -> None:
     """Single SD worker: waits for work, waits for Ollama idle, then runs each job."""
+    global _sd_active
     while True:
         _sd_work_event.wait()
         _sd_work_event.clear()
@@ -3521,10 +3583,13 @@ def _sd_worker_loop() -> None:
             if not ok:
                 _log(f"[sd-worker] Ollama still busy after 90s — skipping {label}")
                 continue
+            _sd_active = True
             try:
                 fn()
             except Exception as exc:
                 _log(f"[sd-worker] error in {label}: {exc}")
+            finally:
+                _sd_active = False
 
 
 def _enqueue_image_generation(narrator_text: str) -> None:
@@ -3710,9 +3775,10 @@ def _prettify_caption(description: str, kind: str) -> None:
             "model": _ollama_model(),
             "prompt": prompt,
             "stream": False,
+            "keep_alive": -1,
             "options": {"num_predict": 60, "temperature": 0.3},
         }).encode("utf-8")
-        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=20.0)
+        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=90.0)
         if code == 200:
             caption = json.loads(resp).get("response", "").strip()
             if caption:
@@ -4801,6 +4867,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"text": _current_activity})
             return
 
+        if path == "/ready":
+            # Lightweight idle probe for test harnesses and health checks.
+            # Returns immediately — no Ollama call.
+            # idle=True when no narrator is streaming AND no SD jobs are queued OR active.
+            # _sd_active tracks in-flight jobs that have been dequeued but not yet finished.
+            idle = (not _generating and not _classifying
+                    and len(_sd_work_queue) == 0 and not _sd_active)
+            self._send_json(200, {
+                "idle": idle,
+                "generating": _generating,
+                "classifying": _classifying,
+                "sd_queue_depth": len(_sd_work_queue),
+                "sd_active": _sd_active,
+            })
+            return
+
         if path == "/forever":
             self._send_json(200, {"entries": _load_forever_log()})
             return
@@ -4902,6 +4984,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     self._send_json(400, {"ok": False, "error": "empty text"})
                     return
+                # Diagnostic flag: used by automated tests / Sorting Hat self-tests.
+                # Turn flows through the FULL pipeline (Sorting Hat → narrator → SD → music)
+                # but is tagged so clients can filter it from the player-facing story view.
+                is_diagnostic = bool(payload.get("_diagnostic", False))
                 # Set _classifying so background Ollama threads yield during this call.
                 # _sorting_hat may hit Ollama for ambiguous inputs (5-8s with reload).
                 # Without this flag, background threads with 5s idle windows can fire
@@ -4990,12 +5076,17 @@ class Handler(BaseHTTPRequestHandler):
                     "parsed_blocks": [{"text": wrapped, "channel": intent.lower(), "isPlayer": True}],
                     "received_at": now,
                 }
+                if is_diagnostic:
+                    # Mark as diagnostic: full pipeline fires (narrator, SD, music, TTS)
+                    # but clients can filter these turns from the story view.
+                    turn["is_diagnostic"] = True
                 _store_narrator_turn(turn)
                 _sse_broadcast("turn", turn)
                 # Direct Ollama generation — no longer relies on ST extension relay
                 threading.Thread(target=_generate_narrator_turn,
                                  daemon=True, name="narrator").start()
-                self._send_json(200, {"ok": True, "intent": intent, "wrapped": wrapped})
+                self._send_json(200, {"ok": True, "intent": intent, "wrapped": wrapped,
+                                      **({"diagnostic": True} if is_diagnostic else {})})
             except Exception as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
             return
@@ -5170,6 +5261,40 @@ def _ollama_watchdog_loop() -> None:
             if _ollama_fail_count >= 2 and _ollama_healthy:
                 _ollama_healthy = False
                 _sse_broadcast("activity", {"text": "⚠ language model reconnecting…"})
+
+
+def _warmup_flask_music() -> None:
+    """Trigger flask-music MusicGen model load at startup.
+
+    MusicGen loads on first request, which adds 20-30s lag to the very first
+    MOOD tag. Fire a minimal generate call during boot so the model is warm
+    before the player's first turn.
+
+    Only runs in Docker mode (FLASK_MUSIC_URL points to the container hostname).
+    Safe to call in native mode — it will fail gracefully if flask-music isn't
+    reachable.
+    """
+    time.sleep(15)  # wait for the stack to settle before hitting flask-music
+    try:
+        code_h, body_h, _ = _http("GET", f"{FLASK_MUSIC_URL}/health", timeout=10.0)
+        if isinstance(body_h, bytes):
+            try:
+                body_h = json.loads(body_h)
+            except Exception:
+                body_h = {}
+        if isinstance(body_h, dict) and body_h.get("model_loaded"):
+            _log("[music-warmup] flask-music model already loaded — skipping warmup")
+            return
+        _log("[music-warmup] flask-music model not loaded — firing warmup generate (2 s clip)…")
+        warmup_payload = json.dumps({"prompt": "ambient hum, soft drone", "duration": 2}).encode()
+        code_g, _, lat_g = _http("POST", f"{FLASK_MUSIC_URL}/api/generate",
+                                 body=warmup_payload, timeout=120.0)
+        if code_g == 200:
+            _log(f"[music-warmup] flask-music warm — model loaded in {lat_g:.0f} ms")
+        else:
+            _log(f"[music-warmup] flask-music warmup returned HTTP {code_g}")
+    except Exception as exc:
+        _log(f"[music-warmup] warmup skipped: {exc}")
 
 
 def _generate_npc_banter(npc_a: str, npc_b: str) -> None:
@@ -5470,6 +5595,8 @@ def main() -> None:
     threading.Thread(target=_ghost_scout_loop, daemon=True, name="ghost-scout").start()
     # NPC banter pre-generation ("elevator scenes") — fires when narrator idle + ≥2 NPCs present
     threading.Thread(target=_banter_prefetch_loop, daemon=True, name="banter-prefetch").start()
+    # Flask-music warmup — triggers MusicGen model load at boot so first MOOD tag fires instantly
+    threading.Thread(target=_warmup_flask_music, daemon=True, name="music-warmup").start()
     _log(f"remnant-diag starting on :{LISTEN_PORT}")
     srv = ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler)
     try:
