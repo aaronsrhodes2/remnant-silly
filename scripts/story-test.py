@@ -546,6 +546,47 @@ def _save_results(player_name: str, beats_done: int, score: int,
     return out_path
 
 
+# ── Singleton guard: kill any existing story-test.py instances ────────────────
+def _kill_existing_instances() -> None:
+    """Kill any other running story-test.py processes before starting.
+
+    Multiple concurrent instances corrupt the narrator history, causing
+    duplicate/competing inputs. This ensures only one test runs at a time.
+    """
+    import os
+    my_pid = os.getpid()
+    my_script = Path(__file__).resolve()
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-WmiObject Win32_Process -Filter \"Name='python.exe' OR Name='python3.exe'\" "
+             "| Select-Object ProcessId, CommandLine | ConvertTo-Json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return
+        procs = json.loads(result.stdout.strip())
+        if isinstance(procs, dict):
+            procs = [procs]
+        killed = []
+        for p in procs:
+            pid  = p.get("ProcessId") or p.get("ProcessID")
+            cmd  = p.get("CommandLine") or ""
+            if pid and int(pid) != my_pid and "story-test" in cmd:
+                try:
+                    subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                                   capture_output=True, timeout=5)
+                    killed.append(int(pid))
+                except Exception:
+                    pass
+        if killed:
+            print(f"  {_warn('⚠')} Killed {len(killed)} existing story-test instance(s): {killed}")
+            time.sleep(1)   # brief pause to let narrator state settle
+    except Exception as exc:
+        print(f"  {_dim('(singleton guard skipped:)')} {exc}")
+
+
 # ── Main test ─────────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -559,6 +600,8 @@ def main() -> int:
     parser.add_argument("--skip-reset",  action="store_true",
                         help="Skip world reset (use current world state)")
     args = parser.parse_args()
+
+    _kill_existing_instances()   # ensure we're the only story-test running
 
     base        = f"http://{args.host}:{args.port}"
     diag        = f"http://{args.host}:{args.diag_port}"
