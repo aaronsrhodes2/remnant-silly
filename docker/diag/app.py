@@ -97,6 +97,10 @@ _conversation_lock = threading.Lock()   # guards _generating flag (check-and-set
 _generating: bool = False               # True while Ollama is streaming a response
 _classifying: bool = False              # True while _sorting_hat's Ollama call is in flight
 _narrator_queued: bool = False          # True when a player input arrived during generation
+# Condition broadcast when _generating OR _classifying transitions to False.
+# All background workers (SD, banter, ghost scout, caption) wait on this instead
+# of polling — services wake exactly when Ollama goes idle, not after an arbitrary sleep.
+_narrator_done = threading.Condition()
 _system_prompt: str = ""               # Loaded from fortress_system_prompt.txt at startup
 _first_mes: str = ""                   # Loaded from fortress_first_mes.txt at startup
 
@@ -370,7 +374,7 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
         # not handled by the structured extractors below → also layer onto location.
         # This makes the world graph agnostic: the narrator can invent [MOOD], [TENSION],
         # [HISTORY] etc. and they accumulate the same way sense tags do.
-        _STRUCTURED_TAGS = {"INTRODUCE", "PLAYER_TRAIT", "ITEM"}
+        _STRUCTURED_TAGS = {"INTRODUCE", "PLAYER_TRAIT", "PLAYERTRAIT", "ITEM"}
         _catchall_re = re.compile(
             r'\[([A-Z_]{2,32})(?:\([^)]*\))?\s*:\s*"?([^"\]\n]{3,200})"?\]', re.IGNORECASE
         )
@@ -480,7 +484,7 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
 
     # ── Player trait / name alias tracking ────────────────────────────
     # [PLAYER_TRAIT(name): "Frank Rizzo"] — update the player entity
-    trait_re = re.compile(r'\[PLAYER_TRAIT\(name\)\s*:\s*"?([^"\]]+)"?\]', re.IGNORECASE)
+    trait_re = re.compile(r'\[PLAYER_?TRAIT\(name\)\s*:\s*"?([^"\]]+)"?\]', re.IGNORECASE)
     for match in trait_re.finditer(raw_text):
         player_name = match.group(1).strip()
         player_entity = _ensure_entity("__player__", player_name, "player")
@@ -502,7 +506,7 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
     # triggers the SD portrait generation the same way the dressed transition does.
     if not _player_dressed:
         appear_re = re.compile(
-            r'\[PLAYER_TRAIT\((?:appearance|clothing|look|physique|dress)\)'
+            r'\[PLAYER_?TRAIT\((?:appearance|clothing|look|physique|dress)\)'
             r'\s*:\s*"?([^"\]]{10,})"?\]',
             re.IGNORECASE,
         )
@@ -2606,10 +2610,16 @@ def _build_messages() -> list[dict]:
         "[INTRODUCE(Name): \"brief physical desc\"] — FIRST time a new NPC appears. "
         "NEVER emit [INTRODUCE(The Remnant)] or [INTRODUCE(The Fortress)] — "
         "they are narrators, not characters to introduce.\n"
-        "[LORE(key): \"fact\"] — when lore or history is referenced.\n"
-        "[SMELL(desc)], [TOUCH(desc)] — when sensory details are evoked.\n"
-        "[GENERATE_IMAGE(location): \"sd_prompt\"] — when entering a new room or place. "
-        "[GENERATE_IMAGE(subject): \"sd_prompt\"] — for a character or object close-up. "
+        "[LORE(key): \"fact\"] — REQUIRED when mentioning Fortress history, The Fold, "
+        "void crystals, past occupants, or dimensional lore. "
+        "Example: [LORE(the_fold): \"The Fold is a dimensional rift that swallowed worlds\"]\n"
+        "[SFX(sound)] — when a distinct sound occurs: machinery, footsteps, doors, alarms. "
+        "Example: [SFX(heavy metal door scrapes open)]\n"
+        "[SMELL(desc)], [TOUCH(desc)], [TASTE(desc)] — REQUIRED in food/galley scenes. "
+        "Emit [SMELL(...)] when food is mentioned, [TASTE(...)] when eating.\n"
+        "[GENERATE_IMAGE(location): \"sd_prompt\"] — REQUIRED when entering any new area: "
+        "Fabrication Bay (first turn), Galley, Sleeping Quarters, The Nexus, any corridor. "
+        "[GENERATE_IMAGE(subject): \"sd_prompt\"] — for character or object close-ups. "
         "NEVER use (scene) — only (location) or (subject) are valid types.\n"
         "[ITEM(key): \"desc\"] — when player receives or finds an object.\n"
         "[PLAYER_TRAIT(field): \"value\"] — NON-NEGOTIABLE: emit IMMEDIATELY whenever the "
@@ -3347,6 +3357,9 @@ def _generate_narrator_turn() -> None:
             _generating = False
             queued = _narrator_queued
             _narrator_queued = False
+        # Signal all background workers that Ollama is now idle
+        with _narrator_done:
+            _narrator_done.notify_all()
         # Drain the 1-deep queue: player submitted while we were busy
         if queued:
             threading.Thread(target=_generate_narrator_turn,
@@ -3460,10 +3473,48 @@ def _match_static_scene(description: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# SD work queue — single worker thread serialises all flask-sd calls.
+# Waits for Ollama to signal idle (_narrator_done) before each job, so SD
+# never competes with an active narrator or sorting-hat call for VRAM.
+# ---------------------------------------------------------------------------
+
+_sd_work_queue: collections.deque = collections.deque()   # (fn, label) FIFO
+_sd_work_event = threading.Event()                        # set when work arrives
+
+
+def _sd_enqueue(fn, label: str = "img") -> None:
+    """Submit a callable to the SD worker queue and wake the worker."""
+    _sd_work_queue.append((fn, label))
+    _sd_work_event.set()
+
+
+def _sd_worker_loop() -> None:
+    """Single SD worker: waits for work, waits for Ollama idle, then runs each job."""
+    while True:
+        _sd_work_event.wait()
+        _sd_work_event.clear()
+        while _sd_work_queue:
+            fn, label = _sd_work_queue.popleft()
+            # Block until Ollama signals idle — no polling, pure event-driven.
+            # 90s timeout is a safety net only; the primary mechanism is the condition.
+            with _narrator_done:
+                ok = _narrator_done.wait_for(
+                    lambda: not _generating and not _classifying,
+                    timeout=90,
+                )
+            if not ok:
+                _log(f"[sd-worker] Ollama still busy after 90s — skipping {label}")
+                continue
+            try:
+                fn()
+            except Exception as exc:
+                _log(f"[sd-worker] error in {label}: {exc}")
+
+
 def _enqueue_image_generation(narrator_text: str) -> None:
-    threading.Thread(
-        target=_do_image_generation, args=(narrator_text,), daemon=True, name="img-gen"
-    ).start()
+    """Submit narrator text for image generation via the SD work queue."""
+    _sd_enqueue(lambda: _do_image_generation(narrator_text), label="narrator-img")
 
 
 def _prewarm_visuals() -> None:
@@ -3540,28 +3591,10 @@ def _do_image_generation(narrator_text: str) -> None:
             return
         markers = [("location", prose)]
 
-    # Guard: wait for Ollama to be genuinely idle before calling flask-SD.
-    # llama3.1:8b (5.2 GB) + Stable Diffusion (3.4 GB) + flask-music (2 GB)
-    # + system apps (~4.7 GB) = ~15.3 GB — right at the 16 GB VRAM edge.
-    # Starting SD while Ollama is generating risks evicting the LLM to CPU
-    # (1-3 tok/s → 300s narrator timeout).
-    #
-    # Two-phase idle check:
-    #   Phase 1: wait up to 60s for _generating to be False (narrative done)
-    #   Phase 2: wait 5s more to let the next player input arrive and set
-    #            _generating=True again (story test submits inputs in ~2s)
-    # If _generating is still False after both waits, Ollama is truly idle
-    # (user is thinking/reading) and SD generation is safe.
-    _sd_idle_deadline = time.time() + 60.0
-    while (_generating or _classifying) and time.time() < _sd_idle_deadline:
-        time.sleep(0.5)
-    if _generating or _classifying:
-        return   # Ollama still busy — skip image
-    # Phase 2: stability wait — during story test the next input arrives in ~2s;
-    # in real gameplay the user pauses 5-30s.  5s catches rapid test submission.
-    time.sleep(5.0)
-    if _generating or _classifying:
-        return   # next turn has started — skip SD to protect narrator latency
+    # Note: Ollama idle guard has been removed from here.
+    # _do_image_generation is called exclusively through _sd_enqueue → _sd_worker_loop,
+    # which waits for _narrator_done condition before dispatching each job.
+    # This function can assume Ollama is idle when it is called.
 
     for kind, description in markers:
         kind = (kind or "location").strip()
@@ -3596,11 +3629,11 @@ def _do_image_generation(narrator_text: str) -> None:
                                            "description": description, "source": "static"})
             continue
 
-        # Final VRAM guard: if Ollama has become active since the entry guard
-        # (story test sends next player input immediately after receiving a turn),
-        # skip this image generation to protect narrator latency.
+        # Final VRAM guard: if Ollama has become active since the entry guard,
+        # stop processing further images to protect narrator latency.
+        # Use break (not return) so the loop exits cleanly.
         if _generating or _classifying:
-            return
+            break
 
         _sse_broadcast("activity", {"text": f"⏳ rendering {kind}…"})
         neg = _DEFAULT_NEGATIVE_PROMPT + _NO_TEXT_SUFFIX
@@ -3638,25 +3671,20 @@ def _prettify_caption(description: str, kind: str) -> None:
     """Ask Ollama to convert the SD prompt into a short human-readable scene caption,
     then broadcast it so the UI can update the thumbnail tooltip.
 
-    Narrator-yielding: waits until _generating has been False for 5s before
-    calling Ollama, so we don't compete with an imminent narrator call.
+    Narrator-yielding: waits on _narrator_done condition until Ollama is idle,
+    then pauses 3s so any imminent narrator call can claim Ollama first.
     """
-    # Yield to narrator: wait for 5s of continuous idle before using Ollama.
-    # Also yields when _classifying (_sorting_hat Ollama call in flight).
-    idle_since = None
-    while True:
-        if _generating or _classifying:
-            idle_since = None
-            time.sleep(1)
-            continue
-        if idle_since is None:
-            idle_since = time.time()
-            time.sleep(1)
-            continue
-        if time.time() - idle_since < 5.0:
-            time.sleep(1)
-            continue
-        break
+    # Wait for Ollama to signal idle, then a brief pause before using Ollama.
+    with _narrator_done:
+        ok = _narrator_done.wait_for(
+            lambda: not _generating and not _classifying,
+            timeout=120,
+        )
+    if not ok:
+        return   # Ollama never went idle — skip caption
+    time.sleep(3)   # brief yield so a rapid next narrator call wins Ollama
+    if _generating or _classifying:
+        return   # narrator claimed Ollama in that window — skip caption
     try:
         prompt = (
             "Convert this image generation prompt into a short, evocative scene caption "
@@ -4868,6 +4896,8 @@ class Handler(BaseHTTPRequestHandler):
                     intent = _sorting_hat(text)
                 finally:
                     _classifying = False
+                    with _narrator_done:
+                        _narrator_done.notify_all()
 
                 # META intents are primarily sidecar-only, but PLAYER_NAME / PLAYER_ALIAS
                 # can relay to SillyTavern so the narrator can acknowledge the declaration.
@@ -4996,29 +5026,24 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(raw.decode("utf-8")) if raw else {}
                 desc = (body.get("description") or "").strip()
                 if desc:
-                    # Re-use existing image generation pipeline — VRAM guard and SSE
-                    # broadcast are included. Wraps desc in GENERATE_IMAGE tag so the
-                    # full pipeline (style prefix, blocklist, player-appearance injection)
-                    # applies exactly as in normal narrator-driven generation.
+                    # Re-use existing image generation pipeline via SD work queue.
+                    # Wraps desc in GENERATE_IMAGE tag so the full pipeline
+                    # (style prefix, blocklist, player-appearance injection) applies.
                     safe_desc = desc.replace('"', "'")[:350]
-                    threading.Thread(
-                        target=_do_image_generation,
-                        args=(f'[GENERATE_IMAGE(location): "{safe_desc}"]',),
-                        daemon=True,
-                        name="regen-scene",
-                    ).start()
+                    _sd_enqueue(
+                        lambda t=f'[GENERATE_IMAGE(location): "{safe_desc}"]': _do_image_generation(t),
+                        label="regen-scene",
+                    )
                     self._send_json(200, {"ok": True, "description": desc[:80]})
                 else:
                     # No description — regenerate from latest scene image description
                     fallback = (_latest_scene_image or {}).get("description", "")
                     if fallback:
                         safe = fallback.replace('"', "'")[:350]
-                        threading.Thread(
-                            target=_do_image_generation,
-                            args=(f'[GENERATE_IMAGE(location): "{safe}"]',),
-                            daemon=True,
-                            name="regen-scene",
-                        ).start()
+                        _sd_enqueue(
+                            lambda t=f'[GENERATE_IMAGE(location): "{safe}"]': _do_image_generation(t),
+                            label="regen-scene",
+                        )
                         self._send_json(200, {"ok": True, "description": fallback[:80]})
                     else:
                         self._send_json(400, {"ok": False, "error": "no description available"})
@@ -5207,11 +5232,22 @@ def _generate_npc_banter(npc_a: str, npc_b: str) -> None:
 
 
 def _banter_prefetch_loop() -> None:
-    """Daemon: pre-generate NPC banter when the narrator is idle and ≥2 NPCs are present."""
+    """Daemon: pre-generate NPC banter when the narrator goes idle and ≥2 NPCs are present.
+
+    Uses _narrator_done Condition instead of time.sleep(60) + polling — wakes
+    exactly when Ollama signals idle, not after an arbitrary fixed interval.
+    A brief 3s debounce after waking avoids spawning a banter gen immediately
+    before the next player input arrives (rate-limit, not a readiness wait).
+    """
     global _banter_generating
     while True:
-        time.sleep(60)
         try:
+            # Wait for Ollama to signal idle — no polling, event-driven.
+            with _narrator_done:
+                _narrator_done.wait_for(lambda: not _generating and not _classifying)
+            # Brief debounce: avoids wasting an Ollama call on banter when
+            # the player is about to send the next input.
+            time.sleep(3)
             if _banter_generating or _generating or _classifying:
                 continue
             if len(_banter_queue) >= 2:
@@ -5341,14 +5377,27 @@ def _run_ghost_scout(location_name: str) -> None:
 
 
 def _ghost_scout_loop() -> None:
-    """Wake every 90s; dispatch a ghost scout for the hottest eligible location."""
+    """Wake every 90s; dispatch a ghost scout for the hottest eligible location.
+
+    The 90s sleep is a cadence timer (how often to attempt a scout), not a
+    readiness wait. Ollama-idle readiness is checked via _narrator_done.wait_for
+    with a 10s timeout — if Ollama is still busy after 10s, we skip this cycle
+    and try again in 90s rather than blocking indefinitely.
+    """
     global _scout_running
     while True:
-        time.sleep(90)
+        time.sleep(90)   # cadence: how often to look for scout opportunities
         try:
-            # Don't compete with active generation or an in-flight scout
-            if _scout_running or _generating or _classifying:
+            if _scout_running:
                 continue
+            # Wait for Ollama to be idle — 10s timeout so we don't stall the cycle
+            with _narrator_done:
+                ok = _narrator_done.wait_for(
+                    lambda: not _generating and not _classifying,
+                    timeout=10,
+                )
+            if not ok:
+                continue   # Ollama busy this cycle — try again in 90s
 
             current_loc = _world.get("current_location", "")
             current_id  = _loc_id(current_loc) if current_loc else ""
@@ -5399,6 +5448,9 @@ def main() -> None:
     threading.Thread(target=_quirkify_loop, daemon=True, name="quirkify").start()
     # Ollama health watchdog — pings every 30 s; SSE warning after 2 consecutive failures
     threading.Thread(target=_ollama_watchdog_loop, daemon=True, name="ollama-watchdog").start()
+    # SD work queue worker — single thread serialises all flask-sd calls;
+    # waits for _narrator_done signal before each job (event-driven, no polling)
+    threading.Thread(target=_sd_worker_loop, daemon=True, name="sd-worker").start()
     # Ghost scout — speculative pre-generation for hot unvisited locations
     threading.Thread(target=_ghost_scout_loop, daemon=True, name="ghost-scout").start()
     # NPC banter pre-generation ("elevator scenes") — fires when narrator idle + ≥2 NPCs present

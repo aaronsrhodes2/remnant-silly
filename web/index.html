@@ -2518,10 +2518,12 @@ function _tryDeliverLore() {
 // ── NPC banter ("elevator scenes") ───────────────────────────────────────────
 
 function _scheduleBanterCheck() {
-  // Schedule a banter check 20s after TTS goes idle.
+  // Short 2s debounce after TTS goes idle before playing banter.
+  // The server's banter_ready SSE is the primary signal — this just lets
+  // any in-flight TTS word clear before banter starts.
   // Cancelled when player sends input, narrator starts, or TTS clears.
   clearTimeout(_banterIdleTimer);
-  _banterIdleTimer = setTimeout(_tryPlayBanter, 20_000);
+  _banterIdleTimer = setTimeout(_tryPlayBanter, 2_000);
 }
 
 async function _tryPlayBanter() {
