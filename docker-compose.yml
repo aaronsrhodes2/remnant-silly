@@ -172,21 +172,20 @@ services:
   # without a GPU. Exposed to the stack via nginx /api/tts/ route.
   # Game integration (SAY channel → speech) is deferred; the service is
   # reachable now so the feature can be wired in without a stack restart.
+  # ── TTS (Kokoro) ──────────────────────────────────────────────────────────
+  # CPU-only image: self-contained, no internet required at startup. The GPU
+  # variant (kokoro-fastapi-gpu) tries to pip-install spacy's en_core_web_sm
+  # from GitHub at container init, which fails on the air-gapped play-net.
+  # Sentence latency on CPU is 5-12s; the frontend timeout is dynamically
+  # scaled (max(20s, text.length*120ms)) so no sentences are dropped.
   tts:
-    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.2
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
     container_name: remnant-tts
     restart: unless-stopped
     expose:
       - "8880"
     networks:
       - play-net
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   # ── STT (Whisper) ──────────────────────────────────────────────────────
   # OpenAI Whisper wrapped in a REST API. Accepts audio POSTs, returns
