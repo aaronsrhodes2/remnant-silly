@@ -173,13 +173,20 @@ services:
   # Game integration (SAY channel → speech) is deferred; the service is
   # reachable now so the feature can be wired in without a stack restart.
   tts:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.2
     container_name: remnant-tts
     restart: unless-stopped
     expose:
       - "8880"
     networks:
       - play-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # ── STT (Whisper) ──────────────────────────────────────────────────────
   # OpenAI Whisper wrapped in a REST API. Accepts audio POSTs, returns

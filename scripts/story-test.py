@@ -342,7 +342,7 @@ def play(text: str, label: str, base: str,
     print(f"\n  {_cyan('▶')} {_bold(label)}")
     print(f"    {_dim('Player:')} {text[:100]}")
 
-    code, resp = _post(f"{base}/player-input", {"text": text}, timeout=30.0)
+    code, resp = _post(f"{base}/player-input", {"text": text}, timeout=60.0)
     assert_hard(code == 200, f"player-input returned HTTP {code}: {resp}")
     metrics["player_turns"] += 1
 

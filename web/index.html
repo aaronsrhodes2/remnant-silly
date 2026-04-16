@@ -2253,12 +2253,15 @@ function _speakTTS(text, voice = 'am_michael', speed = 1.0, volume = 0.85) {
     _setStatus('speaking', true);
     const done = () => { _setLight('audio', 'idle'); _setStatus('speaking', false); resolve(); };
 
-    // Hard timeout: if flask-tts doesn't respond within 15s the queue would
-    // freeze forever.  Abort and continue to the next item instead.
+    // Hard timeout: scales with text length so CPU-mode Kokoro (slow) doesn't
+    // silently drop long narrator sentences. Minimum 20s; add 120ms per char.
+    // On GPU Kokoro this is generous — typical generation is <2s regardless.
+    // If flask-tts doesn't respond within the window, abort and continue.
+    const _ttsTimeoutMs = Math.max(20_000, text.length * 120);
     const _ttsTimeout = setTimeout(() => {
-      console.warn('[tts] timeout — skipping item');
+      console.warn(`[tts] timeout after ${_ttsTimeoutMs}ms — skipping: "${text.slice(0,40)}…"`);
       ctrl.abort();
-    }, 15_000);
+    }, _ttsTimeoutMs);
     const doneClear = () => { clearTimeout(_ttsTimeout); done(); };
 
     fetch('/api/tts/v1/audio/speech', {

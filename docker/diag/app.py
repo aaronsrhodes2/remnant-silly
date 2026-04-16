@@ -97,6 +97,7 @@ _player_persona_desc: str = ""      # character personality/voice style declared
 _conversation_lock = threading.Lock()   # guards _generating flag (check-and-set only)
 _generating: bool = False               # True while Ollama is streaming a response
 _classifying: bool = False              # True while _sorting_hat's Ollama call is in flight
+_lore_narrating: bool = False           # True while lore idle loop is using Ollama
 _narrator_queued: bool = False          # True when a player input arrived during generation
 # Condition broadcast when _generating OR _classifying transitions to False.
 # All background workers (SD, banter, ghost scout, caption) wait on this instead
@@ -1366,6 +1367,13 @@ def _sorting_hat(text: str) -> str:
     if rule:
         return rule
 
+    # If the lore idle loop is currently using Ollama, skip the LLM classifier
+    # entirely rather than queuing behind it. "DO" is the safest fallback — the
+    # narrator handles DO intents well and the misclassification rate is low.
+    if _lore_narrating:
+        print("[sorting-hat] lore using Ollama — skipping LLM classify, defaulting to DO")
+        return "DO"
+
     # Use the narrator model for classification. With OLLAMA_KEEP_ALIVE=-1 the
     # model stays hot in VRAM, so a 4-token classification completes in <2s.
     # Timeout is 30s (was 8s): the 8s timeout caused Ollama to keep processing
@@ -2067,7 +2075,7 @@ def _prettify_lore(raw_text: str) -> str:
 
 def _lore_idle_loop() -> None:
     """Daemon thread: after LORE_IDLE_SECS of player silence, read a lore entry aloud."""
-    global _last_player_ts, _spoken_lore_keys
+    global _last_player_ts, _spoken_lore_keys, _lore_narrating
     while True:
         time.sleep(10)
         try:
@@ -2092,7 +2100,16 @@ def _lore_idle_loop() -> None:
             entry = _pick_unseen_lore()
             if not entry:
                 continue
-            prettified = _prettify_lore(entry["text"])
+            # Signal that lore is using Ollama so _sorting_hat skips its Ollama
+            # fallback and returns immediately — prevents Ollama queue contention
+            # when player input arrives during lore prettification.
+            _lore_narrating = True
+            try:
+                prettified = _prettify_lore(entry["text"])
+            finally:
+                _lore_narrating = False
+                with _narrator_done:
+                    _narrator_done.notify_all()
             if not prettified:
                 continue
             _sse_broadcast("lore_whisper", {"key": entry["key"], "text": prettified})
