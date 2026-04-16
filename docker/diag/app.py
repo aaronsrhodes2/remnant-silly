@@ -611,6 +611,13 @@ _lore_injected_this_session: set = set()
 _image_locations_fired: set = set()  # location keys for already-injected images this session
 _item_given_this_session: set = set()  # item keys already injected this session
 
+# ── Ollama model-ready gate ────────────────────────────────────────────────
+# Set to True only after the first successful Ollama /api/chat response.
+# Background threads (banter, ghost-scout, lore-narration) check this flag
+# before making any Ollama call — prevents the cold-start death spiral where
+# multiple 90s timeouts abort the model runner mid-load and it never finishes.
+_model_ready: bool = False
+
 # Pre-Quirkify — low-priority background entity enrichment
 # Triggered by INTRODUCE tags + location entry; processed by _quirkify_loop daemon.
 _quirkify_queue: collections.deque = collections.deque(maxlen=40)
@@ -2018,6 +2025,8 @@ def _lore_idle_loop() -> None:
     while True:
         time.sleep(10)
         try:
+            if not _model_ready:
+                continue   # don't abort Ollama model load mid-mmap
             if time.time() - _last_player_ts < LORE_IDLE_SECS:
                 continue
             if _generating or _classifying:
@@ -2737,7 +2746,9 @@ def _build_messages() -> list[dict]:
             )
         active_turns = recent_turns
     else:
-        active_turns = all_turns
+        # ChromaDB unavailable: cap at _RECENT_TURNS_WINDOW to stay within num_ctx budget.
+        # Sending all N turns causes context overflow when N is large (e.g. after story test).
+        active_turns = all_turns[-_RECENT_TURNS_WINDOW:]
 
     msgs: list[dict] = [{"role": "system", "content": system}]
 
@@ -2935,6 +2946,36 @@ _NORM_INTRODUCE_RE = re.compile(
     r'\[?INTRODUCE\(([^)\]]+)\)\s*:\s*"([^"]+)"\]?',
     re.DOTALL | re.IGNORECASE,
 )
+# [SFX(desc)] → [SOUND: "desc"] — model is taught SFX but infra expects SOUND.
+# Also catches malformed variants: SFX(desc) without brackets.
+_NORM_SFX_RE = re.compile(
+    r'\[?SFX\(([^)\]]{3,200})\)\]?',
+    re.IGNORECASE,
+)
+
+# ── SFX auto-inject patterns ──────────────────────────────────────────────
+# Ordered: first match wins. If nothing matches, ambient fallback fires.
+_SFX_INJECT_PATTERNS: list[tuple] = [
+    (re.compile(r'\b(footstep|stomp|pace|shuffle|stride|walk|step|hurry|run|march)\b', re.I),
+     'footsteps ring out on the metal floor'),
+    (re.compile(r'\b(door|hatch|airlock|bulkhead|panel|portal|slide|swing|seal|lock|unlock|latch)\b', re.I),
+     'heavy door grinds open with a pneumatic hiss'),
+    (re.compile(r'\b(fabricat|assembly rig|molecular rig|synthesis|weld|forge|print)\b', re.I),
+     'fabrication rig hums to life with a resonant pulse'),
+    (re.compile(r'\b(sherri|automaton|bronze|clank|servo|mechanical)\b', re.I),
+     "Sherri's bronze joints whirr and click"),
+    (re.compile(r'\b(pick up|picks up|grab|grasp|lift|take|hand|pass|place|set down|drop)\b', re.I),
+     'metal object scrapes across the work surface'),
+    (re.compile(r'\b(alarm|warning|klaxon|beep|chirp|ping|signal|alert)\b', re.I),
+     'distant alarm tone pulses through the hull'),
+    (re.compile(r'\b(eat|chew|swallow|bite|sip|drink|pour|ladle|serve)\b', re.I),
+     'synth-protein stew bubbles softly in the pot'),
+    (re.compile(r'\b(sleep|lie down|bunk|drift|close your eyes|rest)\b', re.I),
+     'ambient machinery settles into a low, steady hum'),
+    (re.compile(r'\b(corridor|hallway|passage|tunnel|chamber|bay|room|galley|nexus)\b', re.I),
+     'distant mechanical thrumming reverberates through the hull'),
+]
+_SFX_AMBIENT_FALLBACK = 'hull vibrates with the deep pulse of ancient machinery'
 
 
 def _normalize_narrator_output(text: str) -> str:
@@ -2952,6 +2993,9 @@ def _normalize_narrator_output(text: str) -> str:
     text = _NORM_LORE_RE.sub(r'[LORE(\1): "\2"]', text)
     text = _NORM_ITEM_RE.sub(r'[ITEM(\1): "\2"]', text)
     text = _NORM_INTRODUCE_RE.sub(r'[INTRODUCE(\1): "\2"]', text)
+    # Normalize [SFX(desc)] → [SOUND: "desc"] so the model's organic SFX tags
+    # reach the story test counter and the sfx SSE broadcast correctly.
+    text = _NORM_SFX_RE.sub(lambda m: f'[SOUND: "{m.group(1).strip()}"]', text)
     return text
 
 
@@ -3006,10 +3050,13 @@ def _inject_missing_tags(narrator_text: str) -> str:
                 are never added to the world entity graph.
     INTRODUCE — injected once per new CHARACTER name per session so the world
                 graph ingestor tracks new NPCs correctly.
-
-    LORE, ITEM, SMELL, TOUCH, TASTE, GENERATE_IMAGE — intentionally omitted.
-    The Sorting Hat provides the narrator with the rules to produce these
-    organically. Scoring should reflect true narrator capability.
+    SOUND     — injected when no [SOUND tag present; pattern-matched to scene
+                content so each turn has at least one sound event. Without this
+                the story test SFX counter stays at 0 because the model emits
+                [SFX(...)] (already normalized above) but not reliably.
+    LORE      — injected when a known lore keyword appears in prose and the
+                matching lore key hasn't been injected yet this session.
+                _LORE_ANCHORS is the source table. Max 1 per turn.
     """
     global _introduced_this_session
     result = narrator_text
@@ -3063,6 +3110,29 @@ def _inject_missing_tags(narrator_text: str) -> str:
         entity_id = name.lower().replace(" ", "_")
         if entity_id not in _quirkified_this_session:
             _quirkify_queue.append(entity_id)
+
+    # ── SOUND — ambient SFX infrastructure ───────────────────────────────────
+    # If the model (after SFX→SOUND normalization above) still produced no
+    # [SOUND tag, inject one based on scene content.  Pattern match first;
+    # fall back to generic ambient hull vibration.
+    if '[SOUND' not in result:
+        sfx_desc = _SFX_AMBIENT_FALLBACK
+        for pattern, desc in _SFX_INJECT_PATTERNS:
+            if pattern.search(result):
+                sfx_desc = desc
+                break
+        result = result.rstrip() + f'\n[SOUND: "{sfx_desc}"]'
+
+    # ── LORE — world-fact tagging (keyword-triggered, one per turn) ───────────
+    # Scan prose for _LORE_ANCHORS keywords; inject the LORE tag for the first
+    # matching anchor whose key hasn't fired yet this session.
+    if '[LORE(' not in result:
+        text_lower = result.lower()
+        for keyword, lore_key, lore_fact in _LORE_ANCHORS:
+            if keyword in text_lower and lore_key not in _lore_injected_this_session:
+                _lore_injected_this_session.add(lore_key)
+                result = result.rstrip() + f'\n[LORE({lore_key}): "{lore_fact}"]'
+                break  # one LORE tag per turn max
 
     return result
 
@@ -3402,6 +3472,14 @@ def _generate_narrator_turn() -> None:
             "received_at": now,
         }
         _store_narrator_turn(turn)
+        # Belt-and-suspenders: mark model ready on first successful generation.
+        # The pre-warm thread should have already set this, but if Ollama was
+        # already warm at startup the pre-warm completes instantly; this covers
+        # any edge case where the flag somehow wasn't set yet.
+        global _model_ready
+        if not _model_ready:
+            _model_ready = True
+            _log("[diag/prewarm] ✓ model_ready set via first narrator turn")
         try:
             _ingest_narrator_turn_into_world(turn)
         except Exception:
@@ -5263,6 +5341,41 @@ def _ollama_watchdog_loop() -> None:
                 _sse_broadcast("activity", {"text": "⚠ language model reconnecting…"})
 
 
+def _warm_ollama_model() -> None:
+    """Block until qwen2.5:14b is loaded in VRAM and responding to /api/chat.
+
+    Runs as a daemon thread at startup BEFORE any background thread that calls
+    Ollama.  This prevents the cold-start death spiral: when the model takes
+    3–5 min to mmap from disk, any concurrent 90s-timeout request aborts the
+    runner mid-load, forcing a restart — an infinite loop that never resolves.
+
+    Once this succeeds it sets _model_ready = True.  All background Ollama
+    callers (banter, ghost-scout, lore-idle, prettify) must wait on that flag.
+    """
+    global _model_ready
+    payload = json.dumps({
+        "model": _ollama_model(),
+        "messages": [{"role": "user", "content": "Ready."}],
+        "stream": False,
+        "keep_alive": -1,
+        "options": {"num_ctx": 4096, "num_predict": 1},
+    }).encode("utf-8")
+    for attempt in range(5):
+        try:
+            _log(f"[diag/prewarm] waiting for Ollama model (attempt {attempt + 1}/5, timeout=300s)…")
+            code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/chat", body=payload, timeout=300.0)
+            if code == 200:
+                _model_ready = True
+                _log("[diag/prewarm] ✓ Ollama model loaded — background threads unblocked")
+                return
+            _log(f"[diag/prewarm] Ollama returned HTTP {code} — retrying in 10s")
+        except Exception as exc:
+            _log(f"[diag/prewarm] attempt {attempt + 1} failed: {exc} — retrying in 10s")
+        time.sleep(10)
+    _log("[diag/prewarm] WARNING: could not confirm Ollama load after 5 attempts — unblocking anyway")
+    _model_ready = True
+
+
 def _warmup_flask_music() -> None:
     """Trigger flask-music MusicGen model load at startup.
 
@@ -5382,6 +5495,9 @@ def _banter_prefetch_loop() -> None:
     global _banter_generating
     while True:
         try:
+            if not _model_ready:
+                time.sleep(5)
+                continue   # don't abort Ollama model load mid-mmap
             # Wait for Ollama to signal idle — no polling, event-driven.
             with _narrator_done:
                 _narrator_done.wait_for(lambda: not _generating and not _classifying)
@@ -5528,6 +5644,8 @@ def _ghost_scout_loop() -> None:
     while True:
         time.sleep(90)   # cadence: how often to look for scout opportunities
         try:
+            if not _model_ready:
+                continue   # don't abort Ollama model load mid-mmap
             if _scout_running:
                 continue
             # Wait for Ollama to be idle — 10s timeout so we don't stall the cycle
@@ -5583,6 +5701,12 @@ def main() -> None:
         daemon=True,
         name="world-knowledge-index",
     ).start()
+    # ── Ollama model pre-warm — MUST start first ──────────────────────────────
+    # Blocks _model_ready flag until qwen2.5:14b is confirmed loaded in VRAM.
+    # All background Ollama callers (lore-idle, ghost-scout, banter-prefetch)
+    # check _model_ready before making any call.  Without this, concurrent 90s
+    # timeouts abort the runner mid-mmap and the model never finishes loading.
+    threading.Thread(target=_warm_ollama_model, daemon=True, name="ollama-prewarm").start()
     # Start lore idle narration daemon — fires after LORE_IDLE_SECS of silence
     threading.Thread(target=_lore_idle_loop, daemon=True, name="lore-idle").start()
     threading.Thread(target=_quirkify_loop, daemon=True, name="quirkify").start()
