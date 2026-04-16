@@ -2739,10 +2739,16 @@ def _build_messages() -> list[dict]:
         "with a glowing blue scanning wand. Begin there. Do NOT invent a different location. "
         "Emit [GENERATE_IMAGE(location): \"...\"] for the Fabrication Bay on the first turn.\n\n"
 
-        "NPC PRESENCE RULES: Sherri is the resident of the Fabrication Bay and the Galley. "
-        "The Remnant does NOT physically manifest in rooms — it is a disembodied voice and "
-        "crystalline projection. It speaks from anywhere but is never described as a body "
-        "in a room.\n\n"
+        "NPC VOICE RULES:\n"
+        "- Sherri is the resident of the Fabrication Bay and the Galley. "
+        "Whenever she is present she MUST speak at least once via [CHARACTER(Sherri): \"...\"]. "
+        "Her voice is chirpy, efficient, clinical.\n"
+        "- The Remnant does NOT physically manifest — it is a disembodied crystalline consciousness "
+        "that can speak from anywhere. Whenever the player addresses the Remnant, or the Remnant "
+        "has something meaningful to say, use [CHARACTER(The Remnant): \"...\"] — measured, resonant, "
+        "ancient. At least once per scene in corridors or the Nexus it should speak.\n"
+        "- Every new NPC (Vex, Mira, etc.) MUST speak on introduction via [CHARACTER(Name): \"...\"].\n"
+        "- Never write 'Sherri said...' or 'The Remnant whispered...' in prose — always tag it.\n\n"
 
         "ABSOLUTE PROHIBITIONS:\n"
         "- NEVER end a response with 'What would you like to do next?' or any menu prompt.\n"
@@ -3239,6 +3245,14 @@ def _inject_missing_tags(narrator_text: str) -> str:
             result = result.rstrip() + (
                 '\n[ITEM(rations): "synth-protein stew from the Fortress galley"]'
             )
+        # Dimensional scanner / tricorder (exploration or console context)
+        elif ('tricorder' not in _item_given_this_session and
+                re.search(r'\b(tricorder|dimensional[\s_-]*scanner|scanning\s+device|fold\s+scanner)\b', tl) and
+                re.search(r'\b(pick\s*up|take[ns]?|taken|found|discover|retrieve|lift|claim|grasp|offer|hand|place)\b', tl)):
+            _item_given_this_session.add('tricorder')
+            result = result.rstrip() + (
+                '\n[ITEM(tricorder): "dimensional scanner — detects fold signatures and entity traces"]'
+            )
 
     return result
 
@@ -3498,6 +3512,15 @@ def _generate_narrator_turn() -> None:
             return
         _generating = True
         _narrator_queued = False
+
+    # Yield to lore idle loop if it currently owns Ollama.  The lore loop's
+    # finally block notifies _narrator_done when it releases Ollama, so we
+    # wake immediately when the slot is free rather than polling.
+    # Timeout of 120s means we never block forever even if lore hangs.
+    if _lore_narrating:
+        with _narrator_done:
+            _narrator_done.wait_for(lambda: not _lore_narrating, timeout=120)
+
     try:
         _sse_broadcast("activity", {"text": "🔮 thinking…"})
         messages = _build_messages()
@@ -3529,7 +3552,7 @@ def _generate_narrator_turn() -> None:
                     })
 
             try:
-                chunk = _stream_ollama_chat(messages, timeout=90.0,
+                chunk = _stream_ollama_chat(messages, timeout=150.0,
                                             on_prose_sentence=prose_callback)
                 full_text += chunk
             except Exception as e:
