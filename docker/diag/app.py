@@ -91,6 +91,7 @@ _current_activity: str = ""
 # When it transitions False→True we also fire an SD portrait generation.
 _player_dressed: bool = False
 _player_appearance_desc: str = ""   # prose captured from the dressing narrator turn
+_player_persona_desc: str = ""      # character personality/voice style declared by player
 
 # Conversation engine — Ollama direct generation (replaces ST extension relay).
 _conversation_lock = threading.Lock()   # guards _generating flag (check-and-set only)
@@ -1238,6 +1239,23 @@ _META_NAME_KW = frozenset({
     "my name is", "i am called", "call me", "my name's", "i'm called",
 })
 
+# Player persona / character voice — personality and speech-style declarations.
+# Checked BEFORE name patterns so "I am a gruff old man named Willy" routes here
+# rather than to PLAYER_NAME (which only cares about the name token).
+# These phrases signal the player is describing their CHARACTER, not just their name.
+_META_PERSONA_KW = frozenset({
+    "my character is", "my persona is", "my personality is",
+    "my character has", "my speaking style",
+    "i tend to speak", "i speak like", "i talk like",
+    "voice me as", "play me as", "i'm playing a", "i am playing a",
+    "i'm a gruff", "i'm a quiet", "i'm a reserved", "i'm a cautious",
+    "i'm an old", "i'm a young", "i'm a tall", "i'm a short",
+    "i am a gruff", "i am a quiet", "i am a reserved", "i am a cautious",
+    "i am an old", "i am a young", "i am a tall", "i am a short",
+    "i'm a stoic", "i'm a timid", "i'm a bold", "i'm a brash",
+    "i am a stoic", "i am a timid", "i am a bold", "i am a brash",
+})
+
 # Name extraction patterns (applied in order, first match wins)
 _NAME_PATTERNS = [
     r"my name is\s+([A-Za-z][\w\s'\-]{1,40})",
@@ -1304,6 +1322,11 @@ def _rule_based_intent(text: str) -> str | None:
         return "META:PORTRAIT"
     if any(kw in lower for kw in _META_PROMOTE_KW):
         return "META:PROMOTE"
+
+    # Player persona — check BEFORE identity so "I am a gruff old man named Willy"
+    # routes here (personality description) rather than to PLAYER_NAME (name only).
+    if any(kw in lower for kw in _META_PERSONA_KW):
+        return "META:PERSONA"
 
     # Player identity — check alias/switch before bare name (more specific first)
     if any(kw in lower for kw in _META_ALIAS_KW):
@@ -1534,9 +1557,10 @@ def _handle_meta_command(text: str, sub: str) -> dict:
         if level in ("world", "all"):
             surviving = []
             # Full reset wipes the dressed state too — player starts naked again
-            global _player_dressed, _player_appearance_desc, _image_locations_fired, _item_given_this_session
+            global _player_dressed, _player_appearance_desc, _player_persona_desc, _image_locations_fired, _item_given_this_session
             _player_dressed = False
             _player_appearance_desc = ""
+            _player_persona_desc = ""   # reset character voice — new run, new persona
             # Reset tag-injection session trackers — new run, fresh introductions
             _introduced_this_session.clear()
             _lore_injected_this_session.clear()
@@ -1661,10 +1685,11 @@ def _promote_player_to_npc(old_name: str) -> None:
 
 def _do_player_switch(name: str, text: str) -> dict:
     """Archive current player as World NPC, create fresh player entity."""
-    global _pending_player_context, _pending_reset
+    global _pending_player_context, _pending_reset, _player_persona_desc
     old_name = (_world["entities"].get("__player__") or {}).get("canonical_name", "Unknown Being")
     _promote_player_to_npc(old_name)
     _ensure_entity("__player__", name, "player")
+    _player_persona_desc = ""   # new player → fresh persona
     _pending_player_context = {"action": "switch", "name": name}
     _pending_reset = {"level": "story"}
     _sse_broadcast("meta", {"type": "player_switch", "name": name, "text": text})
@@ -1741,6 +1766,27 @@ def _handle_player_identity(text: str, sub: str) -> dict:
         return _do_player_switch(name, text)
 
     return {"ok": False, "error": f"unknown player identity sub: {sub}"}
+
+
+def _handle_player_persona(text: str) -> dict:
+    """Store the player's character persona/voice style declaration.
+
+    Called when the Sorting Hat returns META:PERSONA (e.g. "I am a gruff old man named Willy").
+    The persona is injected into _build_messages() so the narrator voices the player character
+    in their natural idiom on every subsequent turn.
+
+    If a name is embedded in the declaration, it is also registered as the player identity.
+    """
+    global _player_persona_desc
+    _player_persona_desc = text.strip()[:400]
+    # If a proper name is embedded ("...named Willy", "I am Willy, a gruff..."), register it.
+    name = _extract_declared_name(text)
+    if name and "__player__" not in _world.get("entities", {}):
+        _ensure_entity("__player__", name, "player")
+        _sse_broadcast("meta", {"type": "player_alias", "name": name, "text": text})
+    _log(f"[diag/persona] stored: {_player_persona_desc[:80]}…")
+    _sse_broadcast("meta", {"type": "player_persona", "persona": _player_persona_desc})
+    return {"ok": True, "meta": "PERSONA", "persona": _player_persona_desc, "relay": True}
 
 
 # ---------------------------------------------------------------------------
@@ -2720,6 +2766,25 @@ def _build_messages() -> list[dict]:
             "Wardrobe arc complete. Focus on mission, exploration, and new locations."
         )
 
+    # ── Player persona / character voice ──────────────────────────────────
+    # When the player has declared a character persona (e.g. "I am a gruff old man
+    # named Willy"), inject it so the narrator voices the player's actions and speech
+    # in that character's natural idiom — not the player's literal words.
+    if _player_persona_desc:
+        _persona_name = (
+            (_world["entities"].get("__player__") or {}).get("canonical_name", "")
+            or "the player"
+        )
+        system += (
+            f"\n\n[PLAYER CHARACTER VOICE]\n"
+            f"The player's declared character persona: {_player_persona_desc}\n"
+            f"When {_persona_name} speaks or acts, voice them in this character's natural "
+            f"idiom and mannerisms — do NOT reproduce the player's literal words. "
+            f"Example: if they say 'I complain about the hill', write it as the character "
+            f"would actually say it: '\"My knees won't take much more of this,\" you grunt, "
+            f"laboring up the slope.' Always use second-person present tense."
+        )
+
     # ── Recalled turn memories (ChromaDB semantic path) ───────────────────
     all_turns = list(_narrator_turns)
     if (
@@ -3133,6 +3198,30 @@ def _inject_missing_tags(narrator_text: str) -> str:
                 _lore_injected_this_session.add(lore_key)
                 result = result.rstrip() + f'\n[LORE({lore_key}): "{lore_fact}"]'
                 break  # one LORE tag per turn max
+
+    # ── ITEM — scene-driven item grants ──────────────────────────────────────
+    # When Sherri fabricates clothing or the galley provides food, inject an
+    # ITEM tag if the model forgot it.  _item_given_this_session deduplicates
+    # so each item fires at most once per session (cleared on world reset).
+    if '[ITEM(' not in result:
+        tl = result.lower()
+        # Clothing fabrication in the Fabrication Bay
+        if ('outfit' not in _item_given_this_session and
+                re.search(r'\b(fabricat|synthes|weav|tailor|stitch|sew)\b', tl) and
+                re.search(r'\b(outfit|cloth|jacket|trouser|boot|garment|wear|attire|suit)\b', tl)):
+            _item_given_this_session.add('outfit')
+            result = result.rstrip() + (
+                '\n[ITEM(outfit): "dark practical clothing with many pockets,'
+                ' synthesized by Sherri in the Fabrication Bay"]'
+            )
+        # Galley food service
+        elif ('rations' not in _item_given_this_session and
+                re.search(r'\b(galley|kitchen|cook|chef|server)\b', tl) and
+                re.search(r'\b(serve|bowl|plate|pour|hand|meal|eat|stew|food|ration)\b', tl)):
+            _item_given_this_session.add('rations')
+            result = result.rstrip() + (
+                '\n[ITEM(rations): "synth-protein stew from the Fortress galley"]'
+            )
 
     return result
 
@@ -5082,7 +5171,9 @@ class Handler(BaseHTTPRequestHandler):
                 # can relay to SillyTavern so the narrator can acknowledge the declaration.
                 if intent.startswith("META:"):
                     sub = intent.split(":", 1)[1]
-                    if sub.startswith("PLAYER_"):
+                    if sub == "PERSONA":
+                        result = _handle_player_persona(text)
+                    elif sub.startswith("PLAYER_"):
                         result = _handle_player_identity(text, sub)
                     else:
                         result = _handle_meta_command(text, sub)

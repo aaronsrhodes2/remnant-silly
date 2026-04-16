@@ -1465,8 +1465,12 @@ function renderTurn(turn, instant) {
         // Prose already enqueued via chunk events; only add character dialogue here.
         // Character segments are identified by having speakerName (not fadeAfter — that's gone).
         const charSegs = segments.filter(s => s.speakerName);
+        // Use undefined for ttsGen so the staleness check (ttsGen && _ttsGenId !== ttsGen)
+        // does NOT fire when the next turn renders and increments _ttsGenId.
+        // Without this, character dialogue queued here gets skipped as "stale" the moment
+        // the next narrator turn starts, while prose chunks (which also use undefined) play fine.
         charSegs.forEach(seg =>
-          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, myTTSGen, seg.speakerName));
+          _ttsEnqueue(_stripForTTS(seg.text), seg.voice, undefined, seg.speakerName));
       } else {
         // Non-streamed: clear stale audio and enqueue everything fresh.
         _ttsClearTurn();
