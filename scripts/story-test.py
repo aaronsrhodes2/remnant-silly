@@ -335,7 +335,7 @@ def _sse_listener(base: str) -> None:
 
 
 # ── Natural player agent ──────────────────────────────────────────────────────
-OLLAMA_DIRECT_URL = "http://localhost:1593"
+OLLAMA_DIRECT_URL = "http://localhost:1582/api/ollama"
 
 
 def _player_agent_turn(
@@ -513,11 +513,11 @@ def _summarise_story(player_name: str, diag_url: str) -> str:
         f"The player's name is {player_name}.\n\nSession text:\n\n{excerpt[:8000]}"
     )
 
-    # Try Ollama via diag port
+    # Try Ollama via nginx proxy
     try:
         code, data = _post(
-            f"{diag_url}/api/generate",
-            {"model": "mistral", "prompt": prompt, "stream": False},
+            f"{OLLAMA_DIRECT_URL}/api/generate",
+            {"model": "remnant-narrator:latest", "prompt": prompt, "stream": False},
             timeout=120.0
         )
         if code == 200 and isinstance(data, dict):
