@@ -1,4 +1,4 @@
-FROM D:\Aaron\development\remnant-silly\models\remnant-narrator-gguf\remnant-narrator-F16.gguf
+FROM D:\Aaron\development\remnant-silly\models\remnant-narrator-gguf\remnant-narrator-Q4_K_M.gguf
 
 PARAMETER num_ctx 4096
 PARAMETER num_predict 450
