@@ -94,7 +94,7 @@ MCP tools also available when stack is running:
 - `web/assets/locations/` — location background art
 - `web/assets/music/` — future static music samples
 
-**Seed file:** `docker/diag/seed/world.json` — edit this to add/modify permanent locations, NPCs, and lore. Loaded at startup and after every Reset World. Restart diag to pick up changes (no Docker rebuild needed).
+**Seed file:** `docker/diag/seed/world.json` — edit this to add/modify permanent locations, NPCs, and lore. Loaded at startup and after every Reset World. Restart diag to pick up changes (no Docker rebuild needed for seed files only — `app.py` changes require `docker compose build diag && docker compose up -d --no-deps diag`).
 
 **3D mesh assets** — store as reference PNGs in `web/assets/characters/NAME-mesh.png`. The `physical_spec` and `sd_prompt` fields in the seed JSON lock the appearance for Stable Diffusion generation. Future: 3D awareness will be added to world entities as they are interacted with.
 
