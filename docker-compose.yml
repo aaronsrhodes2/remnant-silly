@@ -127,6 +127,8 @@ services:
       - OLLAMA_HOST=0.0.0.0:1593
       - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
       - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_NUM_PARALLEL=1
       - MODE=runtime
       - STATUS_DIR=/remnant-status
       - WAIT_FOR_SENTINEL=/remnant-status/ollama-ready

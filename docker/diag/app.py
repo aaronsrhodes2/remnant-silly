@@ -218,6 +218,12 @@ FLASK_MUSIC_URL = os.environ.get("FLASK_MUSIC_URL", "http://localhost:1596").rst
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:1593").rstrip("/")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "1591"))
 
+# Serialise all Ollama inference calls (generate/chat/embed) to prevent concurrent
+# CUDA model loads. Without this, background threads (lore, quirkify, banter, embed)
+# all wake simultaneously after each narrator turn, spawning 3-4 llama-runner processes
+# that fight for VRAM — causing 42s timeouts and 60s reload cycles every turn.
+_ollama_infer_lock = threading.Semaphore(1)
+
 # Directory containing fortress_system_prompt.txt / fortress_first_mes.txt
 # (written by update_fortress_card.py; lives alongside world.json in seed/).
 # Default: repo-relative path works in both Docker and native modes.
@@ -674,19 +680,26 @@ def _http(method: str, url: str, body: bytes | None = None, timeout: float = 5.0
     """Return (status, body, latency_ms). Never raises — errors come back as
     status=0 with the exception string in body, so the caller can treat
     reachability uniformly."""
+    _infer = (OLLAMA_URL in url and url.rsplit("/", 1)[-1] in ("generate", "chat", "embed"))
+    if _infer:
+        _ollama_infer_lock.acquire()
     started = time.monotonic()
-    req = urllib.request.Request(
-        url, data=body, method=method,
-        headers=headers or ({"Content-Type": "application/json"} if body else {}),
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = r.read()
-            return r.status, data, (time.monotonic() - started) * 1000.0
-    except urllib.error.HTTPError as e:
-        return e.code, e.read() if hasattr(e, "read") else b"", (time.monotonic() - started) * 1000.0
-    except Exception as e:
-        return 0, str(e).encode("utf-8"), (time.monotonic() - started) * 1000.0
+        req = urllib.request.Request(
+            url, data=body, method=method,
+            headers=headers or ({"Content-Type": "application/json"} if body else {}),
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+                return r.status, data, (time.monotonic() - started) * 1000.0
+        except urllib.error.HTTPError as e:
+            return e.code, e.read() if hasattr(e, "read") else b"", (time.monotonic() - started) * 1000.0
+        except Exception as e:
+            return 0, str(e).encode("utf-8"), (time.monotonic() - started) * 1000.0
+    finally:
+        if _infer:
+            _ollama_infer_lock.release()
 
 
 # ---------------------------------------------------------------------------
