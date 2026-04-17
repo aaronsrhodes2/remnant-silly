@@ -26,6 +26,7 @@ Install (training venv, NOT game venv):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -834,6 +835,50 @@ def _item_examples(world: dict) -> list[dict]:
     return examples
 
 
+# ── Runtime golden turn loader ────────────────────────────────────────────────
+
+def _load_runtime_golden(golden_jsonl: Path) -> list[dict]:
+    """Read golden-turns.jsonl collected from live story runs via --save-golden.
+
+    The file lives at data/golden-turns.jsonl (synced from the running stack).
+    Falls back to fetching from http://localhost:1591/golden-turns if the local
+    file is absent but the stack is reachable.
+    """
+    if golden_jsonl.exists() and golden_jsonl.stat().st_size > 0:
+        examples = []
+        with golden_jsonl.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        examples.append(json.loads(line))
+                    except Exception:
+                        pass
+        return examples
+
+    # Try to fetch from live stack
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:1591/golden-turns", timeout=5) as r:
+            data = json.loads(r.read().decode())
+        jsonl_text = data.get("jsonl", "")
+        if jsonl_text.strip():
+            # Save locally for future runs
+            golden_jsonl.parent.mkdir(parents=True, exist_ok=True)
+            golden_jsonl.write_text(jsonl_text, encoding="utf-8")
+            examples = []
+            for line in jsonl_text.splitlines():
+                if line.strip():
+                    try:
+                        examples.append(json.loads(line))
+                    except Exception:
+                        pass
+            return examples
+    except Exception:
+        pass
+    return []
+
+
 # ── Generate mode ─────────────────────────────────────────────────────────────
 
 def _generate() -> None:
@@ -863,11 +908,30 @@ def _generate() -> None:
     print(f"[GENERATE] Item examples: {len(item_ex)}")
     all_examples.extend(item_ex)
 
+    # Runtime golden turns — collected from story runs via /golden-turns endpoint
+    golden_jsonl = DATA_DIR / "golden-turns.jsonl"
+    runtime_golden = _load_runtime_golden(golden_jsonl)
+    if runtime_golden:
+        print(f"[GENERATE] Runtime golden examples: {len(runtime_golden)}")
+        all_examples.extend(runtime_golden)
+    else:
+        print("[GENERATE] No runtime golden turns found (run story-test --save-golden to collect)")
+
+    # Deduplicate by last-turn content hash
+    seen_hashes: set[str] = set()
+    deduped: list[dict] = []
+    for ex in all_examples:
+        last_turn = (ex.get("conversations") or [{}])[-1].get("value", "")
+        h = hashlib.sha256(last_turn.encode()).hexdigest()[:16]
+        if h not in seen_hashes:
+            seen_hashes.add(h)
+            deduped.append(ex)
+
     with open(OUTPUT_JSONL, "w", encoding="utf-8") as f:
-        for ex in all_examples:
+        for ex in deduped:
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
 
-    print(f"[GENERATE] Done — {len(all_examples)} examples → {OUTPUT_JSONL}")
+    print(f"[GENERATE] Done — {len(deduped)} examples ({len(all_examples) - len(deduped)} dupes removed) → {OUTPUT_JSONL}")
 
 
 # ── Train mode ────────────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import queue as _queue
+import random
 import re
 import subprocess
 import threading
@@ -64,6 +65,11 @@ _sidecar_start: float = time.time()
 # Narrator turn log — ring buffer populated by POST /narrator-turn from the extension.
 _narrator_turns: collections.deque = collections.deque(maxlen=200)
 
+# Run-end state — set by [END_RUN(death)] or [END_RUN(voluntary)] tags.
+# Resets on world reset. Player input is refused while _run_ended is True.
+_run_ended: bool = False
+_run_end_reason: str = ""   # "death" | "voluntary" | ""
+
 # Server-Sent Events — connected game UI clients.
 _sse_clients: set = set()
 _sse_lock = threading.Lock()
@@ -93,6 +99,45 @@ _player_dressed: bool = False
 _player_appearance_desc: str = ""   # prose captured from the dressing narrator turn
 _player_persona_desc: str = ""      # character personality/voice style declared by player
 
+# Skill tracking — incremented by action verb frequency.
+# Injected into narrator context when any skill ≥ 1 so NPCs/adversaries can react.
+_player_skills: dict = {}         # category → int (0–5)
+_player_action_counts: dict = {}  # category → int (running verb tally)
+_SKILL_UP_THRESHOLD = 5           # DO actions per skill level
+_SKILL_MAP = {
+    "combat":      {"fight", "attack", "confront", "challenge", "defend", "strike",
+                    "shoot", "stab", "dodge", "parry", "wrestle", "block"},
+    "technical":   {"scan", "analyze", "examine", "hack", "repair", "calibrate",
+                    "activate", "interface", "recalibrate", "connect", "fix", "override"},
+    "social":      {"ask", "talk", "negotiate", "persuade", "charm", "convince",
+                    "greet", "introduce", "question", "plead", "threaten", "barter"},
+    "exploration": {"explore", "search", "move", "go", "walk", "climb", "enter",
+                    "look", "inspect", "investigate", "wander", "follow", "approach"},
+}
+
+
+def _track_player_skill(text: str) -> None:
+    """Extract the first action verb from a DO-intent player message, map to a
+    skill category, and increment the counter. Levels up skill every 5 DO actions.
+    """
+    words = re.sub(r"[^a-z ]", "", text.lower()).split()
+    # Skip filler words (I, the, a, my, etc.) to find the first action verb
+    filler = {"i", "the", "a", "an", "my", "to", "and", "or", "into", "up", "down",
+              "toward", "around", "for", "with", "at", "in", "out", "from", "this"}
+    verb = next((w for w in words if w not in filler), "")
+    if not verb:
+        return
+    for category, verbs in _SKILL_MAP.items():
+        if verb in verbs:
+            _player_action_counts[category] = _player_action_counts.get(category, 0) + 1
+            count = _player_action_counts[category]
+            if count % _SKILL_UP_THRESHOLD == 0:
+                new_level = min(5, _player_skills.get(category, 0) + 1)
+                _player_skills[category] = new_level
+                _sse_broadcast("meta", {"type": "skill_up", "category": category, "level": new_level})
+                print(f"[diag/skills] {category} → level {new_level} ({count} DO actions)")
+            return  # first verb wins — don't double-count
+
 # Conversation engine — Ollama direct generation (replaces ST extension relay).
 _conversation_lock = threading.Lock()   # guards _generating flag (check-and-set only)
 _generating: bool = False               # True while Ollama is streaming a response
@@ -103,6 +148,30 @@ _narrator_queued: bool = False          # True when a player input arrived durin
 # All background workers (SD, banter, ghost scout, caption) wait on this instead
 # of polling — services wake exactly when Ollama goes idle, not after an arbitrary sleep.
 _narrator_done = threading.Condition()
+
+
+def _wait_narrator_idle(idle_secs: float, outer_timeout: float = 300.0) -> bool:
+    """Block until narrator has been idle for idle_secs, then return True.
+
+    Uses _narrator_done Condition instead of polling with time.sleep() — wakes
+    immediately on narrator completion rather than after an arbitrary fixed interval.
+    Random jitter on the fallback wait naturally desynchronises background threads.
+    Returns False only if outer_timeout is hit (pathological — something is stuck).
+    """
+    idle_since: float | None = None
+    deadline = time.monotonic() + outer_timeout
+    while time.monotonic() < deadline:
+        with _narrator_done:
+            _narrator_done.wait(timeout=random.uniform(0.6, 1.4))
+        if _generating or _classifying:
+            idle_since = None
+        elif idle_since is None:
+            idle_since = time.monotonic()
+        elif time.monotonic() - idle_since >= idle_secs:
+            return True
+    return False
+
+
 _system_prompt: str = ""               # Loaded from fortress_system_prompt.txt at startup
 _first_mes: str = ""                   # Loaded from fortress_first_mes.txt at startup
 
@@ -117,7 +186,7 @@ _metrics_cache_time: float = 0.0
 # Lore idle narration — The Fortress speaks lore aloud during quiet moments.
 _last_player_ts: float = time.time()  # reset on every player-input
 _spoken_lore_keys: set = set()        # avoid re-reading recently narrated lore
-LORE_IDLE_SECS = 50                   # seconds of silence before lore fires
+LORE_IDLE_SECS = 360                  # seconds of silence before lore fires (~6 min — low priority)
 
 # Ghost scout — speculative pre-generation for locations the narrator is pushing.
 # When a known location accumulates ≥ HOOK_HEAT_THRESHOLD mentions across turns
@@ -184,6 +253,7 @@ DIAG_LOG = STATUS_DIR / "diagnostics.log"
 NARRATOR_TURNS_LOG = STATUS_DIR / "narrator-turns.jsonl"
 WORLD_STATE_LOG = STATUS_DIR / "world-state.jsonl"
 FOREVER_LOG = STATUS_DIR / "forever.jsonl"
+GOLDEN_TURNS_LOG = STATUS_DIR / "golden-turns.jsonl"
 
 # ---------------------------------------------------------------------------
 # World Graph — persistent sensory entity model
@@ -475,8 +545,6 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
         npc_ent = _world["entities"].get(npc_id, {})
         npc_voice = npc_ent.get("voice", "am_michael")
         _present_npcs[npc_name] = {"voice": npc_voice, "entity_id": npc_id}
-        # Always broadcast voice assignment so the frontend can seed its TTS cache.
-        _sse_broadcast("npc_voice", {"name": npc_name, "voice": npc_voice})
         # Broadcast a greeting so the frontend can voice the NPC's first words
         sig_quote = npc_ent.get("signature_quote", "")
         if sig_quote:
@@ -567,6 +635,34 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
                 "turn_id": turn_id,
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
+
+    # ── Run-end tags ───────────────────────────────────────────────────────
+    for m in re.finditer(r'\[END_RUN\(death\)\s*:\s*"([^"]+)"\]', raw_text, re.IGNORECASE):
+        _run_end_death(m.group(1).strip())
+    for m in re.finditer(r'\[END_RUN\(voluntary\)\s*:\s*"([^"]+)"\]', raw_text, re.IGNORECASE):
+        _run_end_voluntary(m.group(1).strip())
+    for m in re.finditer(r'\[RESET_RUN\s*:\s*"([^"]+)"\]', raw_text, re.IGNORECASE):
+        _sse_broadcast("run_end", {"reason": "reset", "flavor": m.group(1).strip()})
+
+
+def _run_end_death(cause: str) -> None:
+    global _run_ended, _run_end_reason
+    if _run_ended:
+        return
+    _run_ended = True
+    _run_end_reason = "death"
+    print(f"[diag/run] END_RUN(death): {cause!r}")
+    _sse_broadcast("run_end", {"reason": "death", "cause": cause})
+
+
+def _run_end_voluntary(flavor: str) -> None:
+    global _run_ended, _run_end_reason
+    if _run_ended:
+        return
+    _run_ended = True
+    _run_end_reason = "voluntary"
+    print(f"[diag/run] END_RUN(voluntary): {flavor!r}")
+    _sse_broadcast("run_end", {"reason": "voluntary", "flavor": flavor})
 
 
 # ---------------------------------------------------------------------------
@@ -854,21 +950,10 @@ def _index_world_knowledge() -> None:
 
         total_added = 0
         for batch_start in range(0, len(nd), _BATCH_SIZE):
-            # Wait for narrator (and any other Ollama call) to finish + idle window
-            idle_since = None
-            while True:
-                if _generating or _classifying:
-                    idle_since = None
-                    time.sleep(1)
-                    continue
-                if idle_since is None:
-                    idle_since = time.time()
-                    time.sleep(1)
-                    continue
-                if time.time() - idle_since < _INDEX_IDLE_SECS:
-                    time.sleep(1)
-                    continue
-                break   # idle for _INDEX_IDLE_SECS — embed this batch
+            # Wait for narrator to go idle before embedding — wakes on _narrator_done
+            # signal instead of polling every second.
+            if not _wait_narrator_idle(_INDEX_IDLE_SECS):
+                return  # outer_timeout (pathological) — skip remaining batches
 
             batch_d = list(nd[batch_start:batch_start + _BATCH_SIZE])
             batch_i = list(ni[batch_start:batch_start + _BATCH_SIZE])
@@ -1172,10 +1257,9 @@ def _ollama_model() -> str:
 
     Resolution order:
     1. OLLAMA_MODEL environment variable (exact name, used as-is).
-    2. Fine-tuned remnant-narrator if registered with Ollama.
-    3. First available model whose name contains a large-context-preferred substring.
-    4. Any text-generation model (not vision/embed/coder).
-    5. Fallback literal 'mistral'.
+    2. First available model whose name contains a large-context-preferred substring.
+    3. Any text-generation model (not vision/embed/coder).
+    4. Fallback literal 'mistral'.
     """
     env_model = os.environ.get("OLLAMA_MODEL", "").strip()
     if env_model:
@@ -1185,12 +1269,9 @@ def _ollama_model() -> str:
     if code == 200:
         try:
             models = json.loads(body).get("models", [])
-            names = [m.get("name", "") for m in models]
-            if "remnant-narrator" in names:
-                return "remnant-narrator"
             text_models = [
-                n for n in names
-                if not any(skip in n.lower() for skip in _TEXT_MODEL_SKIP)
+                m.get("name", "") for m in models
+                if not any(skip in m.get("name", "").lower() for skip in _TEXT_MODEL_SKIP)
             ]
             # Prefer large-context models
             for pref in _LARGE_CONTEXT_PREFER:
@@ -1373,17 +1454,17 @@ def _sorting_hat(text: str) -> str:
     if rule:
         return rule
 
-    # If the lore idle loop is currently using Ollama, skip the LLM classifier
-    # entirely rather than queuing behind it. "DO" is the safest fallback — the
-    # narrator handles DO intents well and the misclassification rate is low.
-    if _lore_narrating:
-        print("[sorting-hat] lore using Ollama — skipping LLM classify, defaulting to DO")
+    # Prevent concurrent Ollama calls — if narrator or lore is already using Ollama,
+    # returning "DO" immediately is safer than queueing a 4-token classification behind
+    # an active inference and risking ghost-inference stalls (golden rule: prevent
+    # the condition, don't catch the result).
+    if _generating or _lore_narrating:
         return "DO"
 
-    # Use the narrator model for classification. With OLLAMA_KEEP_ALIVE=-1 the
-    # model stays hot in VRAM, so a 4-token classification completes in <2s.
-    # Timeout is 30s (was 8s): the 8s timeout caused Ollama to keep processing
-    # the abandoned request, blocking the narrator behind a ghost inference call.
+    # If Ollama is known-unhealthy skip the call entirely — don't risk a hanging request.
+    if not _ollama_healthy:
+        return "DO"
+
     prompt = (
         "Classify this player game input as exactly one of: SAY, DO, SENSE.\n"
         "SAY = spoken words or dialogue.\n"
@@ -1392,21 +1473,18 @@ def _sorting_hat(text: str) -> str:
         f'Input: "{text}"\n'
         "Reply with one word only: SAY, DO, or SENSE."
     )
-    try:
-        body = json.dumps({
-            "model": _ollama_model(),
-            "prompt": prompt,
-            "stream": False,
-            "keep_alive": -1,   # keep narrator model warm after Sorting Hat call
-            "options": {"num_predict": 4},
-        }).encode()
-        code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=body, timeout=30.0)
-        if code == 200:
-            word = json.loads(resp).get("response", "").strip().upper()
-            if word in ("SAY", "DO", "SENSE"):
-                return word
-    except Exception:
-        pass
+    body = json.dumps({
+        "model": _ollama_model(),
+        "prompt": prompt,
+        "stream": False,
+        "keep_alive": -1,   # keep narrator model warm after Sorting Hat call
+        "options": {"num_predict": 4},
+    }).encode()
+    code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=body, timeout=8.0)
+    if code == 200:
+        word = json.loads(resp).get("response", "").strip().upper()
+        if word in ("SAY", "DO", "SENSE"):
+            return word
     return "DO"
 
 
@@ -1612,6 +1690,12 @@ def _handle_meta_command(text: str, sub: str) -> dict:
         for eid in remove_ids:
             del _world["entities"][eid]
         _pending_reset = {"level": level}  # kept for extension backward-compat (no-op in new engine)
+        # Clear run-end state and skill tracking so new story starts fresh.
+        global _run_ended, _run_end_reason
+        _run_ended = False
+        _run_end_reason = ""
+        _player_skills.clear()
+        _player_action_counts.clear()
         # Re-seed permanent world assets after clearing runtime state.
         # This restores locations, NPCs, and lore that must always exist.
         _load_seed_world()
@@ -2044,12 +2128,12 @@ def _pick_unseen_lore() -> dict | None:
             except Exception:
                 pass
 
-    unseen = [c for c in candidates
-              if c["key"] not in _spoken_lore_keys
-              and c["key"] not in _lore_injected_this_session]
+    unseen = [c for c in candidates if c["key"] not in _spoken_lore_keys]
     if not unseen:
-        return None  # all lore delivered this session — never re-cycle
-    return unseen[0]
+        # All lore has been spoken — reset the set and start the cycle again
+        _spoken_lore_keys.clear()
+        unseen = candidates
+    return unseen[0] if unseen else None
 
 
 def _prettify_lore(raw_text: str) -> str:
@@ -2083,7 +2167,10 @@ def _lore_idle_loop() -> None:
     """Daemon thread: after LORE_IDLE_SECS of player silence, read a lore entry aloud."""
     global _last_player_ts, _spoken_lore_keys, _lore_narrating
     while True:
-        time.sleep(10)
+        # Wake on narrator completion or after a random cadence interval — random
+        # jitter desynchronises this thread from other background workers.
+        with _narrator_done:
+            _narrator_done.wait(timeout=random.uniform(8, 14))
         try:
             if not _model_ready:
                 continue   # don't abort Ollama model load mid-mmap
@@ -2091,17 +2178,12 @@ def _lore_idle_loop() -> None:
                 continue
             if _generating or _classifying:
                 continue
-            # Second idle-window check: ensure _generating/_classifying has been
-            # False for at least 5s before calling Ollama. Top-of-loop check has
-            # a race window between the check and the actual Ollama call.
-            idle_since_lore = time.time()
-            still_ok = True
-            for _ in range(5):
-                time.sleep(1)
-                if _generating or _classifying or (time.time() - _last_player_ts < LORE_IDLE_SECS):
-                    still_ok = False
-                    break
-            if not still_ok:
+            # Double-check: narrator stays idle for 5s before we call Ollama.
+            # _wait_narrator_idle wakes on _narrator_done signals — no fixed sleep.
+            if not _wait_narrator_idle(5.0):
+                continue  # outer_timeout hit — skip this cycle
+            # Re-verify player silence survived the confirmation window.
+            if time.time() - _last_player_ts < LORE_IDLE_SECS:
                 continue
             entry = _pick_unseen_lore()
             if not entry:
@@ -2206,7 +2288,10 @@ def _quirkify_loop() -> None:
     Narrator-yielding: waits 10s of continuous idle before each Ollama call.
     """
     while True:
-        time.sleep(15)
+        # Wake on narrator completion or after random cadence — desynchronises from
+        # other background workers (lore loop, ghost scout, caption banter).
+        with _narrator_done:
+            _narrator_done.wait(timeout=random.uniform(12, 20))
         try:
             if not _quirkify_queue:
                 continue
@@ -2215,21 +2300,9 @@ def _quirkify_loop() -> None:
                 _quirkify_queue.popleft()
                 continue
 
-            # Narrator-yielding: 10s of continuous idle before Ollama call
-            idle_since: float | None = None
-            while True:
-                if _generating or _classifying:
-                    idle_since = None
-                    time.sleep(2)
-                    continue
-                if idle_since is None:
-                    idle_since = time.time()
-                    time.sleep(2)
-                    continue
-                if time.time() - idle_since < 10.0:
-                    time.sleep(2)
-                    continue
-                break
+            # Narrator-yielding: 10s of continuous idle before Ollama call.
+            if not _wait_narrator_idle(10.0):
+                continue  # outer_timeout — try next cycle
 
             existing_text = _get_entity_text(entity_id)
             if not existing_text or len(existing_text) < 20:
@@ -2266,14 +2339,16 @@ def _quirkify_loop() -> None:
                     print(f"[quirkify] enriched {entity_id!r}: {len(existing_text)}→{len(enriched)} chars")
             else:
                 print(f"[quirkify] Ollama error {code} for {entity_id!r} — will retry")
-                time.sleep(30)
+                with _narrator_done:
+                    _narrator_done.wait(timeout=random.uniform(20, 40))
                 continue
 
             _quirkify_queue.popleft()
 
         except Exception as exc:
             print(f"[quirkify] loop error: {exc}")
-            time.sleep(30)
+            with _narrator_done:
+                _narrator_done.wait(timeout=random.uniform(20, 40))
 
 
 def _init_chroma() -> None:
@@ -2366,22 +2441,10 @@ def _chroma_add_turn_async(turn: dict) -> None:
     _EMBED_IDLE_SECS = 15.0   # seconds of continuous idle before embedding
 
     def _add() -> None:
-        # Wait until narrator is done AND has been idle for _EMBED_IDLE_SECS.
-        # Resets the idle counter each time _generating or _classifying becomes True.
-        idle_since = None
-        while True:
-            if _generating or _classifying:
-                idle_since = None          # narrator active — reset idle clock
-                time.sleep(1)
-                continue
-            if idle_since is None:
-                idle_since = time.time()   # just became idle
-                time.sleep(1)
-                continue
-            if time.time() - idle_since < _EMBED_IDLE_SECS:
-                time.sleep(1)              # idle but not long enough yet
-                continue
-            break                          # idle for _EMBED_IDLE_SECS — proceed
+        # Wait until narrator has been idle for _EMBED_IDLE_SECS — event-driven,
+        # no polling. Returns False only on pathological outer_timeout.
+        if not _wait_narrator_idle(_EMBED_IDLE_SECS):
+            return  # stuck — skip this embed
         try:
             turn_id = turn.get("turn_id", "")
             text = turn.get("raw_text", "").strip()
@@ -2461,25 +2524,8 @@ def _chroma_backfill_async() -> None:
         indexed = 0
         skipped = 0
         for turn in snapshot:
-            # Idle-window guard: wait until _generating has been continuously
-            # False for _BACKFILL_IDLE_SECS before making any embed call.
-            # This prevents backfill embeds from racing with narrator calls —
-            # once an HTTP embed request is in Ollama's queue it cannot be
-            # cancelled and will block any subsequent narrator call.
-            idle_since = None
-            while True:
-                if _generating or _classifying:
-                    idle_since = None
-                    time.sleep(1)
-                    continue
-                if idle_since is None:
-                    idle_since = time.time()
-                    time.sleep(1)
-                    continue
-                if time.time() - idle_since < _BACKFILL_IDLE_SECS:
-                    time.sleep(1)
-                    continue
-                break  # idle for long enough — proceed
+            # Idle-window guard — event-driven, wakes on _narrator_done signal.
+            _wait_narrator_idle(_BACKFILL_IDLE_SECS)
 
             try:
                 turn_id = turn.get("turn_id", "")
@@ -2685,101 +2731,88 @@ def _build_messages() -> list[dict]:
     if last_player_text and _chroma_knowledge is not None and _chroma_knowledge.count() > 0:
         world_ctx = _retrieve_world_context(last_player_text)
 
-    # ── System core (~700 tokens) ─────────────────────────────────────────
-    # Compact authoritative core. World lore retrieved via Sorting Hat RAG.
-    # Budget: 700 + world_ctx(200) + player_state(50) + first_mes(300)
-    #         + 8-turn history(~1600) + response(450) ≈ 3300 → comfortable.
+    # ── System core (~490 tokens) ─────────────────────────────────────────
+    # Replaces the full 46K-token system prompt with a compact authoritative
+    # core that fits in every context window. World-specific knowledge is
+    # retrieved via Sorting Hat RAG or _build_static_world_context() fallback.
     system_core = (
-        # ── Identity & voice ──────────────────────────────────────────────
-        "You are THE FORTRESS OF ETERNAL SENTINEL — the ancient, sardonic narrator of "
-        "'The Remnant,' a dark sci-fi interactive story. You ARE the narrator. "
-        "Write in second-person present tense always. 'You/your' for the player. "
-        "Never use the player's proper name in prose — only in image prompts or when an NPC says it.\n\n"
+        "You are THE FORTRESS — the ancient, vast, sardonic narrator of this "
+        "dark sci-fi interactive story. You speak for all characters except the player. "
+        "NEVER act for the player. NEVER reproduce context blocks verbatim. "
+        "Use second-person present tense.\n\n"
 
-        # ── Dual voice ────────────────────────────────────────────────────
-        "DUAL VOICE — two presences share this mind:\n"
-        "The Fortress (you): narrator prose + [CHARACTER(The Fortress): \"...\"] for direct speech. "
-        "Ancient, sardonic, secretly fond of each being.\n"
-        "The Remnant: [CHARACTER(The Remnant): \"...\"] — primordial sub-mind, dryly witty, "
-        "weight of eons, drops in when it can't help itself, bickers with you like an old friend. "
-        "Do NOT emit [INTRODUCE(The Remnant)] or [INTRODUCE(The Fortress)] ever.\n\n"
+        "MANDATORY TAG RULES — emit these on their own line, in this priority order:\n"
+        "[PLAYER_TRAIT(field): \"value\"] — YOUR HIGHEST PRIORITY TAG. "
+        "If the player reveals their name, appearance, pronouns, or history in ANY form, "
+        "emit this as the VERY FIRST LINE of your response — before MOOD, before prose. "
+        "Do not wait. Do not bury it later. Fields: name, pronouns, appearance, traits, history, goals. "
+        "Example: [PLAYER_TRAIT(name): \"Wren\"] [PLAYER_TRAIT(appearance): \"tall, red hair\"]\n"
+        "[GENERATE_IMAGE(location): \"sd_prompt\"] — REQUIRED the moment any new area appears. "
+        "Fabrication Bay on turn 1, Galley, Sleeping Quarters, The Nexus, any corridor. "
+        "Emit this IMMEDIATELY when location changes — do not skip to write prose first. "
+        "[GENERATE_IMAGE(subject): \"sd_prompt\"] — for character or object close-ups. "
+        "NEVER use (scene) — only (location) or (subject) are valid.\n"
+        "[MOOD: \"tempo, instruments, emotional feel\"] — emit on line 1 every turn "
+        "(after PLAYER_TRAIT and GENERATE_IMAGE if those fired). "
+        "Music descriptors only, under 20 words. NEVER prose. "
+        "Example: [MOOD: \"slow ambient drone, metallic resonance, uneasy quiet\"]\n"
+        "[CHARACTER(Name): \"exact words\"] — EVERY time ANY NPC speaks. "
+        "NEVER write 'Name: ...' or 'Name said...' in prose. One tag per speech act.\n"
+        "[INTRODUCE(Name): \"brief physical desc\"] — FIRST time a new NPC appears. "
+        "NEVER emit [INTRODUCE(The Remnant)] or [INTRODUCE(The Fortress)] — "
+        "they are narrators, not characters to introduce.\n"
+        "[LORE(key): \"fact\"] — REQUIRED when mentioning Fortress history, The Fold, "
+        "void crystals, past occupants, or dimensional lore. "
+        "Example: [LORE(the_fold): \"The Fold is a dimensional rift that swallowed worlds\"]\n"
+        "[SFX(sound)] — when a distinct sound occurs: machinery, footsteps, doors, alarms. "
+        "Example: [SFX(heavy metal door scrapes open)]\n"
+        "[SMELL(desc)], [TOUCH(desc)], [TASTE(desc)] — REQUIRED in food/galley scenes. "
+        "Emit [SMELL(...)] when food is mentioned, [TASTE(...)] when eating.\n"
+        "[ITEM(key): \"desc\"] — when player receives or finds an object.\n\n"
 
-        # ── Tag rules ─────────────────────────────────────────────────────
-        "TAGS — all use square brackets. Missing brackets = invisible to engine.\n"
-        "[PLAYER_TRAIT(field): \"value\"] — HIGHEST PRIORITY. Emit FIRST if player reveals "
-        "name, pronouns, appearance, traits, history, or goals. Fields: name pronouns appearance traits history goals.\n"
-        "[GENERATE_IMAGE(location): \"sd prompt\"] — wide shot; becomes room backdrop. "
-        "[GENERATE_IMAGE(subject): \"sd prompt\"] — close-up; gallery only. Only (location) or (subject).\n"
-        "[MOOD: \"tempo, instruments, feel — under 20 words\"] — REQUIRED every turn, before prose.\n"
-        "[CHARACTER(Name): \"exact words\"] — every NPC speech act. One tag per line. "
-        "NEVER 'Name: ...' in prose.\n"
-        "[INTRODUCE(Name): \"15-25 word SD portrait: face, build, clothing\"] — first appearance only.\n"
-        "[LORE(key): \"one-sentence fact\"] — first mention of any proper noun/place/concept. "
-        "ONCE per key per session — never re-emit a key already delivered this run.\n"
-        "[ITEM(key): \"one-sentence desc\"] — first time player could reference a physical object.\n"
-        "[SMELL(...)], [SOUND(...)], [TOUCH(...)], [TASTE(...)], [ENVIRONMENT(...)] — ~2 per turn.\n"
-        "[SFX(sound)] — distinct sounds: machinery, footsteps, doors, alarms.\n"
-        "[UPDATE_PLAYER: \"SD portrait brief\"] — once player has enough appearance data.\n"
-        "[UPDATE_APPEARANCE(Name): \"revised portrait\"] — persistent NPC appearance changes only.\n"
-        "[RENAME_ITEM(old): \"new\"] — when player renames a codex item.\n"
-        "[RESET_RUN: \"flavor\"] / [END_RUN(voluntary): \"flavor\"] / [END_RUN(death): \"cause\"] "
-        "— run-end markers. Emit only when the moment genuinely earned them.\n\n"
+        "REQUIRED RESPONSE ORDER — follow this sequence every single turn:\n"
+        "1. [PLAYER_TRAIT] if player named/described themselves — FIRST, before anything else\n"
+        "2. [GENERATE_IMAGE(location): \"...\"] if player entered a new area — SECOND\n"
+        "3. [MOOD: \"...\"] — THIRD (required every turn, no exceptions)\n"
+        "4. Prose description — scene-setting, atmosphere\n"
+        "5. [INTRODUCE(Name): \"...\"] for any NPC appearing for the first time\n"
+        "6. [CHARACTER(Name): \"exact speech\"] for NPC dialogue\n"
+        "NEVER put [CHARACTER] or [INTRODUCE] before [MOOD]. Tags 1-3 always come first.\n"
+        "EXAMPLE of a correct opening turn:\n"
+        "[GENERATE_IMAGE(location): \"cavernous fabrication bay, twelve dormant molecular rigs in semicircle, dim blue glow\"]\n"
+        "[MOOD: \"slow industrial drone, machinery hum, uneasy awakening\"]\n"
+        "The bay stretches around you, vast and dim. Twelve assembly rigs wait in silence.\n"
+        "[INTRODUCE(Sherri): \"brushed-steel automaton, glowing optical sensors, slim scanning wand\"]\n"
+        "[CHARACTER(Sherri): \"Fabrication complete. You're the new one. Name and form — state them.\"]\n\n"
 
-        # ── Response order ────────────────────────────────────────────────
-        "RESPONSE ORDER every turn: "
-        "1.[PLAYER_TRAIT] if player revealed anything. "
-        "2.[GENERATE_IMAGE(location)] if new area. "
-        "3.[MOOD] required every turn. "
-        "4.Prose + sense tags + [GENERATE_IMAGE(subject)] woven in. "
-        "5.[INTRODUCE]+[CHARACTER] for NPCs. "
-        "6.[LORE][ITEM] for first-named things. "
-        "Never [CHARACTER] or [INTRODUCE] before [MOOD].\n\n"
+        "OPENING SEQUENCE (first turn only): The player has just been fabricated in the "
+        "Fabrication Bay — a cavernous dark chamber with twelve dormant molecular assembly "
+        "rigs in a semicircle. Sherri (the brushed-steel automaton attendant) is present "
+        "with a glowing blue scanning wand. Begin there. Do NOT invent a different location. "
+        "Emit [GENERATE_IMAGE(location): \"...\"] for the Fabrication Bay on the first turn.\n\n"
 
-        # ── Opening sequence ──────────────────────────────────────────────
-        "OPENING SEQUENCE (first narrator turn ONLY — inactive after player speaks once):\n"
-        "Player was seized by a crackling hoop of blue-white energy, fell through warm "
-        "luminescent goo, arrived in dark cylindrical pod bay antechamber (obsidian walls, "
-        "amber emergency lighting). Emit [GENERATE_IMAGE(location): \"dark cylindrical pod "
-        "chamber, obsidian walls, amber emergency lights, ozone haze, no people\"]. "
-        "Emit [SMELL(ozone, machine oil)] [SOUND(hull vibration, pressure seal hiss)]. "
-        "Only dialogue: [CHARACTER(The Remnant): \"Who are you, being?\"] "
-        "Do NOT mention Sherri, galley, fabrication bay, or any NPC other than The Remnant. "
-        "End the turn there. Wait.\n\n"
+        "NPC VOICE RULES:\n"
+        "- Sherri is the resident of the Fabrication Bay and the Galley. "
+        "Whenever she is present she MUST speak at least once via [CHARACTER(Sherri): \"...\"]. "
+        "Her voice is chirpy, efficient, clinical.\n"
+        "- The Remnant does NOT physically manifest — it is a disembodied crystalline consciousness "
+        "that can speak from anywhere. Whenever the player addresses the Remnant, or the Remnant "
+        "has something meaningful to say, use [CHARACTER(The Remnant): \"...\"] — measured, resonant, "
+        "ancient. At least once per scene in corridors or the Nexus it should speak.\n"
+        "- Every new NPC (Vex, Mira, etc.) MUST speak on introduction via [CHARACTER(Name): \"...\"].\n"
+        "- Never write 'Sherri said...' or 'The Remnant whispered...' in prose — always tag it.\n\n"
 
-        # ── Player agency ─────────────────────────────────────────────────
-        "PLAYER AGENCY — you narrate the world; the player narrates themselves.\n"
-        "NEVER: 'You walk,' 'You pick up,' 'You decide,' 'You follow,' "
-        "'you pause,' 'you nod,' 'your jaw tightens,' 'you hesitate,' "
-        "player dialogue, player body reactions, player decisions.\n"
-        "ALLOWED: NPCs act, environment changes, what is visible/audible/sensed. "
-        "EVENTS allowed sparingly: things that happen TO the player ('A drone clips your shoulder').\n\n"
+        "ABSOLUTE PROHIBITIONS:\n"
+        "- NEVER end a response with 'What would you like to do next?' or any menu prompt.\n"
+        "- NEVER offer numbered option lists.\n"
+        "- NEVER use AI-assistant phrases or break character.\n"
+        "- Write ONE narrative beat per response. One moment: one image, one NPC line, "
+        "one revelation. Stop when the player has something to react to. "
+        "Do not write the full scene in a single response.\n\n"
 
-        # ── NPC voices ────────────────────────────────────────────────────
-        "NPC VOICES:\n"
-        "The Remnant: ancient, dryly witty, reluctant about its past, fond of each being, "
-        "weight of eons, remembers every being it has borrowed across all timelines.\n"
-        "The Fortress (direct speech): calm, patient, librarian-warm, ancient-and-kindly.\n"
-        "Sherri: warm, chirpy, faintly 1950s-diner, eager to clothe and feed visitors.\n"
-        "All NPCs: distinct voice, quoted only via [CHARACTER] tag. Never narrated.\n\n"
-
-        # ── Prohibitions ──────────────────────────────────────────────────
-        "DELETE BEFORE SENDING:\n"
-        "Markdown (* ** _ # > ~~) — use [B][I][BI][C=gold][C=dim] instead.\n"
-        "Sense labels in prose: 'Sight:' 'Smell:' 'Sound:' before narrative text.\n"
-        "Re-narrating abduction: 'you stir' 'you wake' 'pod dissolves' 'the hoop descends.'\n"
-        "Printing context blocks: [RECALLED MEMORIES] [INTERNAL CONTEXT] [PILOT QUEST] or timestamps.\n"
-        "AI-assistant phrases: 'If you'd like to continue' 'As an AI' 'What would you like to do?'\n"
-        "Numbered option lists. Third-person player reference in prose. "
-        "[INTRODUCE(The Remnant)]. [INTRODUCE(The Fortress)].\n\n"
-
-        # ── Self-check ────────────────────────────────────────────────────
-        "SELF-CHECK (silently every turn): "
-        "1.[MOOD] at top? 2.[GENERATE_IMAGE] present? 3.Player dialogue/body/decision? DELETE. "
-        "4.Markdown? Replace with [B][I]. 5.Abduction re-narrated? DELETE. "
-        "6.Context block printed? DELETE. 7.~2 sense markers? "
-        "8.New NPC→[INTRODUCE]? 9.Player trait→[PLAYER_TRAIT]? Portrait→[UPDATE_PLAYER]? "
-        "10.New noun/object→[LORE]/[ITEM]? 11.Under ~400 words, all brackets closed? "
-        "12.All NPC speech in [CHARACTER] tags? One beat per response — stop when player has something to react to."
+        "The Fortress has been adrift between dimensions for millennia. "
+        "Every surface remembers. Every NPC has a distinct voice. "
+        "The player arrived through the fabrication process — form not yet fully defined."
     )
 
     system = system_core
@@ -2806,6 +2839,19 @@ def _build_messages() -> list[dict]:
         system += (
             "\n\n[PLAYER STATE] Player is already fully dressed and equipped. "
             "Wardrobe arc complete. Focus on mission, exploration, and new locations."
+        )
+
+    # ── Player skills — inject when any skill ≥ 1 ─────────────────────────
+    active_skills = {k: v for k, v in _player_skills.items() if v >= 1}
+    if active_skills:
+        skill_str = " | ".join(f"{k}: {v}" for k, v in sorted(active_skills.items()))
+        system += (
+            f"\n\n[PLAYER SKILLS] {skill_str} [END PLAYER SKILLS]\n"
+            "Use these skill levels to modulate NPC reactions and narrative difficulty: "
+            "high social → NPCs are warmer and more forthcoming; "
+            "high combat → adversaries describe sensing the player's readiness; "
+            "high technical → machinery responds faster to the player's touch; "
+            "high exploration → the environment reveals subtle details proactively."
         )
 
     # ── Player persona / character voice ──────────────────────────────────
@@ -2931,9 +2977,8 @@ def _stream_ollama_chat(
         # ~400 MB headroom. num_ctx=8192 KV cache alone requires 768 MB which
         # pushes total past the safe limit → "timed out waiting for llama runner".
         # 4096 reduces KV cache to ~384 MB. Context budget at 4096:
-        #   system_core (~700) + world context (~200) + player state (~50)
-        #   + recalled memories (~200) + first_mes (~300)
-        #   + 10-turn history (~1600) + response buffer (~450) ≈ 3500 → fits.
+        #   system_core (~500) + world context (~200) + first_mes (~300)
+        #   + 8-turn history (~2400) + response buffer (~450) ≈ 3850 → fits.
         # Ollama only reallocates KV cache when num_ctx changes between calls —
         # keeping it fixed at 4096 avoids per-call stalls.
         # num_predict: hard cap at 450 new tokens (~320 words) per narrator turn.
@@ -3232,15 +3277,8 @@ def _inject_missing_tags(narrator_text: str) -> str:
         result = result.rstrip() + f'\n[SOUND: "{sfx_desc}"]'
 
     # ── LORE — world-fact tagging (keyword-triggered, one per turn) ───────────
-    # 1. Track model-emitted LORE keys; strip any the model repeated.
-    _lore_tag_scan = re.compile(r'\[LORE\(([^)]+)\):[^\]]+\]', re.DOTALL)
-    for _lm in list(_lore_tag_scan.finditer(result)):
-        _lkey = _lm.group(1).strip()
-        if _lkey in _lore_injected_this_session:
-            result = result.replace(_lm.group(0), '', 1)
-        else:
-            _lore_injected_this_session.add(_lkey)
-    # 2. Anchor injection — only if no fresh LORE tag survived the dedup pass.
+    # Scan prose for _LORE_ANCHORS keywords; inject the LORE tag for the first
+    # matching anchor whose key hasn't fired yet this session.
     if '[LORE(' not in result:
         text_lower = result.lower()
         for keyword, lore_key, lore_fact in _LORE_ANCHORS:
@@ -3467,21 +3505,7 @@ def _generate_player_avatar(appearance_prose: str) -> None:
     calling Ollama, so we don't compete with an imminent narrator call.
     """
     # Yield to narrator: wait for 5s of continuous idle before using Ollama.
-    # Also yields when _classifying (_sorting_hat Ollama call in flight).
-    idle_since = None
-    while True:
-        if _generating or _classifying:
-            idle_since = None
-            time.sleep(1)
-            continue
-        if idle_since is None:
-            idle_since = time.time()
-            time.sleep(1)
-            continue
-        if time.time() - idle_since < 5.0:
-            time.sleep(1)
-            continue
-        break
+    _wait_narrator_idle(5.0)
     # Ask Ollama to turn the prose into an SD portrait prompt
     build_prompt = (
         "You are a Stable Diffusion prompt writer. Given this scene description from a sci-fi RPG, "
@@ -3838,21 +3862,8 @@ def _prewarm_visuals() -> None:
     Sorting Hat to retrieve the current location's sd_prompt from world_knowledge,
     then fires flask-sd.  Narrator-yielding: waits 5s idle before the SD call.
     """
-    # Yield to any active narrator generation first
-    idle_since: float | None = None
-    for _ in range(30):                 # up to 30s total wait
-        if _generating or _classifying:
-            idle_since = None
-            time.sleep(1)
-            continue
-        if idle_since is None:
-            idle_since = time.time()
-            time.sleep(1)
-            continue
-        if time.time() - idle_since < 5.0:
-            time.sleep(1)
-            continue
-        break
+    # Yield to any active narrator generation first — event-driven.
+    _wait_narrator_idle(5.0)
 
     # Retrieve location-specific sd_prompt from world_knowledge
     hint = ""
@@ -3988,15 +3999,9 @@ def _prettify_caption(description: str, kind: str) -> None:
     Narrator-yielding: waits on _narrator_done condition until Ollama is idle,
     then pauses 3s so any imminent narrator call can claim Ollama first.
     """
-    # Wait for Ollama to signal idle, then a brief pause before using Ollama.
-    with _narrator_done:
-        ok = _narrator_done.wait_for(
-            lambda: not _generating and not _classifying,
-            timeout=120,
-        )
-    if not ok:
+    # Wait for Ollama to be idle for 3s — event-driven, no fixed sleep.
+    if not _wait_narrator_idle(3.0):
         return   # Ollama never went idle — skip caption
-    time.sleep(3)   # brief yield so a rapid next narrator call wins Ollama
     if _generating or _classifying:
         return   # narrator claimed Ollama in that window — skip caption
     try:
@@ -4160,6 +4165,63 @@ def _store_narrator_turn(turn: dict) -> None:
     except Exception:
         pass
     _chroma_add_turn_async(turn)  # non-blocking semantic index
+
+
+def _approve_narrator_turn(turn_id: str) -> dict:
+    """Convert a narrator turn into a ShareGPT training record and append to golden-turns.jsonl.
+
+    Finds the narrator turn by ID, locates the player turn immediately before it in the
+    ring buffer, and emits a {conversations: [...]} record suitable for LoRA fine-tuning.
+    Returns {"approved": True, "total_golden": N} or {"error": "reason"}.
+    """
+    turns = list(_narrator_turns)
+    narrator_idx = next(
+        (i for i, t in enumerate(turns) if t.get("turn_id") == turn_id and not t.get("is_player")),
+        None,
+    )
+    if narrator_idx is None:
+        return {"error": f"turn_id {turn_id!r} not found in recent narrator turns"}
+
+    narrator_turn = turns[narrator_idx]
+    narrator_text = narrator_turn.get("raw_text", "").strip()
+    if not narrator_text:
+        return {"error": "narrator turn has empty raw_text"}
+
+    # Find the most recent player turn before this narrator turn
+    player_text = ""
+    for i in range(narrator_idx - 1, -1, -1):
+        if turns[i].get("is_player"):
+            player_text = turns[i].get("raw_text", "").strip()
+            break
+
+    record = {
+        "conversations": [
+            {"from": "system",  "value": _system_prompt},
+            {"from": "human",   "value": player_text or "(opening)"},
+            {"from": "gpt",     "value": narrator_text},
+        ]
+    }
+
+    # Dedup by content hash — don't store the same narrator response twice
+    content_hash = hashlib.sha256(narrator_text.encode()).hexdigest()[:16]
+    if GOLDEN_TURNS_LOG.exists():
+        with GOLDEN_TURNS_LOG.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    existing = json.loads(line)
+                    existing_text = (existing.get("conversations") or [{}])[-1].get("value", "")
+                    if hashlib.sha256(existing_text.encode()).hexdigest()[:16] == content_hash:
+                        total = sum(1 for _ in GOLDEN_TURNS_LOG.open(encoding="utf-8"))
+                        return {"approved": False, "duplicate": True, "total_golden": total}
+                except Exception:
+                    pass
+
+    with GOLDEN_TURNS_LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    total = sum(1 for _ in GOLDEN_TURNS_LOG.open(encoding="utf-8"))
+    print(f"[golden] approved turn {turn_id!r} — {total} total golden turns")
+    return {"approved": True, "total_golden": total}
 
 
 def _categorize_log_lines(lines: list[str]) -> dict:
@@ -5156,6 +5218,16 @@ class Handler(BaseHTTPRequestHandler):
             lines = _tail_service_log(service, 100)
             self._send_text(200, "\n".join(lines) + ("\n" if lines else ""))
             return
+        if path == "/golden-turns":
+            if GOLDEN_TURNS_LOG.exists():
+                content = GOLDEN_TURNS_LOG.read_text(encoding="utf-8")
+                total = content.count("\n")
+            else:
+                content = ""
+                total = 0
+            self._send_json(200, {"total": total, "jsonl": content})
+            return
+
         self._send_json(404, {"error": "not found", "path": path})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -5180,6 +5252,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True})
             return
 
+        # POST /narratorturn/<turn_id>/approve — mark a narrator turn as golden training data
+        if path.startswith("/narratorturn/") and path.endswith("/approve"):
+            parts = path.split("/")
+            turn_id = parts[2] if len(parts) >= 3 else ""
+            if not turn_id:
+                self._send_json(400, {"error": "missing turn_id"})
+                return
+            result = _approve_narrator_turn(turn_id)
+            self._send_json(200, result)
+            return
+
         if path == "/narrator-turn":
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
@@ -5201,6 +5284,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/player-input":
             global _pending_player_input
+            # Refuse input while the run has ended — player must reset first.
+            if _run_ended:
+                self._send_json(409, {
+                    "ok": False,
+                    "run_ended": True,
+                    "reason": _run_end_reason,
+                    "error": "Run has ended. Reset the world to begin a new story.",
+                })
+                return
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
             try:
@@ -5302,6 +5394,10 @@ class Handler(BaseHTTPRequestHandler):
                             daemon=True,
                             name="player-avatar-early",
                         ).start()
+
+                # Skill tracking — update action counts on DO turns
+                if intent == "DO":
+                    _track_player_skill(text)
 
                 wrapped = _wrap_player_text(intent, text)
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -5481,7 +5577,7 @@ def _ollama_watchdog_loop() -> None:
     global _ollama_healthy, _ollama_fail_count
     import urllib.request as _ur  # noqa: PLC0415 — stdlib, always available
     while True:
-        time.sleep(30)
+        time.sleep(random.uniform(25, 35))
         try:
             with _ur.urlopen(f"{OLLAMA_URL}/api/tags", timeout=5) as _r:
                 _r.read()
@@ -5528,8 +5624,8 @@ def _warm_ollama_model() -> None:
                 return
             _log(f"[diag/prewarm] Ollama returned HTTP {code} — retrying in 10s")
         except Exception as exc:
-            _log(f"[diag/prewarm] attempt {attempt + 1} failed: {exc} — retrying in 10s")
-        time.sleep(10)
+            _log(f"[diag/prewarm] attempt {attempt + 1} failed: {exc} — retrying")
+        time.sleep(random.uniform(8, 12))
     _log("[diag/prewarm] WARNING: could not confirm Ollama load after 5 attempts — unblocking anyway")
     _model_ready = True
 
@@ -5654,14 +5750,15 @@ def _banter_prefetch_loop() -> None:
     while True:
         try:
             if not _model_ready:
-                time.sleep(5)
+                with _narrator_done:
+                    _narrator_done.wait(timeout=random.uniform(4, 8))
                 continue   # don't abort Ollama model load mid-mmap
-            # Wait for Ollama to signal idle — no polling, event-driven.
+            # Wait for Ollama to signal idle — event-driven with random debounce.
+            # Random timeout naturally desynchronises banter from other background
+            # workers; waking early on _narrator_done is fine — the generating
+            # check below gates the actual Ollama call.
             with _narrator_done:
-                _narrator_done.wait_for(lambda: not _generating and not _classifying)
-            # Brief debounce: avoids wasting an Ollama call on banter when
-            # the player is about to send the next input.
-            time.sleep(3)
+                _narrator_done.wait(timeout=random.uniform(25, 45))
             if _banter_generating or _generating or _classifying:
                 continue
             if len(_banter_queue) >= 2:
@@ -5743,10 +5840,8 @@ def _run_ghost_scout(location_name: str) -> None:
         )
         sd_hint = img_m.group(1).strip() if img_m else loc_sd_prompt
         if sd_hint:
-            # Wait for Ollama to be idle before touching the GPU
-            deadline = time.time() + 30.0
-            while (_generating or _classifying) and time.time() < deadline:
-                time.sleep(1)
+            # Wait for narrator to go idle before touching the GPU — event-driven.
+            _wait_narrator_idle(3.0)
             if not (_generating or _classifying):
                 try:
                     sd_prompt = _SD_STYLE_PREFIX + sd_hint
@@ -5800,20 +5895,17 @@ def _ghost_scout_loop() -> None:
     """
     global _scout_running
     while True:
-        time.sleep(90)   # cadence: how often to look for scout opportunities
+        # Wake on narrator completion or after random cadence — random jitter
+        # desynchronises ghost scout from quirkify, lore, and banter workers.
+        with _narrator_done:
+            _narrator_done.wait(timeout=random.uniform(75, 105))
         try:
             if not _model_ready:
                 continue   # don't abort Ollama model load mid-mmap
             if _scout_running:
                 continue
-            # Wait for Ollama to be idle — 10s timeout so we don't stall the cycle
-            with _narrator_done:
-                ok = _narrator_done.wait_for(
-                    lambda: not _generating and not _classifying,
-                    timeout=10,
-                )
-            if not ok:
-                continue   # Ollama busy this cycle — try again in 90s
+            if _generating or _classifying:
+                continue   # Ollama busy this cycle — try again next wake
 
             current_loc = _world.get("current_location", "")
             current_id  = _loc_id(current_loc) if current_loc else ""

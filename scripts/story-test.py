@@ -334,6 +334,72 @@ def _sse_listener(base: str) -> None:
             time.sleep(5.0)  # Reconnect after error
 
 
+# ── Natural player agent ──────────────────────────────────────────────────────
+OLLAMA_DIRECT_URL = "http://localhost:1593"
+
+
+def _player_agent_turn(
+    narrator_text: str,
+    player_name: str,
+    beat_hint: str = "",
+) -> str:
+    """Ask Ollama to generate a natural player response to the narrator.
+
+    beat_hint is injected when the expected beat tag hasn't fired after 3 turns —
+    nudges the player agent without touching the narrator prompt.
+    Returns a one-line player action/question (8-25 words).
+    """
+    hint_line = f"\n[HINT: {beat_hint}]" if beat_hint else ""
+    prompt = (
+        f"You are {player_name}, a cautious and curious traveler who has just arrived aboard an ancient "
+        "alien space station. Respond with ONE natural action or question (8-25 words). "
+        "Be reactive — respond to what you just saw or heard. Don't meta-game, don't mention "
+        "game mechanics or tags, and don't repeat the narrator's words back.\n\n"
+        f"What the narrator just said:\n{narrator_text[:500]}\n"
+        f"{hint_line}\n"
+        f"Your response (first person, one line only):"
+    )
+    try:
+        payload = json.dumps({
+            "model": "remnant-narrator:latest",
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": 40, "temperature": 0.85},
+        }).encode()
+        req = urllib.request.Request(
+            f"{OLLAMA_DIRECT_URL}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=20.0) as r:
+            data = json.loads(r.read().decode())
+            response = data.get("response", "").strip()
+            response = response.split("\n")[0].strip().strip('"\'')
+            if 5 <= len(response.split()) <= 50:
+                return response
+    except Exception as e:
+        print(f"  {_warn('⚠')} Player agent failed: {e}")
+    # Fallback: generic exploration action
+    return "I explore the area carefully, taking in the surroundings."
+
+
+# ── Golden training data ─────────────────────────────────────────────────────
+def _approve_golden_turn(diag_url: str, turn: dict) -> None:
+    """POST to /narratorturn/<id>/approve — silently ignore failures."""
+    turn_id = turn.get("turn_id", "")
+    if not turn_id:
+        return
+    try:
+        code, resp = _post(f"{diag_url}/narratorturn/{turn_id}/approve", {}, timeout=10.0)
+        if code == 200 and resp.get("approved"):
+            print(f"  {_gold('◈')} Golden turn saved ({resp.get('total_golden', '?')} total)")
+        elif resp.get("duplicate"):
+            pass  # silent — already collected
+    except Exception:
+        pass  # golden collection is best-effort
+
+
 # ── Play a beat ───────────────────────────────────────────────────────────────
 def play(text: str, label: str, base: str,
          pause_after: float = 0.0,
@@ -599,6 +665,11 @@ def main() -> int:
     parser.add_argument("--player-name", default="Kael")
     parser.add_argument("--skip-reset",  action="store_true",
                         help="Skip world reset (use current world state)")
+    parser.add_argument("--save-golden", action="store_true",
+                        help="Auto-approve high-quality turns for LoRA training data")
+    parser.add_argument("--natural", action="store_true",
+                        help="LLM-driven player agent (reactive, not hardcoded). Beat detection "
+                             "from narrator tags. Slower but tests emergent storytelling.")
     args = parser.parse_args()
 
     _kill_existing_instances()   # ensure we're the only story-test running
@@ -607,6 +678,45 @@ def main() -> int:
     diag        = f"http://{args.host}:{args.diag_port}"
     player_name = args.player_name
     max_turns   = MAX_SAFETY_TURNS
+    save_golden  = getattr(args, "save_golden", False)
+    natural_mode = getattr(args, "natural", False)
+
+    def _golden(turn: dict) -> None:
+        if save_golden:
+            _approve_golden_turn(diag, turn)
+
+    _last_narrator_raw = [""]  # mutable cell so inner functions can update it
+
+    def _natural_beat(
+        forced_text: str,
+        label: str,
+        tag_condition,       # callable(raw_text) -> bool
+        beat_hint: str = "",
+        max_tries: int = 5,
+    ) -> dict:
+        """In natural mode: loop asking the LLM player for input until tag_condition fires.
+        In forced mode: send forced_text once (original behavior).
+        beat_hint is injected after 3 failed tag attempts.
+        """
+        if not natural_mode:
+            turn = play_with_retry(forced_text, label, base)
+            _last_narrator_raw[0] = turn.get("raw_text", "")
+            return turn
+
+        for attempt in range(max_tries):
+            hint = beat_hint if attempt >= 3 else ""
+            text = _player_agent_turn(_last_narrator_raw[0], player_name, hint)
+            print(f"  {_dim('(natural)')} {text[:100]}")
+            try:
+                turn = play_with_retry(text, label, base)
+            except StepFailed:
+                turn = {}
+            _last_narrator_raw[0] = turn.get("raw_text", "")
+            if tag_condition(_last_narrator_raw[0]):
+                return turn
+            if attempt < max_tries - 1:
+                print(f"  {_dim(f'Tag not yet fired — attempt {attempt+2}/{max_tries}')}")
+        return turn  # last turn even if tag never fired
 
     print(_bold(f"\n╔══════════════════════════════════════════╗"))
     print(_bold(f"║   Remnant — Pilot Quest Arc Test         ║"))
@@ -695,36 +805,47 @@ def main() -> int:
 
         # ── Beat 1: Portal arrival ────────────────────────────────────────────
         print(_bold("\n── Beat 1: Portal Arrival"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I open my eyes and look around.",
-            "Portal arrival", base,
+            "Portal arrival",
+            lambda raw: bool(_RE_IMAGE.search(raw) or _RE_MOOD.search(raw)),
+            "Look around and describe what you see after arriving.",
         )
-        raw1 = turn.get("raw_text", "")
-        assert_hard(True, "narrator responded")  # play() already asserts this
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw1 = _last_narrator_raw[0]
+        assert_hard(True, "narrator responded")
         assert_soft(_RE_IMAGE.search(raw1), "GENERATE_IMAGE on arrival",
                     "No image generated at portal arrival")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 2: Name yourself ─────────────────────────────────────────────
         print(_bold("\n── Beat 2: Name Yourself"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             f"My name is {player_name}. I am a traveller from a world of rain.",
-            "Name yourself", base,
+            "Name yourself",
+            lambda raw: bool(re.search(r'\[PLAYER_TRAIT\(', raw)),
+            f"The narrator asked your name. Introduce yourself as {player_name}.",
         )
-        raw2 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw2 = _last_narrator_raw[0]
         assert_soft(re.search(r'\[PLAYER_TRAIT\(', raw2), "PLAYER_TRAIT(name) fires",
                     "No PLAYER_TRAIT tag after naming")
         assert_soft(player_name.lower() in raw2.lower(), "Name acknowledged",
                     f"{player_name!r} not reflected in narrator response")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 3: Follow Sherri ─────────────────────────────────────────────
         print(_bold("\n── Beat 3: Follow Sherri"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I follow Sherri to the Fabrication Bay.",
-            "Follow Sherri", base,
+            "Follow Sherri",
+            lambda raw: bool(_RE_CHAR.search(raw) or "sherri" in raw.lower()),
+            "Follow Sherri to the Fabrication Bay to get some clothes.",
         )
-        raw3 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw3 = _last_narrator_raw[0]
         assert_soft(_RE_IMAGE.search(raw3), "GENERATE_IMAGE in Fabrication Bay",
                     "No image in Fabrication Bay")
         assert_soft(
@@ -732,51 +853,67 @@ def main() -> int:
             "Sherri speaks", "Sherri has no dialogue"
         )
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 4: Describe appearance ───────────────────────────────────────
         print(_bold("\n── Beat 4: Describe Appearance"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I am tall, with dark curly hair and sharp green eyes. Weathered hands.",
-            "Describe appearance", base,
+            "Describe appearance",
+            lambda raw: bool(re.search(r'\[PLAYER_TRAIT\(', raw)),
+            "Describe your physical appearance in detail — height, hair, eyes.",
         )
-        raw4 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw4 = _last_narrator_raw[0]
         assert_soft(re.search(r'\[PLAYER_TRAIT\(', raw4), "PLAYER_TRAIT(appearance) fires",
                     "No PLAYER_TRAIT after appearance description")
         assert_soft(re.search(r'\[UPDATE_PLAYER\]', raw4), "UPDATE_PLAYER fires",
                     "Avatar not refreshed after appearance")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 5: Ask for clothes ───────────────────────────────────────────
         print(_bold("\n── Beat 5: Ask for Clothes"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "Sherri, can you make me some clothes? Dark practical ones, lots of pockets.",
-            "Ask for clothes", base,
+            "Ask for clothes",
+            lambda raw: bool("sherri" in raw.lower() or _RE_CHAR.search(raw)),
+            "Ask Sherri to make you some dark, practical clothes.",
         )
-        raw5 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw5 = _last_narrator_raw[0]
         assert_soft(
             "sherri" in raw5.lower() or _RE_CHAR.search(raw5),
             "Sherri responds about fabrication", "No Sherri response"
         )
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 6: Clothes applied ───────────────────────────────────────────
         print(_bold("\n── Beat 6: Clothes Applied"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I put on the new clothes. What do I look like?",
-            "Clothes applied", base,
+            "Clothes applied",
+            lambda raw: bool(re.search(r'\[UPDATE_PLAYER\]', raw) or re.search(r'\[ITEM\(', raw)),
+            "Put on the clothes Sherri made and ask what you look like.",
         )
-        raw6 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw6 = _last_narrator_raw[0]
         assert_soft(re.search(r'\[UPDATE_PLAYER\]', raw6) or re.search(r'\[ITEM\(', raw6),
                     "UPDATE_PLAYER or ITEM fires", "No avatar update or item tag")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 7: To the galley ─────────────────────────────────────────────
         print(_bold("\n── Beat 7: To the Galley"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "Sherri, I'm hungry. Take me to the galley.",
-            "To the galley", base,
+            "To the galley",
+            lambda raw: bool("galley" in raw.lower() or _RE_IMAGE.search(raw)),
+            "Tell Sherri you are hungry and ask to go to the galley.",
         )
-        raw7 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw7 = _last_narrator_raw[0]
         assert_soft(
             "galley" in raw7.lower() or _RE_IMAGE.search(raw7),
             "Galley location/image", "No galley mention or image"
@@ -786,48 +923,63 @@ def main() -> int:
             "Sherri speaks in galley", "Sherri silent"
         )
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 8: Order meal ────────────────────────────────────────────────
         print(_bold("\n── Beat 8: Order Meal"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "Sherri, whatever smells best today.",
-            "Order meal", base,
+            "Order meal",
+            lambda raw: bool(_RE_SMELL.search(raw)),
+            "Order food from Sherri — ask for whatever smells best.",
         )
-        raw8 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw8 = _last_narrator_raw[0]
         assert_soft(_RE_SMELL.search(raw8), "SMELL on meal order",
                     "No smell sense when ordering food")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 9: Eat the meal ──────────────────────────────────────────────
         print(_bold("\n── Beat 9: Eat the Meal"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I eat slowly, taking in every flavour.",
-            "Eat the meal", base,
+            "Eat the meal",
+            lambda raw: bool(_RE_SMELL.search(raw) or _RE_TASTE.search(raw)),
+            "Eat the meal you were given, savoring every bite.",
         )
-        raw9 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw9 = _last_narrator_raw[0]
         assert_soft(_RE_SMELL.search(raw9) or _RE_TASTE.search(raw9),
                     "SMELL or TASTE while eating", "No smell/taste during meal")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 10: To sleeping quarters ─────────────────────────────────────
         print(_bold("\n── Beat 10: To Sleeping Quarters"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "Sherri, show me where I can sleep.",
-            "To sleeping quarters", base,
+            "To sleeping quarters",
+            lambda raw: bool(_RE_IMAGE.search(raw)),
+            "Ask Sherri to show you to the sleeping quarters.",
         )
-        raw10 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw10 = _last_narrator_raw[0]
         assert_soft(_RE_IMAGE.search(raw10), "GENERATE_IMAGE for sleeping quarters",
                     "No image for sleeping quarters")
         beats_done += 1
+        _golden(turn)
 
-        # ── Beat 11: Go to sleep (65s idle window for lore whisper) ──────────
+        # ── Beat 11: Go to sleep ──────────────────────────────────────────────
+        # Note: lore idle threshold is 360s — the 65s pause is no longer useful
+        # for lore testing. Lore whisper is now a long-idle bonus, not a CI gate.
         print(_bold("\n── Beat 11: Go to Sleep"))
-        print(f"  {_dim('(Will pause 65s after response to allow lore whisper…)')}")
         lore_before = metrics["lore_whispers"]
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I climb into a bunk and close my eyes.",
-            "Go to sleep", base,
-            pause_after=65.0,   # idle window for _lore_idle_loop (fires at 50s)
+            "Go to sleep",
+            lambda raw: bool(_RE_SOUND.search(raw) or _RE_ENV.search(raw) or _RE_SMELL.search(raw)),
+            "Find a bunk and lie down to sleep.",
         )
         raw11 = turn.get("raw_text", "")
         assert_soft(
@@ -835,29 +987,36 @@ def main() -> int:
             "Sense markers while sleeping", "No sense tags on sleep"
         )
         beats_done += 1
+        _golden(turn)
 
-        # ── Beat 12: Wake up (another 65s window) ────────────────────────────
+        # ── Beat 12: Wake up ─────────────────────────────────────────────────
+        # Lore whisper threshold is 360s — won't fire during a CI run.
         print(_bold("\n── Beat 12: Wake Up"))
-        print(f"  {_dim('(Another 65s pause for second lore whisper opportunity…)')}")
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I wake up. How long was I asleep?",
-            "Wake up", base,
-            pause_after=65.0,
+            "Wake up",
+            lambda raw: bool(_RE_MOOD.search(raw)),
+            "Wake up and ask how long you have been asleep.",
         )
-        raw12 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw12 = _last_narrator_raw[0]
         assert_soft(_RE_MOOD.search(raw12), "MOOD shift on waking",
                     "No mood change on waking")
         assert_soft(metrics["lore_whispers"] > lore_before, "Lore whisper fired during sleep",
-                    f"lore_whispers={metrics['lore_whispers']} (was {lore_before})")
+                    "Lore requires 6+ minutes of silence — not expected in CI runs")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 13: To the Nexus ─────────────────────────────────────────────
         print(_bold("\n── Beat 13: To the Nexus"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "Sherri, take me to the Nexus. I wish to speak with the Remnant.",
-            "To the Nexus", base,
+            "To the Nexus",
+            lambda raw: bool("remnant" in raw.lower() or _RE_CHAR.search(raw)),
+            "Ask Sherri to take you to the Neural Nexus to speak with the Remnant.",
         )
-        raw13 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw13 = _last_narrator_raw[0]
         assert_soft(_RE_IMAGE.search(raw13), "GENERATE_IMAGE for the Nexus",
                     "No image for Nexus")
         assert_soft(
@@ -865,31 +1024,43 @@ def main() -> int:
             "The Remnant speaks", "Remnant silent in Nexus"
         )
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 14: Ask the Remnant ──────────────────────────────────────────
         print(_bold("\n── Beat 14: Ask the Remnant"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "Remnant — why did you bring me here? What do you need from me?",
-            "Ask the Remnant", base,
+            "Ask the Remnant",
+            lambda raw: bool(_RE_CHAR.search(raw)),
+            "Ask the Remnant why it brought you here and what it needs from you.",
         )
-        raw14 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw14 = _last_narrator_raw[0]
         assert_soft(_RE_CHAR.search(raw14), "CHARACTER(The Remnant) tag",
                     "No CHARACTER tag for Remnant")
         beats_done += 1
+        _golden(turn)
 
         # ── Beat 15: Accept quest ─────────────────────────────────────────────
         print(_bold("\n── Beat 15: Accept Quest"))
-        turn = play_with_retry(
+        turn = _natural_beat(
             "I'll do it. Whatever it takes. Tell me how to begin.",
-            "Accept quest", base,
+            "Accept quest",
+            lambda raw: bool(
+                "quest" in raw.lower() or "mission" in raw.lower()
+                or "task" in raw.lower() or "begin" in raw.lower()
+            ),
+            "Accept the quest or mission offered. Say you will help.",
         )
-        raw15 = turn.get("raw_text", "")
+        _last_narrator_raw[0] = turn.get("raw_text", "")
+        raw15 = _last_narrator_raw[0]
         assert_soft(
             "quest" in raw15.lower() or "mission" in raw15.lower()
             or "task" in raw15.lower() or "begin" in raw15.lower(),
             "Quest acknowledged", "Quest not reflected in response"
         )
         beats_done += 1
+        _golden(turn)
 
         # ── Quest arc (runs until all 15 beats pass or safety cap) ───────────
         print(_bold(f"\n── Quest Arc ({beats_done} beats done — continuing for richness)"))
@@ -929,9 +1100,8 @@ def main() -> int:
         last_intro_turn = -99
 
         # Arc runs until richness targets satisfied OR hard cap.
-        # Keep it short — 10 turns max. The 15 scripted beats already cover the
-        # main story; the arc just gathers richness data on a few more interactions.
-        MAX_ARC_TURNS = 10
+        # Natural mode gets 30 turns (emergent story); forced CI mode stays at 10.
+        MAX_ARC_TURNS = 30 if natural_mode else 10
         MIN_ARC_TURNS = 5
 
         def _richness_met():
@@ -973,22 +1143,24 @@ def main() -> int:
                 current_ents = _snap_world_entities(base)
                 _update_npcs_created(current_ents, baseline_entity_ids)
 
-            # Choose player input — context-reactive first (no portal loop!), then pool
-            last_raw = story_text[-1] if story_text else ""
-            last_raw_lc = last_raw.lower()
-
-            if "introduce" in last_raw_lc and quest_turn != last_intro_turn:
-                text = "Tell me about yourself. Who are you?"
-                last_intro_turn = quest_turn
-            elif "fabrication" in last_raw_lc and "sherri" in last_raw_lc:
-                text = "I work with Sherri to recalibrate the rigs."
-            elif "nexus" in last_raw_lc and "frequency" in last_raw_lc:
-                text = "I goad the Remnant into revealing what it knows."
-            elif "cold" in last_raw_lc and "spot" in last_raw_lc:
-                text = "I follow the cold trail through the sleeping quarters."
+            # Choose player input — natural mode asks the LLM agent; forced mode
+            # uses context-reactive overrides then falls back to the pool rotation.
+            if natural_mode:
+                text = _player_agent_turn(_last_narrator_raw[0], player_name)
             else:
-                # Plain pool rotation — avoids reactive loops
-                text = _ARC_TURNS[_arc_idx % len(_ARC_TURNS)]
+                last_raw = story_text[-1] if story_text else ""
+                last_raw_lc = last_raw.lower()
+                if "introduce" in last_raw_lc and quest_turn != last_intro_turn:
+                    text = "Tell me about yourself. Who are you?"
+                    last_intro_turn = quest_turn
+                elif "fabrication" in last_raw_lc and "sherri" in last_raw_lc:
+                    text = "I work with Sherri to recalibrate the rigs."
+                elif "nexus" in last_raw_lc and "frequency" in last_raw_lc:
+                    text = "I goad the Remnant into revealing what it knows."
+                elif "cold" in last_raw_lc and "spot" in last_raw_lc:
+                    text = "I follow the cold trail through the sleeping quarters."
+                else:
+                    text = _ARC_TURNS[_arc_idx % len(_ARC_TURNS)]
                 _arc_idx += 1
 
             label = f"Quest arc turn {quest_turn}"
@@ -998,10 +1170,16 @@ def main() -> int:
                 print(f"  {_err('✗')} {label} failed: {e}")
                 break
 
-            raw = turn.get("raw_text", "")
+            _last_narrator_raw[0] = turn.get("raw_text", "")
+            raw = _last_narrator_raw[0]
             assert_soft(_RE_IMAGE.search(raw) or _RE_MOOD.search(raw) or _RE_CHAR.search(raw),
                         f"Quest turn {quest_turn} richness",
                         "No image/mood/character in quest turn")
+            # Auto-approve arc turns with MOOD + at least one sense tag — good training data
+            if save_golden and _RE_MOOD.search(raw):
+                senses = sum(bool(r.search(raw)) for r in (_RE_SMELL, _RE_TASTE, _RE_TOUCH, _RE_SOUND))
+                if senses >= 1:
+                    _approve_golden_turn(diag, turn)
 
             # Early-exit: all beats done + richness met + minimum arc turns
             if beats_done >= 15 and quest_turn >= MIN_ARC_TURNS and _richness_met():
