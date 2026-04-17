@@ -872,7 +872,7 @@ def _generate() -> None:
 
 # ── Train mode ────────────────────────────────────────────────────────────────
 
-def _train(rank: int = 16, epochs: int = 3, lr: float = 2e-4) -> None:
+def _train(rank: int = 16, epochs: int = 3, lr: float = 5e-5) -> None:
     if not OUTPUT_JSONL.exists():
         sys.exit(f"[TRAIN] Training JSONL not found at {OUTPUT_JSONL}. Run --generate first.")
 
@@ -967,8 +967,9 @@ def _train(rank: int = 16, epochs: int = 3, lr: float = 2e-4) -> None:
             num_train_epochs=epochs,
             per_device_train_batch_size=2,
             gradient_accumulation_steps=4,
-            warmup_steps=20,
+            warmup_steps=50,
             learning_rate=lr,
+            weight_decay=0.01,
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
             optim="adamw_8bit",
@@ -1074,7 +1075,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Run all three phases in order")
     parser.add_argument("--rank", type=int, default=16, help="LoRA rank (default: 16)")
     parser.add_argument("--epochs", type=int, default=3, help="Training epochs (default: 3)")
-    parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate (default: 2e-4)")
+    parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate (default: 5e-5)")
     args = parser.parse_args()
 
     if not any([args.generate, args.train, args.merge_export, args.all]):
