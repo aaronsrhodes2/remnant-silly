@@ -359,6 +359,8 @@ def _player_agent_turn(
         f"{hint_line}\n"
         f"Your response (first person, one line only):"
     )
+    # Brief pause so any pending Ollama embed/banter from the previous turn drains
+    time.sleep(2)
     try:
         payload = json.dumps({
             "model": "remnant-narrator:latest",
@@ -372,7 +374,7 @@ def _player_agent_turn(
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=20.0) as r:
+        with urllib.request.urlopen(req, timeout=60.0) as r:
             data = json.loads(r.read().decode())
             response = data.get("response", "").strip()
             response = response.split("\n")[0].strip().strip('"\'')
@@ -380,8 +382,15 @@ def _player_agent_turn(
                 return response
     except Exception as e:
         print(f"  {_warn('⚠')} Player agent failed: {e}")
-    # Fallback: generic exploration action
-    return "I explore the area carefully, taking in the surroundings."
+    # Varied fallbacks — avoid repeating the same line on consecutive failures
+    _FALLBACKS = [
+        "I look around carefully, taking note of my surroundings.",
+        "I move toward the nearest source of light.",
+        "I listen for any sounds in the distance.",
+        "I examine the nearest object or surface.",
+        "I call out quietly to see if anyone responds.",
+    ]
+    return _FALLBACKS[int(time.time()) % len(_FALLBACKS)]
 
 
 # ── Golden training data ─────────────────────────────────────────────────────

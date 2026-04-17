@@ -191,16 +191,20 @@ BENCH_PROMPTS: list[tuple[str, str, str, list[dict]]] = [
 
 def _find_ollama() -> str:
     """Return the first reachable Ollama base URL, or exit."""
-    for port in [1593, 11434]:
+    candidates = [
+        ("http://localhost:1593", "/api/tags"),
+        ("http://localhost:11434", "/api/tags"),
+        # nginx proxy — the only path when Ollama port isn't published to host
+        ("http://localhost:1582/api/ollama", "/api/tags"),
+    ]
+    for base, probe in candidates:
         try:
-            req = urllib.request.Request(
-                f"http://localhost:{port}/api/tags", method="GET"
-            )
+            req = urllib.request.Request(f"{base}{probe}", method="GET")
             with urllib.request.urlopen(req, timeout=3.0):
-                return f"http://localhost:{port}"
+                return base
         except Exception:
             continue
-    print("[bench] ERROR: Ollama not reachable on :1593 or :11434. Start the stack first.")
+    print("[bench] ERROR: Ollama not reachable on :1593, :11434, or nginx proxy. Start the stack first.")
     sys.exit(1)
 
 

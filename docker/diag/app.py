@@ -2759,8 +2759,9 @@ def _build_messages() -> list[dict]:
         "If the player reveals their name, appearance, pronouns, or history in ANY form, "
         "emit this as the VERY FIRST LINE of your response — before MOOD, before prose. "
         "Do not wait. Do not bury it later. Fields: name, pronouns, appearance, traits, history, goals. "
-        "Example: [PLAYER_TRAIT(name): \"Asha\"] [PLAYER_TRAIT(appearance): \"tall, red hair\"]\n"
-        "ONLY emit PLAYER_TRAIT when the player has stated something about themselves — NEVER guess or invent.\n"
+        "Example: [PLAYER_TRAIT(appearance): \"tall, red hair\"]\n"
+        "ONLY emit PLAYER_TRAIT when the player has explicitly stated something — NEVER infer or guess. "
+        "If the player has not said their name, do NOT emit [PLAYER_TRAIT(name)].\n"
         "[GENERATE_IMAGE(location): \"sd_prompt\"] — REQUIRED the moment any new area appears. "
         "Fabrication Bay on turn 1, Galley, Sleeping Quarters, The Nexus, any corridor. "
         "Emit this IMMEDIATELY when location changes — do not skip to write prose first. "
@@ -2847,6 +2848,17 @@ def _build_messages() -> list[dict]:
         static_ctx = _build_static_world_context()
         if static_ctx:
             system += "\n\n" + static_ctx
+
+    # ── Player name lock ─────────────────────────────────────────────────
+    _known_player_name = (
+        (_world["entities"].get("__player__") or {}).get("canonical_name", "").strip()
+    )
+    if _known_player_name:
+        system += (
+            f"\n\n[PLAYER NAME ALREADY KNOWN: {_known_player_name!r}] "
+            f"Do NOT emit [PLAYER_TRAIT(name)] again — the name is already recorded. "
+            f"In NPC dialogue, NPCs may address the player as {_known_player_name!r}."
+        )
 
     # ── Player state ──────────────────────────────────────────────────────
     if _player_dressed:
