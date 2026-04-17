@@ -15,7 +15,7 @@ if sys.stdout.encoding != 'utf-8':
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, LCMScheduler
 from PIL import Image
 import requests
 import torch
@@ -62,6 +62,9 @@ model_load_start_time = None
 IP_ADAPTER_ENABLED = os.environ.get('DISABLE_IP_ADAPTER', '').strip() != '1'
 ip_adapter_loaded = False
 
+LCM_ENABLED = os.environ.get('LCM_ENABLED', '').strip() == '1'
+lcm_active = False  # set True when LCM LoRA fuses successfully
+
 def _fetch_image(url_or_data_url):
     """Load a reference image from an http(s) URL or a data: URL into a PIL Image."""
     if not url_or_data_url:
@@ -80,7 +83,7 @@ def _fetch_image(url_or_data_url):
         return None
 
 def get_pipeline():
-    global pipe, model_load_start_time, ip_adapter_loaded
+    global pipe, model_load_start_time, ip_adapter_loaded, lcm_active
     if pipe is None:
         model_load_start_time = time.time()
         print("\n[MODEL] Starting to load Stable Diffusion pipeline...")
@@ -92,6 +95,22 @@ def get_pipeline():
             torch_dtype=torch.float16 if device == "cuda" else torch.float32,
             safety_checker=None,  # Disable for speed
         )
+
+        # LCM LoRA — fuse before moving to device; swaps scheduler to LCMScheduler.
+        # Cuts inference from 25 → 8 steps (~3x faster) at no VRAM cost.
+        if LCM_ENABLED:
+            try:
+                print("[LCM] Loading latent-consistency/lcm-lora-sdv1-5...")
+                sys.stdout.flush()
+                pipe.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
+                pipe.fuse_lora()
+                pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
+                lcm_active = True
+                print("[LCM] LoRA fused, LCMScheduler active — default 8 steps / CFG 1.5")
+            except Exception as e:
+                print(f"[LCM] Load failed (falling back to standard scheduler): {e}")
+            sys.stdout.flush()
+
         pipe = pipe.to(device)
         pipe.enable_attention_slicing()  # Reduce memory usage
 
@@ -136,8 +155,8 @@ def generate_image():
         data = request.json
         prompt = data.get('prompt', 'a beautiful alien fortress')
         negative_prompt = data.get('negative_prompt', 'blurry, low quality, distorted')
-        steps = int(data.get('steps', 25))
-        guidance_scale = float(data.get('guidance_scale', 7.5))
+        steps = int(data.get('steps', 8 if lcm_active else 25))
+        guidance_scale = float(data.get('guidance_scale', 1.5 if lcm_active else 7.5))
 
         # Optional reference images for IP-Adapter identity transfer.
         # Accepts either a single URL/data-URL or a list. Unavailable IP-
@@ -156,8 +175,9 @@ def generate_image():
         sys.stdout.flush()
 
         pipeline = get_pipeline()
+        eta = "8-15 seconds" if lcm_active else "30-60 seconds"
         print(f"[API] Pipeline ready, starting generation with {steps} steps...")
-        print(f"[API] Estimated generation time: 30-60 seconds...")
+        print(f"[API] Estimated generation time: {eta}...")
         sys.stdout.flush()
 
         # Resolve reference images → PIL list if IP-Adapter is available.
@@ -278,7 +298,7 @@ def search_gallery():
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""
-    return jsonify({'status': 'running', 'device': device})
+    return jsonify({'status': 'running', 'device': device, 'lcm': lcm_active})
 
 @app.route('/', methods=['GET'])
 def index():

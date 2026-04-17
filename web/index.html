@@ -1065,11 +1065,14 @@ const _pendingPlayerTexts = new Set();
 
 // ── NPC voice pool — Kokoro voices for character dialogue ─────────────────
 // Permanent crew have pinned voices that match their personality.
-// All other speakers get a deterministic voice from the pool via name hash.
+// All other speakers get their voice seeded via npc_voice SSE, then deterministic hash fallback.
 const _PINNED_VOICES = {
-  'The Remnant':  'am_echo',    // sharp, crisp, rapid-fire — arrogant AI
-  'The Fortress': 'af_heart',   // warm American female — gentle, vast, primary narrator
-  'Sherri':       'af_sarah',   // warm American female — cheerful automaton
+  'The Remnant':    'am_onyx',   // deep commanding — ancient arrogant AI
+  'The Fortress':   'am_echo',   // resonant digital — vast machine-warmth
+  'Sherri':         'af_bella',  // warm melodic — cheerful automaton
+  'Artisan Kaelo':  'bm_daniel', // British male, measured — precise craftsman
+  'Vex':            'bm_lewis',  // British male, different tone — bitter, clipped
+  'Mira':           'af_heart',  // emotional rich female — warm scientist
 };
 
 const _NPC_VOICES = [
@@ -1906,13 +1909,25 @@ function connect() {
     } catch (_) {}
   });
 
+  es.addEventListener('npc_voice', e => {
+    try {
+      const data = JSON.parse(e.data);
+      // Seed the speaker cache with the backend-authoritative voice so all
+      // subsequent CHARACTER blocks for this NPC use the correct voice.
+      if (data.name && data.voice && !_PINNED_VOICES[data.name])
+        _speakerVoiceCache.set(data.name, data.voice);
+    } catch (_) {}
+  });
+
   es.addEventListener('npc_greeting', e => {
     try {
       const data = JSON.parse(e.data);
       if (!data.text || !_sense.audio) return;
+      // Seed cache from backend voice before resolving (covers signature-quote NPCs).
+      if (data.name && data.voice && !_PINNED_VOICES[data.name])
+        _speakerVoiceCache.set(data.name, data.voice);
       // Play greeting in the NPC's voice after narrator TTS finishes.
-      // Route through queue so it doesn't cut off narrator speech.
-      const voice = _PINNED_VOICES[data.name] || _voiceForSpeaker(data.name);
+      const voice = _PINNED_VOICES[data.name] || data.voice || _voiceForSpeaker(data.name);
       _ttsEnqueue(_stripForTTS(data.text), voice, 0, data.name);
     } catch (_) {}
   });
@@ -3306,8 +3321,14 @@ function _vadTick() {
   if (_ttsSource || Date.now() < _ttsEchoCooldownUntil) {
     _vadSpeaking = false; _vadSpeechStart = null; _vadOnsetSilStart = null; _vadSilStart = null; return;
   }
+  // Only listen when the browser window is focused and the chat input has the cursor.
+  if (!document.hasFocus() || document.activeElement !== inputEl) {
+    if (_vadSpeaking) { _vadChunks = []; _vadRecorder.stop(); }
+    _vadSpeaking = false; _vadSpeechStart = null; _vadOnsetSilStart = null; _vadSilStart = null;
+    inputEl.dataset.vadState = ''; inputEl.style.boxShadow = ''; return;
+  }
   // Don't overwrite if user is actively typing
-  if (document.activeElement === inputEl && inputEl.value.trim()) return;
+  if (inputEl.value.trim()) return;
 
   const rms  = _vadRMS();
 

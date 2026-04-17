@@ -7,6 +7,11 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+models/train-venv/
+
+# LoRA training artifacts (large — kept local only)
+llama.cpp/
+unsloth_compiled_cache/
 
 # Logs & scratch
 *.log

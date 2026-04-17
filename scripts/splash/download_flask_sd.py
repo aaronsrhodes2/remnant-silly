@@ -70,6 +70,13 @@ MODELS: List[Dict[str, Any]] = [
         "bytes_done": 0,
         "bytes_total": 0,
     },
+    {
+        "key": "lcm-lora",
+        "name": "LCM LoRA (SD 1.5, 8-step fast inference)",
+        "license": "MIT",
+        "bytes_done": 0,
+        "bytes_total": 0,
+    },
 ]
 
 # Guards concurrent writes from tqdm callbacks on multiple threads.
@@ -280,12 +287,25 @@ def _download_ip_adapter() -> None:
         tracker.stop()
 
 
+def _download_lcm_lora() -> None:
+    """Download the LCM LoRA weight for SD 1.5 (cuts inference to 8 steps)."""
+    repo_id = "latent-consistency/lcm-lora-sdv1-5"
+    filename = "pytorch_lora_weights.safetensors"
+    total = _get_repo_bytes_total(repo_id, filename=filename)
+    tracker = DiskProgressTracker("lcm-lora", _hf_cache_dir_for_repo(repo_id), bytes_total=total).start()
+    try:
+        hf_hub_download(repo_id=repo_id, filename=filename)
+    finally:
+        tracker.stop()
+
+
 def main() -> int:
     set_phase("downloading")
     print(f"[{SERVICE_NAME}] writing status to {STATUS_FILE}", flush=True)
     try:
         _download_sd15()
         _download_ip_adapter()
+        _download_lcm_lora()
     except Exception as e:
         print(f"[{SERVICE_NAME}] download failed: {e}", file=sys.stderr, flush=True)
         traceback.print_exc()

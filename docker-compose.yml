@@ -91,6 +91,7 @@ services:
       # loudly instead of silently hanging on a dead connection.
       - HF_HUB_OFFLINE=1
       - TRANSFORMERS_OFFLINE=1
+      - LCM_ENABLED=1
       - STATUS_DIR=/remnant-status
       # Entrypoint polls for this sentinel before exec'ing the API.
       - WAIT_FOR_SENTINEL=/remnant-status/flask-sd-ready
