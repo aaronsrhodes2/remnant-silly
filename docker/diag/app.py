@@ -959,7 +959,7 @@ def _index_world_knowledge() -> None:
         # causing Ollama model-switching (llama3.1:8b ↔ nomic-embed-text) that stalls
         # both the narrator and the story-test's Ollama readiness check.
         _BATCH_SIZE     = 10    # chunks per add() call (~5s of embed work)
-        _INDEX_IDLE_SECS = 8.0  # seconds of continuous idle required before each batch
+        _INDEX_IDLE_SECS = 60.0  # 8s fired during active play; 60s = only embeds during idle
 
         total_added = 0
         for batch_start in range(0, len(nd), _BATCH_SIZE):
@@ -2451,7 +2451,7 @@ def _chroma_add_turn_async(turn: dict) -> None:
     if _chroma_turns is None:
         return
 
-    _EMBED_IDLE_SECS = 15.0   # seconds of continuous idle before embedding
+    _EMBED_IDLE_SECS = 60.0   # 15s fired during active play (every ~7s turn cycle);
 
     def _add() -> None:
         # Wait until narrator has been idle for _EMBED_IDLE_SECS — event-driven,
