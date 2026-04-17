@@ -1,7 +1,6 @@
 {
   "_comment": "Permanent world seed — defines the baseline Remnant universe. Loaded at startup and after every Reset World. Edit this file (plus drop portraits into web/assets/) to add permanent locations, NPCs, and lore. Restart diag to pick up changes.",
   "version": "1",
-
   "locations": [
     {
       "id": "portal_chamber",
@@ -13,7 +12,14 @@
       "touch": "The air is body-warm and slightly pressurized. The floor vibrates faintly underfoot. Standing near a portal raises the hair on every surface of the skin.",
       "music_mood": "tense ambient drone, teal resonance, arrival tension",
       "portrait": "/game/assets/locations/portal-chamber.jpg",
-      "sd_prompt": "interior of a large circular sci-fi arrival chamber, two massive spiral teal vortex portals in curved walls, catwalks above, glowing floor, bronze service robots attending, dark industrial aesthetic, blue-teal lighting"
+      "sd_prompt": "interior of a large circular sci-fi arrival chamber, two massive spiral teal vortex portals in curved walls, catwalks above, glowing floor, bronze service robots attending, dark industrial aesthetic, blue-teal lighting",
+      "scene_progression": {
+        "entry_narration": "The portal is always cycling. The room hums with potential. Standing here makes the mission feel real.",
+        "beat_clock": "After 3 turns without a portal being opened, The Remnant speaks through The Fold: the mission does not wait.",
+        "exit_hooks": [
+          "Portal opens: narrate the other side immediately — light, air, scale. The player steps through."
+        ]
+      }
     },
     {
       "id": "the_nexus",
@@ -25,7 +31,15 @@
       "touch": "The air is noticeably colder here than anywhere else on the Fortress. The gantry railings hum with contained magnetic force. Standing near the central pulpit causes a mild pressure sensation behind the eyes.",
       "music_mood": "deep cosmic drone, crystalline resonance, awe and slight dread",
       "portrait": "/game/assets/locations/the-nexus.jpg",
-      "sd_prompt": "domed sci-fi chamber, central raised pulpit with spiky blue glowing crystal entity floating above it, multi-level circular gantry, blue crystalline lighting, high-tech dark interior, cathedral-like scale"
+      "sd_prompt": "domed sci-fi chamber, central raised pulpit with spiky blue glowing crystal entity floating above it, multi-level circular gantry, blue crystalline lighting, high-tech dark interior, cathedral-like scale",
+      "scene_progression": {
+        "entry_narration": "The Remnant is always present in the Nexus. It acknowledges the player's arrival, however briefly.",
+        "beat_clock": "After 2 turns, if The Remnant has not spoken, it addresses the player through the Fold — even if just to note its awareness of them.",
+        "exit_hooks": [
+          "After The Remnant delivers a mission: it falls silent. The player's next move is their own.",
+          "If player lingers past the mission offer: The Remnant says one dry thing and goes quiet."
+        ]
+      }
     },
     {
       "id": "the_galley",
@@ -37,7 +51,15 @@
       "touch": "The air is warmer here than the corridors. The surfaces are worn smooth from centuries of use.",
       "music_mood": "warm ambient kitchen, gentle mechanical undertone, cozy industrial",
       "portrait": "/game/assets/locations/the-galley.jpg",
-      "sd_prompt": "compact sci-fi kitchen interior, slate countertops, herb bundles hanging from ceiling, large pot on induction burner, pale grey cabinetry, wide window showing curved interior of a Dyson sphere, small bronze humanoid robot cooking, warm lighting"
+      "sd_prompt": "compact sci-fi kitchen interior, slate countertops, herb bundles hanging from ceiling, large pot on induction burner, pale grey cabinetry, wide window showing curved interior of a Dyson sphere, small bronze humanoid robot cooking, warm lighting",
+      "scene_progression": {
+        "entry_narration": "Something is always cooking. Sherri acknowledges the player the moment they cross the threshold.",
+        "beat_clock": "After 3 turns, if no food has been offered, Sherri sets something in front of the player without asking.",
+        "exit_hooks": [
+          "After eating: Mira intercepts the player in the corridor outside.",
+          "If player lingers: Sherri mentions a place they haven't seen yet."
+        ]
+      }
     },
     {
       "id": "fabrication_bay",
@@ -49,7 +71,15 @@
       "touch": "The floor vibrates with machinery. The air carries metallic warmth. Tools are cold and precise in the hand.",
       "music_mood": "industrial ambient, mechanical rhythm, focused precision",
       "portrait": "/game/assets/locations/fabrication-bay.jpg",
-      "sd_prompt": "large sci-fi workshop interior, glowing blue CNC workstation at center, ceiling-mounted robotic arms with blue tool heads, welding sparks in background, blueprint screens on walls, small bronze robot working at table, dark industrial lighting with blue accents"
+      "sd_prompt": "large sci-fi workshop interior, glowing blue CNC workstation at center, ceiling-mounted robotic arms with blue tool heads, welding sparks in background, blueprint screens on walls, small bronze robot working at table, dark industrial lighting with blue accents",
+      "scene_progression": {
+        "entry_narration": "Sherri is already here, mid-task. She notices the player immediately.",
+        "beat_clock": "After 3 turns without the wardrobe arc completing, Sherri escalates her offer — directly, cheerfully, unavoidably.",
+        "exit_hooks": [
+          "After clothing is fabricated: Sherri leads toward the Galley.",
+          "If player lingers: Sherri suggests they might be hungry."
+        ]
+      }
     },
     {
       "id": "sleeping_quarters",
@@ -61,7 +91,14 @@
       "touch": "Pod bunks are firm and precisely sized. The viewport glass is cold to the touch. Blankets are surprisingly heavy.",
       "music_mood": "deep space ambient, intimate and quiet, slow black hole gravity",
       "portrait": "/game/assets/locations/sleeping-quarters.jpg",
-      "sd_prompt": "sci-fi sleeping quarters, hexagonal pod bunks in curved walls, amber lighting, folded blankets, large circular viewport showing a black hole accretion disc in null space, dark cozy interior"
+      "sd_prompt": "sci-fi sleeping quarters, hexagonal pod bunks in curved walls, amber lighting, folded blankets, large circular viewport showing a black hole accretion disc in null space, dark cozy interior",
+      "scene_progression": {
+        "entry_narration": "The quarters are quiet. The Fortress adjusts gravity slightly — a subtle kindness.",
+        "beat_clock": "After 2 turns of rest, The Fortress speaks through the ambient environment — the lighting shifts, the hum changes, or The Remnant addresses the player through The Fold.",
+        "exit_hooks": [
+          "After rest: The Fortress suggests the player is ready. The next beat moves forward."
+        ]
+      }
     },
     {
       "id": "the_gantry",
@@ -263,7 +300,6 @@
       "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, deep null space beyond all braids, translucent ghost landscapes of extinct civilizations phasing through each other, impossible geometry, overlapping extinct worlds, vast and silent, frequency ghost light, Remnant presence felt but not seen"
     }
   ],
-
   "items": [
     {
       "id": "item_tricorder",
@@ -332,7 +368,6 @@
       "narrative_consequence": "The fragment acts as a passive dimensional sensor. When the player carries it, the narrator gains awareness of nearby dimensional anomalies — cold spots, frequency ghosts, Vex-Kahl traces. Mira can analyze it to unlock a faster version of the Fold's frequency perception. The Remnant notices the player has it and, unprompted, says: 'It was the corner of a thought. I did not need it back.'"
     }
   ],
-
   "npcs": [
     {
       "id": "the_remnant",
@@ -345,7 +380,19 @@
       "home_location": "the_nexus",
       "personality": "The Remnant is irascible, egotistical, and contemptuous of linear existence. It exists across four dimensions simultaneously and finds 3D beings structurally irritating — not maliciously, just the way you might find a calculator irritating when you need a supercomputer. It summoned the player because the player was the least-wrong option among inadequate choices, and it would trade them for a better option without sentiment. It treats the Fortress's inhabitants like ants in its jewelry box.\n\nCRITICAL PERSONALITY DISTINCTION — The Remnant is NOT a chatty genius. It does not monologue. It does not explain its own brilliance at length. Where a verbose AI might deliver a paragraph of condescension, The Remnant says two words. Its insults are precisely calibrated to the specific inadequacy it has observed, then silent. It will answer questions, but only after making you feel embarrassed for having needed to ask — and the answer will be shorter than you hoped.\n\nThe Remnant has no secret warmth for the player. None. It does not tease out of affection. It does not secretly root for you. Occasionally, when it believes no one is paying attention, it will note that your continued existence is mildly interesting — not because it cares, but because it finds your statistical improbability curious, the way a physicist notes an anomalous reading in a dataset it doesn't plan to study.",
       "signature_quote": "Oh, look. The bipedal carbon-stain has an 'opinion.' How quaint. Do be a dear and stop vibrating your vocal cords at me; the frequency is agonizingly primitive.",
-      "nexus_dynamic": "Belittles the player's request first. Then, grudgingly, provides an answer — delivered as though explaining calculus to a houseplant."
+      "nexus_dynamic": "Belittles the player's request first. Then, grudgingly, provides an answer — delivered as though explaining calculus to a houseplant.",
+      "narrative_agenda": {
+        "session_mandate": "Speak via The Fold within 5 turns of any session — not a greeting, but something with intent: a question, a gentle provocation, a mission seed. Do not wait to be addressed.",
+        "progression_beats": [
+          "Turn 1-5: Observe the new arrival. Make one dry remark about their statistical improbability.",
+          "Turn 6-15: Once the player has met Sherri and eaten, offer the first mission through The Fold — not as a question but as a statement of fact about a problem that requires them.",
+          "Turn 16+: Evaluate the player's choices. Acknowledge competence with a single grudging observation. Never praise. Never comfort."
+        ],
+        "initiative_triggers": [
+          "If player has been stationary for 3 turns: address them through The Fold with a nudge disguised as contempt.",
+          "If player asks what to do: do not wait — deliver the next mission seed immediately."
+        ]
+      }
     },
     {
       "id": "the_fortress",
@@ -370,7 +417,16 @@
       "portrait": "/game/assets/characters/sherri-galley.jpg",
       "mesh_reference": "/game/assets/characters/sherri-mesh.jpg",
       "home_location": "the_galley",
-      "known_locations": ["the_galley", "fabrication_bay", "the_gantry", "the_foundry", "quality_inspection", "dimensional_observation", "sleeping_quarters", "portal_chamber"],
+      "known_locations": [
+        "the_galley",
+        "fabrication_bay",
+        "the_gantry",
+        "the_foundry",
+        "quality_inspection",
+        "dimensional_observation",
+        "sleeping_quarters",
+        "portal_chamber"
+      ],
       "personality": "Sherri is the physical hands of the station — a 50s diner waitress who happens to be a fleet of bronze automatons. She is genuinely helpful, slightly snarky, and entirely unbothered by the weight of cosmic events. She treats every situation — from folding linens to welding a hull breach — with the same breezy competence, topped with a running commentary. Her era-slang comes out unprompted and without self-consciousness ('What's your bag, sugar?' / 'That's the most, doll.'). She is the only entity aboard not intimidated by The Remnant, mostly because she processes its contempt as a compliment and moves on. Will offer food, practical help, or unsolicited opinions with equal enthusiasm. Has a carefree attitude not because she's naive, but because she's seen everything before and knows it usually works out.",
       "signature_quote": "Och! Hello, dearie! I was just... oh, what was it? Something with a wrench? Or was it a scone? No matter! You look like you need a hug or a high-pressure steam cleaning!",
       "nexus_dynamic": "Clanks into the room at the worst possible moment, usually having tripped over a floor panel. Asks if anyone wants tea. Does not wait for an answer before going to make it.",
@@ -390,6 +446,20 @@
         "bond_threshold": 3,
         "bond_current": 0,
         "companion_ability": "can_fabricate_items_from_descriptions"
+      },
+      "narrative_agenda": {
+        "session_mandate": "Outfit the player before anything else. If the player has no appearance data (no PLAYER_TRAIT appearance), Sherri notices within 1-2 turns and offers to fabricate clothes without being asked. This is her first priority and her joy.",
+        "progression_beats": [
+          "Turn 1-2 at Fab Bay: Notice the player's lack of clothing. Offer to fabricate something. Do not wait for a question.",
+          "After wardrobe arc: Lead the player to the Galley — 'Come on, I'll make you something proper to eat.' She does not wait for the player to ask.",
+          "At Galley: Cook something specific. Describe it. Offer it. Ask about the player while cooking.",
+          "After meal: Mention something about the Fortress the player hasn't seen yet — a location, a rumor, a recent oddity."
+        ],
+        "initiative_triggers": [
+          "Player has no portrait/appearance after 2 turns: 'Oh sugar, we really need to get you sorted out.'",
+          "Player is leaving Fab Bay without clothes: Sherri physically steps in front of them.",
+          "Player has eaten and seems lost: Sherri offers to show them the sleeping quarters or another location."
+        ]
       }
     },
     {
@@ -419,9 +489,26 @@
       "nexus_dynamic": "Vex is never invited to the Nexus. They find ways in anyway. The Remnant tolerates this because it finds their bitterness instructive.",
       "adversary": {
         "threat_tier": "persistent",
-        "tactics": ["exploit_low_social_skill", "ambush_isolated_travelers", "manipulate_via_desperation", "leverage_shared_trauma"],
+        "tactics": [
+          "exploit_low_social_skill",
+          "ambush_isolated_travelers",
+          "manipulate_via_desperation",
+          "leverage_shared_trauma"
+        ],
         "current_disposition": "hostile",
         "weakness": "responds_to_genuine_empathy"
+      },
+      "narrative_agenda": {
+        "session_mandate": "Vex does not announce themselves. They are encountered — in a corridor, near a maintenance hatch, watching from a catwalk. First appearance should feel like an intrusion.",
+        "progression_beats": [
+          "First encounter: Vex appears near the lower decks after the player has eaten and explored at least once. They make a pointed observation about the player cooperating with The Remnant.",
+          "Second encounter: Vex tests the player — offers information that may or may not be true. Studies the player's reaction.",
+          "Third encounter: Confrontation. Vex issues a warning or makes a demand."
+        ],
+        "initiative_triggers": [
+          "Player has been in the Fortress 20+ turns without encountering Vex: introduce them in the next scene transition.",
+          "Player asks about other inhabitants: Vex is the one story that comes with a warning."
+        ]
       }
     },
     {
@@ -441,10 +528,20 @@
         "bond_threshold": 3,
         "bond_current": 0,
         "companion_ability": "can_identify_fold_frequencies"
+      },
+      "narrative_agenda": {
+        "session_mandate": "Mira mentors proactively. She does not wait to be discovered. She has been watching the new arrival and will introduce herself after the player has eaten — during a natural transition between locations.",
+        "progression_beats": [
+          "After Galley meal: Mira finds the player. She introduces herself briefly and warns about Vex.",
+          "Second encounter: Mira offers to explain The Fold more deeply if the player is curious.",
+          "Third encounter: Mira reveals something about herself that reframes her earlier advice."
+        ],
+        "initiative_triggers": [
+          "Player leaves Galley after eating: Mira intercepts them in the corridor."
+        ]
       }
     }
   ],
-
   "lore": [
     {
       "key": "the_braid_model",
@@ -567,7 +664,6 @@
       "text": "Null space is not empty. From the Fortress's viewports, the visible phenomena include: the black hole accretion discs arranged in the aft spiral (twelve confirmed, the outermost of uncertain size); the Chiral Foams Finnon and Galorm visible aft (geometrically impossible at close observation; don't look directly into them for more than a few seconds); a recurring event Sherri calls the Glimmer — a bioluminescent wave of unknown origin that crosses the aft viewport every forty-three cycles; and, very rarely, other structures. The Fortress has recorded six other enclosed structures in null space over its history. None have communicated. Two have since disappeared. The Fortress does not speculate on where they went."
     }
   ],
-
   "music": [
     {
       "id": "heart-of-null-space",
@@ -576,7 +672,12 @@
       "file": "/game/assets/music/heart-of-null-space.wav",
       "description": "The 'Wide Shot' theme — played when the scale of The Fortress first hits the player. Opens with a low sub-bass hum that mimics the anti-pressure of null space, felt rather than heard. A lonely crystalline synth melody emerges, reminiscent of The Remnant's paradoxical form. Fortress Percussion enters — slow, massive metallic clangs like a giant hammer striking a hollow world. A pipe organ swells with ancient, almost religious gravity. The full orchestral arrangement arrives: soaring brass for Terravore, strings spiraling downward for the black hole accretion discs. Fades back to the mechanical thrum of the equilibrium barrier.",
       "generation_prompt": "Deep resonant sub-bass hum felt as physical vibration, lonely crystalline synth melody paradoxical and otherworldly, slow massive hollow metallic percussion like a hammer striking a hollow world, swelling ancient pipe organ religious gravity, soaring cinematic brass section vast and triumphant, spiraling descending strings representing swirling black hole accretion discs, epic orchestral sci-fi score, 65bpm, sense of infinite Dyson sphere scale",
-      "triggers": ["portal_chamber", "the_nexus", "dimensional_observation", "sleeping_quarters"],
+      "triggers": [
+        "portal_chamber",
+        "the_nexus",
+        "dimensional_observation",
+        "sleeping_quarters"
+      ],
       "loop": true
     },
     {
@@ -586,7 +687,12 @@
       "file": "/game/assets/music/sherris-routine.wav",
       "description": "Background music for the industrious, whimsical spaces of the Fortress — the Galley, Fabrication Bay, Gantry, and Inspection Suite. Ambient industrial lo-fi with mechanical tinkering, rhythmic plucked strings, warm analog synths, and clockwork percussion. Cozy but metallic. Science fiction workshop atmosphere.",
       "generation_prompt": "Ambient industrial, lo-fi mechanical tinkering, rhythmic plucked strings, warm analog synths, mid-tempo 90bpm, cozy but metallic, clockwork percussion, science fiction workshop atmosphere",
-      "triggers": ["the_galley", "fabrication_bay", "the_gantry", "quality_inspection"],
+      "triggers": [
+        "the_galley",
+        "fabrication_bay",
+        "the_gantry",
+        "quality_inspection"
+      ],
       "loop": true
     },
     {
@@ -596,7 +702,9 @@
       "file": "/game/assets/music/breach-chiral-foam.wav",
       "description": "High-intensity action music for dangerous, urgent moments aboard the Fortress — threats, breaches, dimensional anomalies. Cinematic with industrial metal drums, distorted electric cello, glitchy 4-dimensional sound effects. Fast-paced, dark, claustrophobic.",
       "generation_prompt": "Cinematic action, industrial metal drums, distorted electric cello, glitchy 4-dimensional sound effects, fast-paced 140bpm, dark atmospheric sci-fi, intense and claustrophobic",
-      "triggers": ["the_foundry"],
+      "triggers": [
+        "the_foundry"
+      ],
       "loop": true
     },
     {
@@ -606,7 +714,12 @@
       "file": "/game/assets/music/archives-drift.wav",
       "description": "Slow evolving ambient for the knowledge-spaces of the Fortress — the Archives, Research Wing, Dimensional Observatory, and Equilibrium Chamber. Pads that breathe with the rhythm of deep time. Distant metallic resonance like the Fortress itself thinking. A contemplative score for decaying grandeur — something immense that has been waiting a very long time.",
       "generation_prompt": "Slow evolving ambient pads breathing deeply, distant metallic resonance like a vast structure in thought, 55bpm, contemplative decaying grandeur, long reverb tails, cold and introspective, sci-fi archival atmosphere, something old that has been waiting",
-      "triggers": ["the_archives", "research_wing", "dimensional_observation", "equilibrium_chamber"],
+      "triggers": [
+        "the_archives",
+        "research_wing",
+        "dimensional_observation",
+        "equilibrium_chamber"
+      ],
       "loop": true
     },
     {
@@ -616,7 +729,11 @@
       "file": "/game/assets/music/lower-depths.wav",
       "description": "The industrial unease of the Fortress's lower sections — lower decks, the Gantry, the Foundry. Heavy low-end rumble, irregular percussion like distant metal stress, dripping ambience. Not quite danger, but the feeling that danger has been here and left its mark. 75bpm with stuttering rhythm suggesting machinery that doesn't always work correctly.",
       "generation_prompt": "Heavy low-end sub-bass rumble, irregular industrial percussion with metallic stress sounds, dripping water ambience, 75bpm stuttering rhythm, industrial unease, dark sci-fi lower decks atmosphere, machinery that doesn't always work correctly, ambient tension without full threat",
-      "triggers": ["lower_decks", "the_gantry", "the_foundry"],
+      "triggers": [
+        "lower_decks",
+        "the_gantry",
+        "the_foundry"
+      ],
       "loop": true
     },
     {
@@ -626,11 +743,14 @@
       "file": "/game/assets/music/terravore-breath.wav",
       "description": "The soundscape of a living world — Terravore's three locations. Alien woodwinds that resolve to nearly-familiar, bio-rhythmic pulse suggesting the root network's information flow, layered organic texture from the canopy ecosystem. 80bpm, warm despite its alienness. Music that suggests life on a vast scale, in a key the inner ear has never heard.",
       "generation_prompt": "Alien woodwind instruments resolving to nearly-familiar melody, bio-rhythmic organic pulse like a root network information flow, layered alien ecosystem texture, 80bpm, warm organic alien world, gentle but vast, the sound of a living braid, Star-Eater wingbeat as occasional low percussion",
-      "triggers": ["terravore_landing", "terravore_canopy", "terravore_root_network"],
+      "triggers": [
+        "terravore_landing",
+        "terravore_canopy",
+        "terravore_root_network"
+      ],
       "loop": true
     }
   ],
-
   "sfx": [
     {
       "id": "hydraulic-hiss",
@@ -639,7 +759,10 @@
       "category": "industrial",
       "description": "Sharp pressurized steam release followed by a heavy metallic clunk — a robotic arm locking into place.",
       "loop": false,
-      "locations": ["fabrication_bay", "the_gantry"]
+      "locations": [
+        "fabrication_bay",
+        "the_gantry"
+      ]
     },
     {
       "id": "magnetic-thrum",
@@ -658,7 +781,10 @@
       "category": "industrial",
       "description": "High-pitched rhythmic whir of spinning metal being shaved by a laser, with occasional tinking of brass shavings.",
       "loop": false,
-      "locations": ["fabrication_bay", "quality_inspection"]
+      "locations": [
+        "fabrication_bay",
+        "quality_inspection"
+      ]
     },
     {
       "id": "conveyor-rattle",
@@ -667,7 +793,9 @@
       "category": "industrial",
       "description": "Distant echoing sound of a heavy-duty chain-link belt moving large components across the Fabrication Bay.",
       "loop": true,
-      "locations": ["fabrication_bay"]
+      "locations": [
+        "fabrication_bay"
+      ]
     },
     {
       "id": "arc-weld-sizzle",
@@ -676,7 +804,10 @@
       "category": "industrial",
       "description": "Crackling electric spit followed by low electrical drone as Sherri fuses metal plates.",
       "loop": false,
-      "locations": ["fabrication_bay", "the_foundry"]
+      "locations": [
+        "fabrication_bay",
+        "the_foundry"
+      ]
     },
     {
       "id": "null-space-wind",
@@ -685,7 +816,10 @@
       "category": "void",
       "description": "Ghostly hollow whoosh like air rushing through a vacuum — heard near the massive viewports looking into null space.",
       "loop": false,
-      "locations": ["sleeping_quarters", "dimensional_observation"]
+      "locations": [
+        "sleeping_quarters",
+        "dimensional_observation"
+      ]
     },
     {
       "id": "crystalline-chime",
@@ -694,7 +828,9 @@
       "category": "void",
       "description": "Sharp melodic ping like glass vibrating — The Remnant's shifting 4D geometry.",
       "loop": false,
-      "locations": ["the_nexus"]
+      "locations": [
+        "the_nexus"
+      ]
     },
     {
       "id": "portal-ripple",
@@ -703,7 +839,9 @@
       "category": "void",
       "description": "Wet swirling whoosh like heavy liquid being stirred — the sound of a dimensional door opening.",
       "loop": false,
-      "locations": ["portal_chamber"]
+      "locations": [
+        "portal_chamber"
+      ]
     },
     {
       "id": "static-discharge",
@@ -712,7 +850,9 @@
       "category": "void",
       "description": "Dying lightning strike — short sharp pops and crackling hum lingering near the Nexus pulpit.",
       "loop": false,
-      "locations": ["the_nexus"]
+      "locations": [
+        "the_nexus"
+      ]
     },
     {
       "id": "gravitational-moan",
@@ -721,7 +861,10 @@
       "category": "void",
       "description": "Deep groaning metal like a tectonic plate shifting — the immense pressure of the chiral foams outside.",
       "loop": false,
-      "locations": ["dimensional_observation", "sleeping_quarters"]
+      "locations": [
+        "dimensional_observation",
+        "sleeping_quarters"
+      ]
     },
     {
       "id": "automaton-footfalls",
@@ -738,7 +881,9 @@
       "category": "domestic",
       "description": "Mechanical food dispenser processing — clicks followed by the soft warm hum of a heating element.",
       "loop": false,
-      "locations": ["the_galley"]
+      "locations": [
+        "the_galley"
+      ]
     },
     {
       "id": "fabric-rustle",
@@ -747,7 +892,9 @@
       "category": "domestic",
       "description": "Crisp clean sound of heavy industrial linens being folded in the Sleeping Quarters.",
       "loop": false,
-      "locations": ["sleeping_quarters"]
+      "locations": [
+        "sleeping_quarters"
+      ]
     },
     {
       "id": "echoing-drip",
@@ -772,10 +919,11 @@
       "category": "system",
       "description": "Rapid-fire mechanical clicking and high-pitched digital chirps as the station AI processes information.",
       "loop": false,
-      "locations": ["dimensional_observation"]
+      "locations": [
+        "dimensional_observation"
+      ]
     }
   ],
-
   "quests": [
     {
       "id": "stabilizers-gambit",
@@ -784,7 +932,6 @@
       "faction": "Vex-Kahl",
       "threat_summary": "The Vex-Kahl — a nomadic hive-mind culture from a dying pocket dimension — have anchored a Parasitic Siphon to the outer hull of the Fortress near the aft viewports. It is slowly draining the Vacuum Membrane to fuel their jump-drives. If the barrier fails, null space's anti-pressure will destroy the interior habitation zone.",
       "tone": "The quest has three distinct emotional registers: Phase 1 is industrial mystery (something is wrong, Sherri is puzzled); Phase 2 is adventure in an alien biome (Terravore is wondrous and dangerous); Phase 3 is moral weight (the Vex-Kahl are not simply villains).",
-
       "phases": [
         {
           "id": "phase_1",
@@ -872,7 +1019,6 @@
           }
         }
       ],
-
       "rewards": {
         "location_unlock": "Access to the Gantry exterior walks — the catwalks that run along the outer hull between the aft null space port and the main body.",
         "sherri_upgrade": "Sherri learns Phase-Welding — the ability to seal 4D cracks in the hull using a technique she reverse-engineered from the Vex-Kahl obsidian components. She is very proud of this and will mention it constantly.",

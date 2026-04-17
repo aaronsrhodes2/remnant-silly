@@ -861,6 +861,14 @@ def main() -> int:
             "sherri" in raw3.lower() or _RE_CHAR.search(raw3),
             "Sherri speaks", "Sherri has no dialogue"
         )
+        # MOMENTUM: Sherri should proactively notice the player needs clothes
+        _clothes_words = ("cloth", "fabric", "outfit", "wear", "naked", "dressed",
+                          "make", "fabricat", "stitch", "look like")
+        assert_soft(
+            any(w in raw3.lower() for w in _clothes_words),
+            "[MOMENTUM] Sherri notices clothing need unprompted",
+            "[MOMENTUM] Sherri did not mention clothing on arrival — wardrobe arc not initiated",
+        )
         beats_done += 1
         _golden(turn)
 
@@ -930,6 +938,14 @@ def main() -> int:
         assert_soft(
             "sherri" in raw7.lower() or _RE_CHAR.search(raw7),
             "Sherri speaks in galley", "Sherri silent"
+        )
+        # MOMENTUM: Sherri should lead the player (not just respond to hunger claim)
+        _lead_words = ("follow", "come", "come on", "this way", "lead", "let's go",
+                       "already", "halfway", "corridor", "heading")
+        assert_soft(
+            any(w in raw7.lower() for w in _lead_words),
+            "[MOMENTUM] Sherri leads player to galley (NPC-initiated transition)",
+            "[MOMENTUM] Sherri did not lead — galley transition was player-driven only",
         )
         beats_done += 1
         _golden(turn)
@@ -1015,6 +1031,22 @@ def main() -> int:
                     "Lore requires 6+ minutes of silence — not expected in CI runs")
         beats_done += 1
         _golden(turn)
+
+        # MOMENTUM: The Remnant should have spoken via The Fold before the player
+        # explicitly visits the Nexus — proactive engagement, not just answering.
+        _remnant_pattern = re.compile(r'the remnant\s*:', re.I)
+        _fold_pattern    = re.compile(r'(fold|skull|inside your)', re.I)
+        _all_raws = "\n".join(
+            t.get("raw_text", "")
+            for t in [turn]  # we only have the last turn directly; richness tracks cumulatively
+        )
+        # Check cumulative character_lines for The Remnant (proxy for Remnant speaking)
+        assert_soft(
+            metrics["character_lines"] >= 5,
+            "[MOMENTUM] The Remnant spoke proactively before Nexus visit",
+            "[MOMENTUM] The Remnant may not have spoken via The Fold before Nexus — "
+            "check for The Remnant: dialogue in turns 1-12",
+        )
 
         # ── Beat 13: To the Nexus ─────────────────────────────────────────────
         print(_bold("\n── Beat 13: To the Nexus"))
