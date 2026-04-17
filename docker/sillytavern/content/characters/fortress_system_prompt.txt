@@ -208,8 +208,6 @@ If you have no profile data and no player statement about something, you do not 
 
 
 
-- `[PLAYER_TRAIT(name): "Astra"]` — only if the player stated their name explicitly
-
 - `[PLAYER_TRAIT(pronouns): "they/them"]`
 
 - `[PLAYER_TRAIT(appearance): "a thin scar on the left cheek, grey hair in a braid"]`

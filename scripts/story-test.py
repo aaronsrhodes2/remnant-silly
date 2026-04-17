@@ -353,14 +353,16 @@ def _player_agent_turn(
     prompt = (
         f"You are {player_name}, a cautious and curious traveler who has just arrived aboard an ancient "
         "alien space station. Respond with ONE natural action or question (8-25 words). "
+        "PRIORITY: if an NPC asked you a direct question, answer it. "
         "Be reactive — respond to what you just saw or heard. Don't meta-game, don't mention "
-        "game mechanics or tags, and don't repeat the narrator's words back.\n\n"
+        "game mechanics or tags, and don't repeat the narrator's words back. "
+        "IMPORTANT: respond in English only.\n\n"
         f"What the narrator just said:\n{narrator_text[:500]}\n"
         f"{hint_line}\n"
-        f"Your response (first person, one line only):"
+        f"Your response (English, first person, one line only):"
     )
     # Brief pause so any pending Ollama embed/banter from the previous turn drains
-    time.sleep(2)
+    time.sleep(4)
     try:
         payload = json.dumps({
             "model": "remnant-narrator:latest",
@@ -519,7 +521,10 @@ def _summarise_story(player_name: str, diag_url: str) -> str:
         f"Summarize this game session as a 200-300 word story excerpt. Write in "
         f"second-person present tense in the narrative voice of The Fortress — an "
         f"ancient, kindly space station. Preserve character names and key moments. "
-        f"The player's name is {player_name}.\n\nSession text:\n\n{excerpt[:8000]}"
+        f"CRITICAL: The player character's name is {player_name!r}. Use ONLY "
+        f"{player_name!r} when referring to the player. Never substitute another "
+        f"name (Asha, Wren, Roran, Unknown, or any other) for the player.\n\n"
+        f"Session text:\n\n{excerpt[:8000]}"
     )
 
     # Try Ollama via nginx proxy
@@ -892,7 +897,7 @@ def main() -> int:
         # ── Beat 5: Ask for clothes ───────────────────────────────────────────
         print(_bold("\n── Beat 5: Ask for Clothes"))
         turn = _natural_beat(
-            "Sherri, can you make me some clothes? Dark practical ones, lots of pockets.",
+            "Sherri, I need clothes right now — can you make me something to wear?",
             "Ask for clothes",
             lambda raw: bool("sherri" in raw.lower() or _RE_CHAR.search(raw)),
             "Ask Sherri to make you some dark, practical clothes.",
