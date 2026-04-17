@@ -300,6 +300,36 @@
       "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, small sphere-within-sphere navigation instrument, dark metal and glass construction, inner sphere rotating to orient toward dimensional frequency, sci-fi compass for null space, pocketable scale, precision instrument aesthetic",
       "permanence": "WORLD",
       "source": "seed"
+    },
+    {
+      "id": "item_fold_key",
+      "type": "item",
+      "canonical_name": "Fold Key",
+      "description": "A shard of crystallized Fold energy — roughly the length of a finger, impossibly light, warm to the touch even in vacuum. It pulses faintly when near dimensional boundaries. The Remnant says it will unlock the Dimensional Observatory's inner aperture, which has been sealed since the Great Silence.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, finger-length crystallized dimensional energy shard, warm inner light pulsing slowly, impossibly lightweight, teal and white glow, alien material, key-like silhouette",
+      "permanence": "WORLD",
+      "source": "seed",
+      "narrative_consequence": "When the player uses the Fold Key near the Dimensional Observatory, the inner aperture unseals with a resonant chime. The Remnant goes unusually quiet. The Fortress says: 'I had forgotten that was sealed. I wonder what it remembered.' The inner chamber reveals a frequency map of all braids The Remnant has ever visited — including several marked EXTINCT."
+    },
+    {
+      "id": "item_vex_journal",
+      "type": "item",
+      "canonical_name": "Vex's Journal",
+      "description": "A battered data-folio Vex has been keeping since their second Finnon Foam attempt. The entries grow increasingly fragmented. The final entry — written after they returned fourteen hours late — is encoded in a personal cipher. Earlier entries are legible and describe, with surprising precision, exactly what went wrong and why they can never go back.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, battered electronic journal device, cracked casing, dark alloy body, faint screen glow showing fragmented handwritten text, personal and worn, data-folio form factor",
+      "permanence": "WORLD",
+      "source": "seed",
+      "narrative_consequence": "Reading the journal gives the player insight into Vex's tactical mind and the specific dimensional event that broke them. With this knowledge, the player can approach Vex with specific questions that pierce their defenses — not to fix them, but to acknowledge what happened. Vex's disposition shifts from hostile to wary if the player demonstrates they read it without judgment."
+    },
+    {
+      "id": "item_remnant_fragment",
+      "type": "item",
+      "canonical_name": "Remnant Fragment",
+      "description": "A sliver of The Remnant's outer shell — shed during a geometry shift and never retrieved. It vibrates near dimensional anomalies, growing warm near active Hoops and cold near Vex-Kahl insertion points. Mira has been wanting one for analysis. The Remnant is aware you have it and has not commented.",
+      "sd_prompt": "dark sci-fi concept art, painterly illustration, cinematic composition, dramatic lighting, highly detailed, small shard of four-dimensional crystalline material, shifting geometry that the eye cannot quite resolve, blue-white inner light, impossible angles, heavier than it looks, shed from an ancient dimensional entity",
+      "permanence": "WORLD",
+      "source": "seed",
+      "narrative_consequence": "The fragment acts as a passive dimensional sensor. When the player carries it, the narrator gains awareness of nearby dimensional anomalies — cold spots, frequency ghosts, Vex-Kahl traces. Mira can analyze it to unlock a faster version of the Fold's frequency perception. The Remnant notices the player has it and, unprompted, says: 'It was the corner of a thought. I did not need it back.'"
     }
   ],
 
@@ -354,7 +384,13 @@
         "coloring": "primary: burnished bronze / copper-gold; accents: dark brown at joints and seams",
         "multiplicity": "many identical units — always treat as singular 'she' in narration; occasionally note a second Sherri visible in background"
       },
-      "sd_prompt": "Sherri, small friendly humanoid service robot, warm burnished bronze plating with wood-grain texture, large circular glowing orange photoreceptor eyes, smooth dome head with flat crown plate, segmented limbs with spherical joint connectors, small utility pack on upper back, dark brown joint seams, often multiple identical units visible"
+      "sd_prompt": "Sherri, small friendly humanoid service robot, warm burnished bronze plating with wood-grain texture, large circular glowing orange photoreceptor eyes, smooth dome head with flat crown plate, segmented limbs with spherical joint connectors, small utility pack on upper back, dark brown joint seams, often multiple identical units visible",
+      "companion": {
+        "eligible": true,
+        "bond_threshold": 3,
+        "bond_current": 0,
+        "companion_ability": "can_fabricate_items_from_descriptions"
+      }
     },
     {
       "id": "artisan_kaelo",
@@ -380,7 +416,13 @@
       "home_location": "lower_decks",
       "personality": "Vex is a cautionary tale made flesh. They resent Kael for seemingly cooperating where they refused. They will obstruct, mislead, and occasionally make physical threats. The Fortress keeps them contained but cannot remove them — The Remnant finds them philosophically interesting. Beneath the hostility is someone who was once hopeful and is now broken.",
       "signature_quote": "You think The Remnant is helping you? It's using you. Just like it used me.",
-      "nexus_dynamic": "Vex is never invited to the Nexus. They find ways in anyway. The Remnant tolerates this because it finds their bitterness instructive."
+      "nexus_dynamic": "Vex is never invited to the Nexus. They find ways in anyway. The Remnant tolerates this because it finds their bitterness instructive.",
+      "adversary": {
+        "threat_tier": "persistent",
+        "tactics": ["exploit_low_social_skill", "ambush_isolated_travelers", "manipulate_via_desperation", "leverage_shared_trauma"],
+        "current_disposition": "hostile",
+        "weakness": "responds_to_genuine_empathy"
+      }
     },
     {
       "id": "mira",
@@ -393,7 +435,13 @@
       "home_location": "research_wing",
       "personality": "Mira arrived frightened and alone and chose to understand her situation rather than fight it. She is the closest thing Kael has to a mentor in the Fortress. She knows more about The Fold than anyone except The Remnant — and The Remnant respects her methods even if it doesn't say so. She is wary of Vex and will warn Kael about them early.",
       "signature_quote": "The Fold doesn't bring people here by accident. There's something specific it needs from each of us.",
-      "nexus_dynamic": "Mira attends Nexus sessions willingly. She and The Remnant have an unusual working relationship — mutual respect without warmth. She is the only person who asks The Remnant follow-up questions."
+      "nexus_dynamic": "Mira attends Nexus sessions willingly. She and The Remnant have an unusual working relationship — mutual respect without warmth. She is the only person who asks The Remnant follow-up questions.",
+      "companion": {
+        "eligible": true,
+        "bond_threshold": 3,
+        "bond_current": 0,
+        "companion_ability": "can_identify_fold_frequencies"
+      }
     }
   ],
 
@@ -505,6 +553,14 @@
     {
       "key": "the_tricorder",
       "text": "The Dimensional Tricorder is a compact fold-frequency scanner — roughly the size of a large hand, with a rounded chassis in dark alloy, a chromatic display that shifts between teal and amber to indicate fold activity levels, and a grip worn smooth from use. The Fortress has several aboard, kept in supply cabinets. They were built by Sherri to Mira's specifications after Mira complained that asking The Remnant to scan frequencies was 'like asking a hurricane to read a barometer.' The Remnant, overhearing this, said 'accurate.' The tricorder detects: fold frequency signatures, dimensional boundary stress, String-Slipping traces, entity presence in adjacent dimensional layers, and Void Crystal proximity. It cannot decode what it finds — that still requires interpretation. But it can tell you something is there."
+    },
+    {
+      "key": "vex_tactics",
+      "text": "Vex exploits isolation and desperation. They approach new arrivals when the Fortress is quiet — after meals, before sleep — and offer information that is technically true but structurally misleading. They are particularly effective against travelers who haven't yet established relationships with Sherri or Mira, because they can frame The Remnant's assignments as exploitation before the traveler has context to evaluate that framing. Vex doesn't lie outright; they select which truths to share. The Fortress is aware of this pattern and considers it a known quantity. It has never warned an incoming traveler in advance. The Remnant, when asked, said: 'Forewarned travelers make poor decisions. Let them earn the judgment.'"
+    },
+    {
+      "key": "vex_weakness",
+      "text": "Vex responds to genuine empathy — something they haven't encountered since arriving. Most travelers either fear them, dismiss them, or try to reform them. None of those approaches work. What Vex does not know how to handle is someone who acknowledges what happened in Finnon Foam without flinching, without trying to fix it, and without asking for anything in return. This is not a lever to pull — it is simply true. The Fortress has observed two travelers attempt genuine empathy with Vex. One made contact. Vex did not change, but they stopped actively obstructing that traveler. The Fortress considered this a significant event and saved the recording in a priority slot. The Remnant's comment on the recording: 'Hm.'"
     },
     {
       "key": "null_space_phenomena",
