@@ -683,7 +683,7 @@ def main() -> int:
 
     def _golden(turn: dict) -> None:
         if save_golden:
-            _approve_golden_turn(diag, turn)
+            _approve_golden_turn(base, turn)
 
     _last_narrator_raw = [""]  # mutable cell so inner functions can update it
 

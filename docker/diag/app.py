@@ -5674,6 +5674,9 @@ def _generate_npc_banter(npc_a: str, npc_b: str) -> None:
     """
     global _banter_generating
     try:
+        # Re-check inside thread — narrator may have started since prefetch loop checked.
+        if _generating or _classifying or _lore_narrating:
+            return
         area = _world.get("current_location", "somewhere aboard the Fortress")
         ent_a = _world["entities"].get(_loc_id(npc_a), {})
         ent_b = _world["entities"].get(_loc_id(npc_b), {})
