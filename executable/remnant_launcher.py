@@ -9,7 +9,7 @@ Manages all native services without requiring Docker:
   flask-tts   :1594  text-to-speech (Kokoro)
   flask-stt   :1595  speech-to-text (Whisper)
   flask-music :1596  ambient music (MusicGen)
-  diag        :1591  diagnostics sidecar + narrator (Ollama direct)
+  fortress    :1591  core game server + narrator (Ollama direct)
   nginx       :1582  reverse proxy (the only exposed port)
 
 Usage:
@@ -58,7 +58,7 @@ BIN_DIR    = REPO_ROOT / "bin"
 # Port assignments (canonical — matches port-layout golden rule)
 PORTS = {
     "nginx":       1582,
-    "diag":        1591,
+    "fortress":    1591,
     "flask-sd":    1592,
     "ollama":      1593,
     "flask-tts":   1594,
@@ -543,7 +543,7 @@ class ServiceManager:
             "{{NGINX_PORT}}":         str(PORTS["nginx"]),
             "{{FLASK_SD_UPSTREAM}}":  f"127.0.0.1:{PORTS['flask-sd']}",
             "{{OLLAMA_UPSTREAM}}":    f"127.0.0.1:{PORTS['ollama']}",
-            "{{DIAG_UPSTREAM}}":      f"127.0.0.1:{PORTS['diag']}",
+            "{{DIAG_UPSTREAM}}":      f"127.0.0.1:{PORTS['fortress']}",
             "{{TTS_UPSTREAM}}":       f"127.0.0.1:1594",
             "{{STT_UPSTREAM}}":       f"127.0.0.1:1595",
             "{{FLASK_MUSIC_UPSTREAM}}": f"127.0.0.1:{PORTS['flask-music']}",
@@ -630,13 +630,13 @@ class ServiceManager:
         else:
             log(f"ollama already on :{PORTS['ollama']}", "ok")
 
-        # ── diag ────────────────────────────────────────────────────────────
-        if not port_open(PORTS["diag"]):
-            log("starting diag sidecar...", "head")
-            fortress_card_dir = str(REPO_ROOT / "docker" / "diag" / "seed")
+        # ── fortress ─────────────────────────────────────────────────────────
+        if not port_open(PORTS["fortress"]):
+            log("starting fortress...", "head")
+            fortress_card_dir = str(REPO_ROOT / "docker" / "fortress" / "seed")
             p = ManagedProcess(
-                "diag",
-                [str(python), "-u", str(REPO_ROOT / "docker" / "diag" / "app.py")],
+                "fortress",
+                [str(python), "-u", str(REPO_ROOT / "docker" / "fortress" / "app.py")],
                 env={
                     **env_base,
                     "STATUS_DIR":          str(STATUS_DIR),
@@ -644,7 +644,7 @@ class ServiceManager:
                     "OLLAMA_URL":          f"http://127.0.0.1:{PORTS['ollama']}",
                     "FLASK_MUSIC_URL":     f"http://127.0.0.1:{PORTS['flask-music']}",
                     "OLLAMA_MODEL":        ollama_model,
-                    "LISTEN_PORT":         str(PORTS["diag"]),
+                    "LISTEN_PORT":         str(PORTS["fortress"]),
                     "FORTRESS_CARD_DIR":   fortress_card_dir,
                     "CHROMA_DB_PATH":      str(LOCAL_CACHE / "chroma-db"),
                     "EMBED_MODEL":         "nomic-embed-text",
@@ -655,7 +655,7 @@ class ServiceManager:
             p.start()
             self._procs.append(p)
         else:
-            log(f"diag already on :{PORTS['diag']}", "ok")
+            log(f"fortress already on :{PORTS['fortress']}", "ok")
 
         # ── flask-sd ─────────────────────────────────────────────────────────
         if not port_open(PORTS["flask-sd"]):
@@ -1113,7 +1113,7 @@ def main():
 
     # Wait for critical services
     log("waiting for services to be ready...", "head")
-    for name, port in [("diag", PORTS["diag"])]:
+    for name, port in [("fortress", PORTS["fortress"])]:
         _wait_for_port(port, name, timeout=60)
 
     # Stamp flask-sd / flask-tts / flask-stt / ollama status

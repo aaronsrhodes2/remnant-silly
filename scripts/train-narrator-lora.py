@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-WORLD_JSON = ROOT / "docker" / "diag" / "seed" / "world.json"
+WORLD_JSON = ROOT / "docker/fortress/seed" / "world.json"
 DATA_DIR = ROOT / "data"
 OUTPUT_JSONL = DATA_DIR / "narrator-training.jsonl"
 LORA_DIR = ROOT / "models" / "remnant-narrator-lora"

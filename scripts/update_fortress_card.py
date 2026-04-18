@@ -4,17 +4,17 @@ update_fortress_card.py — Single source of truth for The Fortress narrator pro
 
 Reads The Fortress.png from the archive card path, applies canonical
 modifications to the system_prompt, then writes the updated plaintext
-prompt files to docker/diag/seed/ where the diag sidecar reads them.
+prompt files to docker/fortress/seed/ where the diag sidecar reads them.
 
 SillyTavern is no longer part of the runtime stack. The PNG card is kept
 as a reference format for structured prompt editing, but the diag sidecar
-reads only the exported .txt files in docker/diag/seed/.
+reads only the exported .txt files in docker/fortress/seed/.
 
 Usage:
     python scripts/update_fortress_card.py
 
 Run after any edit to the MODIFICATIONS section below. Commit the updated
-.txt files in docker/diag/seed/ to propagate the change.
+.txt files in docker/fortress/seed/ to propagate the change.
 
 PNG format: SillyTavern embeds card JSON in two tEXt chunks:
   chara  — base64(JSON)  spec v2  (includes character_book)
@@ -40,7 +40,7 @@ DOCKER_CARD = os.path.join(
 # Plaintext prompt files — where the diag sidecar reads them from.
 # SillyTavern is removed from the runtime; only these .txt files matter.
 SEED_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "docker", "diag", "seed",
+    os.path.dirname(__file__), "..", "docker/fortress/seed",
 ))
 
 # ---------------------------------------------------------------------------
@@ -616,7 +616,7 @@ def update_card_png(src_path, dst_path):
     write_png(dst_path, chunks)
     print(f"  [done] Written: {dst_path}")
 
-    # Export plain-text files to docker/diag/seed/ — where the diag sidecar
+    # Export plain-text files to docker/fortress/seed/ — where the diag sidecar
     # reads them. Written on every call so seed/ always matches the PNG card.
     os.makedirs(SEED_DIR, exist_ok=True)
     try:
@@ -645,7 +645,7 @@ def main():
     # Update the reference PNG card (in-place) and export plaintext to seed/
     update_card_png(src, src)
 
-    print("\nDone. Commit docker/diag/seed/fortress_system_prompt.txt to propagate.")
+    print("\nDone. Commit docker/fortress/seed/fortress_system_prompt.txt to propagate.")
 
 
 if __name__ == "__main__":

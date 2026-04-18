@@ -30,7 +30,7 @@ from pathlib import Path
 
 REPO_ROOT           = Path(__file__).resolve().parent.parent
 SYSTEM_PROMPT_FILE  = REPO_ROOT / "docker/sillytavern/content/characters/fortress_system_prompt.txt"
-SEED_WORLD_FILE     = REPO_ROOT / "docker/diag/seed/world.json"
+SEED_WORLD_FILE     = REPO_ROOT / "docker/fortress/seed/world.json"
 NUM_CTX             = 16384
 GRADER_MODEL_DEFAULT = "llama3.1:8b"
 
