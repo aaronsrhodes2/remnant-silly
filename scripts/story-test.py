@@ -203,7 +203,7 @@ def _snap_world_entities(base: str) -> dict:
     """Return entities as a {id: entity} dict from /world-state.
 
     /world-state may return either:
-      - a list of entity objects (current diag API)
+      - a list of entity objects (current fortress API)
       - a dict with an 'entities' key containing a list or dict
     """
     code, data = _get(f"{base}/world-state", timeout=10.0)
@@ -385,13 +385,13 @@ def _player_agent_turn(
 
 
 # ── Golden training data ─────────────────────────────────────────────────────
-def _approve_golden_turn(diag_url: str, turn: dict) -> None:
+def _approve_golden_turn(fortress_url: str, turn: dict) -> None:
     """POST to /narratorturn/<id>/approve — silently ignore failures."""
     turn_id = turn.get("turn_id", "")
     if not turn_id:
         return
     try:
-        code, resp = _post(f"{diag_url}/narratorturn/{turn_id}/approve", {}, timeout=10.0)
+        code, resp = _post(f"{fortress_url}/narratorturn/{turn_id}/approve", {}, timeout=10.0)
         if code == 200 and resp.get("approved"):
             print(f"  {_gold('◈')} Golden turn saved ({resp.get('total_golden', '?')} total)")
         elif resp.get("duplicate"):
@@ -500,7 +500,7 @@ def _compute_score(beats_done: int, starting_items: set) -> int:
 
 
 # ── Ollama story summary ──────────────────────────────────────────────────────
-def _summarise_story(player_name: str, diag_url: str) -> str:
+def _summarise_story(player_name: str, fortress_url: str) -> str:
     """Ask Ollama to summarise the session as second-person fiction."""
     excerpt = "\n\n".join(story_text[:60])
     if not excerpt.strip():
@@ -661,7 +661,7 @@ def main() -> int:
     )
     parser.add_argument("--host",        default="localhost")
     parser.add_argument("--port",        type=int, default=1582)
-    parser.add_argument("--diag-port",   type=int, default=1591)
+    parser.add_argument("--fortress-port",   type=int, default=1591)
     parser.add_argument("--player-name", default="Kael")
     parser.add_argument("--skip-reset",  action="store_true",
                         help="Skip world reset (use current world state)")
@@ -675,7 +675,7 @@ def main() -> int:
     _kill_existing_instances()   # ensure we're the only story-test running
 
     base        = f"http://{args.host}:{args.port}"
-    diag        = f"http://{args.host}:{args.diag_port}"
+    fortress     = f"http://{args.host}:{args.fortress_port}"
     player_name = args.player_name
     max_turns   = MAX_SAFETY_TURNS
     save_golden  = getattr(args, "save_golden", False)
@@ -1179,7 +1179,7 @@ def main() -> int:
             if save_golden and _RE_MOOD.search(raw):
                 senses = sum(bool(r.search(raw)) for r in (_RE_SMELL, _RE_TASTE, _RE_TOUCH, _RE_SOUND))
                 if senses >= 1:
-                    _approve_golden_turn(diag, turn)
+                    _approve_golden_turn(fortress, turn)
 
             # Early-exit: all beats done + richness met + minimum arc turns
             if beats_done >= 15 and quest_turn >= MIN_ARC_TURNS and _richness_met():
@@ -1267,7 +1267,7 @@ def main() -> int:
 
     # ── Ollama summary ────────────────────────────────────────────────────────
     print(f"\n  {_dim('Generating story summary via Ollama…')}")
-    summary = _summarise_story(player_name, diag)
+    summary = _summarise_story(player_name, fortress)
     print(f"  {_dim('Summary generated.')}")
 
     # ── Save ──────────────────────────────────────────────────────────────────

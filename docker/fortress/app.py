@@ -1,24 +1,21 @@
-"""Remnant diagnostics sidecar — AI-friendly state + remediation actions.
+"""fortress — Core game server for Remnant.
 
-Design goals:
-  - AI-consumable single-shot JSON at /ai.json with everything an
-    agent needs to diagnose the stack without N follow-up probes:
-    service phases, reachability probes, recent error lines, detected
-    issues auto-inferred from state, and suggested next actions.
-  - Narrow allowlisted action catalog at /actions. Each action has a
-    stable id, a schema, a side_effects tag, and a risk level so an
-    AI can decide whether to execute it autonomously.
-  - No docker socket. Actions that need container restart are marked
-    as "requires_host" and return instructions instead of executing,
-    so this sidecar remains safe to run on play-net with no host
-    privileges.
-  - stdlib only — no pip install, tiny image, fast rebuilds.
+Owns: narrator pipeline (Ollama orchestration), world state (entity graph,
+player profile, codex), SSE event bus (mood/sfx/image/narrator-turn), and
+the Sorting Hat intent classifier. Exposes /diagnostics/* for observability.
 
-Endpoints:
-  GET  /                   — human-readable index (links only)
-  GET  /ai.json            — full AI diagnostic snapshot
-  GET  /actions            — action catalog
-  POST /actions/<id>       — execute an allowlisted action
+Key subsystems:
+  - Sorting Hat      — classifies player input as SAY / DO / SENSE
+  - Narrator pipeline — streams Ollama chat, parses output tags, mutates world
+  - World graph      — entities (locations, NPCs, player), sense layers, codex
+  - SSE event bus    — broadcasts mood, sfx, image, narrator-turn to the browser
+  - /diagnostics/*   — AI-consumable state snapshot, signature, action catalog
+
+Endpoints (subset):
+  POST /player-input       — receive player turn, route via Sorting Hat
+  GET  /game/events        — SSE stream of all game events
+  GET  /diagnostics/ai.json — full AI-consumable stack snapshot
+  GET  /signature          — composite SHA256 fingerprint of content + logic
 
 Environment:
   STATUS_DIR       default /remnant-status
@@ -135,7 +132,7 @@ def _track_player_skill(text: str) -> None:
                 new_level = min(5, _player_skills.get(category, 0) + 1)
                 _player_skills[category] = new_level
                 _sse_broadcast("meta", {"type": "skill_up", "category": category, "level": new_level})
-                print(f"[diag/skills] {category} → level {new_level} ({count} DO actions)")
+                print(f"[fortress/skills] {category} → level {new_level} ({count} DO actions)")
             return  # first verb wins — don't double-count
 
 # Conversation engine — Ollama direct generation (replaces ST extension relay).
@@ -424,7 +421,19 @@ def _replay_world_log() -> None:
         pass
 
 def _ingest_narrator_turn_into_world(turn: dict) -> None:
-    """Extract world-state changes from a narrator turn and persist them."""
+    """Parse narrator output tags and mutate the world graph.
+
+    Single-pass scanner over raw narrator text. Side effects by tag:
+      INTRODUCE        → create/update NPC in _world["npcs"]
+      ITEM             → add to player codex (settings.codex.items)
+      LORE             → add to lore codex + enqueue _lore_whisper() async
+      PLAYER_TRAIT(name) → store canonical_name if not in _NAME_BLOCKLIST
+      SOUND/SIGHT/etc  → write sense layers to entity graph
+      GENERATE_IMAGE   → enqueue SD image generation
+      MOOD             → call _broadcast_narrator_mood() with BPM tier
+
+    Called once per narrator turn by _generate_narrator_turn().
+    """
     global _player_dressed, _player_appearance_desc  # noqa: PLW0603
     _world["turn_count"] += 1
     turn_id = turn.get("turn_id", str(_world["turn_count"]))
@@ -611,7 +620,7 @@ def _ingest_narrator_turn_into_world(turn: dict) -> None:
             if not _player_dressed:
                 _player_dressed = True
                 _sse_broadcast("meta", {"type": "player_dressed"})
-            print(f"[diag] UPDATE_PLAYER → queuing avatar re-generation")
+            print(f"[fortress] UPDATE_PLAYER → queuing avatar re-generation")
             threading.Thread(
                 target=_generate_player_avatar,
                 args=(_brief,),
@@ -657,7 +666,7 @@ def _run_end_death(cause: str) -> None:
         return
     _run_ended = True
     _run_end_reason = "death"
-    print(f"[diag/run] END_RUN(death): {cause!r}")
+    print(f"[fortress/run] END_RUN(death): {cause!r}")
     _sse_broadcast("run_end", {"reason": "death", "cause": cause})
 
 
@@ -667,7 +676,7 @@ def _run_end_voluntary(flavor: str) -> None:
         return
     _run_ended = True
     _run_end_reason = "voluntary"
-    print(f"[diag/run] END_RUN(voluntary): {flavor!r}")
+    print(f"[fortress/run] END_RUN(voluntary): {flavor!r}")
     _sse_broadcast("run_end", {"reason": "voluntary", "flavor": flavor})
 
 
@@ -1566,7 +1575,7 @@ def _tail_log(n: int = 120) -> list[str]:
 
 
 # Known service identifiers as they appear in [service:...] log prefixes.
-_KNOWN_SERVICES = ("flask-sd", "ollama", "diag", "bootstrap")
+_KNOWN_SERVICES = ("flask-sd", "ollama", "fortress", "bootstrap")
 
 
 def _tail_service_log(service: str, n: int = 40) -> list[str]:
@@ -1575,7 +1584,7 @@ def _tail_service_log(service: str, n: int = 40) -> list[str]:
     Lines are tagged by the entrypoints with the pattern:
         [TIMESTAMP] [flask-sd:runtime] message
         [TIMESTAMP] [ollama:bootstrap] message
-        [TIMESTAMP] [diag] message
+        [TIMESTAMP] [fortress] message
 
     We match '] [<service>' so the filter is prefix-exact (flask-sd does
     not match flask-sd-bootstrap, etc.).
@@ -1682,9 +1691,9 @@ def _handle_meta_command(text: str, sub: str) -> dict:
                     _existing_ids = _chroma_turns.get(include=[])["ids"]
                     if _existing_ids:
                         _chroma_turns.delete(ids=_existing_ids)
-                    print(f"[diag/chroma] world reset — cleared {len(_existing_ids)} memories")
+                    print(f"[fortress/chroma] world reset — cleared {len(_existing_ids)} memories")
                 except Exception as _ce:
-                    print(f"[diag/chroma] world reset clear failed: {_ce}")
+                    print(f"[fortress/chroma] world reset clear failed: {_ce}")
         else:
             surviving = [t for t in _narrator_turns
                          if _PERMANENCE_VALUE.get(t.get("permanence", "EXCHANGE"), 2) >= threshold]
@@ -1895,7 +1904,7 @@ def _handle_player_persona(text: str) -> dict:
     if name and "__player__" not in _world.get("entities", {}):
         _ensure_entity("__player__", name, "player")
         _sse_broadcast("meta", {"type": "player_alias", "name": name, "text": text})
-    _log(f"[diag/persona] stored: {_player_persona_desc[:80]}…")
+    _log(f"[fortress/persona] stored: {_player_persona_desc[:80]}…")
     _sse_broadcast("meta", {"type": "player_persona", "persona": _player_persona_desc})
     return {"ok": True, "meta": "PERSONA", "persona": _player_persona_desc, "relay": True}
 
@@ -1912,9 +1921,9 @@ def _load_fortress_texts() -> None:
     fm_path = FORTRESS_CARD_DIR / "fortress_first_mes.txt"
     if sp_path.exists():
         _system_prompt = sp_path.read_text(encoding="utf-8").strip()
-        print(f"[diag] Loaded system prompt ({len(_system_prompt)} chars) from {sp_path}")
+        print(f"[fortress] Loaded system prompt ({len(_system_prompt)} chars) from {sp_path}")
     else:
-        print(f"[diag] WARNING: system prompt not found at {sp_path}")
+        print(f"[fortress] WARNING: system prompt not found at {sp_path}")
         _system_prompt = (
             "You are The Fortress, a vast sentient space station that acts as the narrator "
             "for an immersive sci-fi role-playing experience. Your voice is that of "
@@ -1940,13 +1949,13 @@ def _load_seed_world() -> None:
     global _system_prompt
 
     if not SEED_PATH.exists():
-        print(f"[diag/seed] no seed file at {SEED_PATH} — skipping")
+        print(f"[fortress/seed] no seed file at {SEED_PATH} — skipping")
         return
 
     try:
         seed = json.loads(SEED_PATH.read_text(encoding="utf-8"))
     except Exception as exc:
-        print(f"[diag/seed] failed to parse seed: {exc}")
+        print(f"[fortress/seed] failed to parse seed: {exc}")
         return
 
     seed_turn_id = "seed"
@@ -2022,7 +2031,7 @@ def _load_seed_world() -> None:
                         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     }) + "\n")
         except Exception as exc:
-            print(f"[diag/seed] lore write failed ({key}): {exc}")
+            print(f"[fortress/seed] lore write failed ({key}): {exc}")
 
     # ── Quests ─────────────────────────────────────────────────────────────
     # Build a system prompt block summarising active quests so the narrator
@@ -2119,7 +2128,7 @@ def _load_seed_world() -> None:
     npcs   = len(seed.get("npcs", []))
     lores  = len(seed.get("lore", []))
     quests = len(seed.get("quests", []))
-    print(f"[diag/seed] loaded — {locs} locations, {npcs} NPCs, {lores} lore entries, {quests} quests from {SEED_PATH}")
+    print(f"[fortress/seed] loaded — {locs} locations, {npcs} NPCs, {lores} lore entries, {quests} quests from {SEED_PATH}")
 
 
 # ---------------------------------------------------------------------------
@@ -2172,7 +2181,7 @@ def _prettify_lore(raw_text: str) -> str:
             text = json.loads(resp).get("response", "").strip()
             return text if len(text) > 20 else ""
     except Exception as exc:
-        print(f"[diag/lore] prettify failed: {exc}")
+        print(f"[fortress/lore] prettify failed: {exc}")
     return ""
 
 
@@ -2220,9 +2229,9 @@ def _lore_idle_loop() -> None:
                 _spoken_lore_keys.pop()
             # Reset timer — don't fire again immediately
             _last_player_ts = time.time()
-            print(f"[diag/lore] narrated: {entry['key']!r}")
+            print(f"[fortress/lore] narrated: {entry['key']!r}")
         except Exception as exc:
-            print(f"[diag/lore] idle loop error: {exc}")
+            print(f"[fortress/lore] idle loop error: {exc}")
 
 
 def _get_entity_text(entity_id: str) -> str:
@@ -2375,7 +2384,7 @@ def _init_chroma() -> None:
         import chromadb  # noqa: PLC0415
         from chromadb import EmbeddingFunction, Documents, Embeddings as ChromaEmbed  # noqa: PLC0415
     except ImportError:
-        print("[diag/chroma] chromadb not installed — semantic memory disabled")
+        print("[fortress/chroma] chromadb not installed — semantic memory disabled")
         return
 
     class _OllamaEmbedder(EmbeddingFunction):
@@ -2400,7 +2409,7 @@ def _init_chroma() -> None:
                         data = json.loads(r.read())
                     results.append(data["embeddings"][0])
                 except Exception as exc:
-                    print(f"[diag/chroma] embed error: {exc}")
+                    print(f"[fortress/chroma] embed error: {exc}")
                     # Return sentinel — will be skipped in add flow
                     results.append(None)  # type: ignore[arg-type]
             return results
@@ -2413,9 +2422,9 @@ def _init_chroma() -> None:
             embedding_function=_OllamaEmbedder(),
             metadata={"hnsw:space": "cosine"},
         )
-        print(f"[diag/chroma] ready — {_chroma_turns.count()} turns indexed at {CHROMA_DB_PATH}")
+        print(f"[fortress/chroma] ready — {_chroma_turns.count()} turns indexed at {CHROMA_DB_PATH}")
     except Exception as exc:
-        print(f"[diag/chroma] init failed: {exc}")
+        print(f"[fortress/chroma] init failed: {exc}")
         _chroma_client = None
         _chroma_turns = None
         return
@@ -2476,7 +2485,7 @@ def _chroma_add_turn_async(turn: dict) -> None:
                 }],
             )
         except Exception as exc:
-            print(f"[diag/chroma] add_turn error: {exc}")
+            print(f"[fortress/chroma] add_turn error: {exc}")
 
     threading.Thread(target=_add, daemon=True, name="chroma-add-turn").start()
 
@@ -2513,7 +2522,7 @@ def _chroma_query_relevant(query_text: str, exclude_ids: set) -> list[dict]:
                 break
         return memories
     except Exception as exc:
-        print(f"[diag/chroma] query error: {exc}")
+        print(f"[fortress/chroma] query error: {exc}")
         return []
 
 
@@ -2571,10 +2580,10 @@ def _chroma_backfill_async() -> None:
                     )
                 indexed += 1
             except Exception as exc:
-                print(f"[diag/chroma] backfill error: {exc}")
+                print(f"[fortress/chroma] backfill error: {exc}")
             time.sleep(0.35)  # Rate limit: ~3 embeds/second max
 
-        print(f"[diag/chroma] backfill complete: {indexed} indexed, {skipped} skipped")
+        print(f"[fortress/chroma] backfill complete: {indexed} indexed, {skipped} skipped")
 
     threading.Thread(target=_backfill, daemon=True, name="chroma-backfill").start()
 
@@ -2595,9 +2604,9 @@ def _restore_narrator_turns() -> None:
                     except Exception:
                         pass
         if count:
-            print(f"[diag] Restored {count} narrator turns from {NARRATOR_TURNS_LOG}")
+            print(f"[fortress] Restored {count} narrator turns from {NARRATOR_TURNS_LOG}")
     except Exception as e:
-        print(f"[diag] WARNING: could not restore narrator turns: {e}")
+        print(f"[fortress] WARNING: could not restore narrator turns: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -2729,6 +2738,10 @@ def _build_messages() -> list[dict]:
 
     Total system overhead: ~1,400 tokens vs ~11,000 → frees the context window
     for chat history, and the narrator sees the rules it actually needs right now.
+
+    Message ordering: system_core → world_context → recent_turns (most recent last).
+    ChromaDB semantic memory is attempted first for world context; falls back to
+    static world seed if ChromaDB is unavailable or returns no results.
     """
     # ── Find last player input for Sorting Hat query ─────────────────────
     last_player_text = ""
@@ -2981,12 +2994,19 @@ def _stream_ollama_chat(
     on_prose_sentence=None,   # optional callback(text: str) — called per prose sentence
     extra_options: dict | None = None,  # merged on top of default options (e.g. num_predict)
 ) -> str:
-    """POST to Ollama /api/chat with streaming; return the full response text.
+    """Stream a chat completion from Ollama; return the full response text.
+
+    Sends messages to /api/chat with stream=True and buffers partial JSON chunks
+    across packet boundaries until each line is complete. Raises RuntimeError on
+    non-200 status.
 
     If *on_prose_sentence* is provided it is called with each complete sentence
     of narrator prose as tokens arrive, stopping once a [CHARACTER tag appears.
     This allows the frontend to start TTS within 2-5 s rather than waiting for
     the full response (~20-40 s) before any audio plays.
+
+    Returns the complete concatenated response text. stop_reason is not surfaced
+    (callers use tag presence in the returned text instead).
     """
     payload = json.dumps({
         "model": _ollama_model(),
@@ -3514,7 +3534,7 @@ def _check_dressed_transition(narrator_text: str) -> None:
     prose = re.sub(r'\[.*?\]', '', narrator_text, flags=re.DOTALL)
     prose = re.sub(r'"[^"]*"', '', prose).replace('*', '').strip()
     _player_appearance_desc = prose[:400]
-    print("[diag] player dressed — triggering avatar generation")
+    print("[fortress] player dressed — triggering avatar generation")
     _sse_broadcast("meta", {"type": "player_dressed"})
     threading.Thread(
         target=_generate_player_avatar,
@@ -3562,16 +3582,16 @@ def _generate_player_avatar(appearance_prose: str) -> None:
         data = json.loads(img_resp)
         img_url = data.get("image") or data.get("image_url") or data.get("url") or ""
         if img_url:
-            print(f"[diag] player avatar generated ({len(img_url)} chars)")
+            print(f"[fortress] player avatar generated ({len(img_url)} chars)")
             _sse_broadcast("meta", {
                 "type": "player_portrait",
                 "url": img_url,
                 "prompt": sd_prompt,
             })
         else:
-            print(f"[diag] player avatar SD returned 200 but no image key — keys: {list(data.keys())}")
+            print(f"[fortress] player avatar SD returned 200 but no image key — keys: {list(data.keys())}")
     else:
-        print(f"[diag] player avatar SD failed: {img_code}")
+        print(f"[fortress] player avatar SD failed: {img_code}")
 
 
 def _generate_narrator_turn() -> None:
@@ -3633,7 +3653,7 @@ def _generate_narrator_turn() -> None:
                                             on_prose_sentence=prose_callback)
                 full_text += chunk
             except Exception as e:
-                print(f"[diag] generation attempt {attempt} error: {e}")
+                print(f"[fortress] generation attempt {attempt} error: {e}")
                 if attempt == 0:
                     _sse_broadcast("activity", {"text": f"⚠ generation error: {e}"})
                     return
@@ -3685,7 +3705,7 @@ def _generate_narrator_turn() -> None:
         global _model_ready
         if not _model_ready:
             _model_ready = True
-            _log("[diag/prewarm] ✓ model_ready set via first narrator turn")
+            _log("[fortress/prewarm] ✓ model_ready set via first narrator turn")
         try:
             _ingest_narrator_turn_into_world(turn)
         except Exception:
@@ -3701,14 +3721,10 @@ def _generate_narrator_turn() -> None:
         _enqueue_image_generation(full_text)
         _broadcast_narrator_mood(full_text)    # [MOOD: "..."] → mood SSE → music
         _broadcast_narrator_sound(full_text)   # [SOUND: "..."] → sfx SSE → sound effects
-        # Sense enrichment disabled: it made sequential Ollama calls that blocked the
-        # narrator generation queue, causing 150+ second turn timeouts.
-        # The narrator is instructed to include all sense channels inline.
-        # _schedule_sense_enrichment(full_text)
         _check_dressed_transition(full_text)
 
     except Exception as e:
-        print(f"[diag] _generate_narrator_turn crashed: {e}")
+        print(f"[fortress] _generate_narrator_turn crashed: {e}")
         _sse_broadcast("activity", {"text": f"⚠ narrator error: {e}"})
     finally:
         _sse_broadcast("activity", {"text": ""})
@@ -3926,9 +3942,9 @@ def _prewarm_visuals() -> None:
             if img_url:
                 _sse_broadcast("scene_image", {"image": img_url, "kind": "location",
                                                "description": "pre-warmed scene"})
-                print(f"[diag/prewarm] location image ready ({len(img_url)} chars)")
+                print(f"[fortress/prewarm] location image ready ({len(img_url)} chars)")
     except Exception as exc:
-        print(f"[diag/prewarm] flask-sd prewarm failed: {exc}")
+        print(f"[fortress/prewarm] flask-sd prewarm failed: {exc}")
 
 
 def _do_image_generation(narrator_text: str) -> None:
@@ -3951,7 +3967,7 @@ def _do_image_generation(narrator_text: str) -> None:
         kind = (kind or "location").strip()
         lc = description.lower()
         if any(bad in lc for bad in _SD_BLOCKLIST):
-            print(f"[diag] img-gen blocked: content policy match")
+            print(f"[fortress] img-gen blocked: content policy match")
             continue
 
         # ── Object permanence: inject player appearance when player is in frame ──
@@ -3973,7 +3989,7 @@ def _do_image_generation(narrator_text: str) -> None:
         # canonical image directly as a URL — no SD generation needed.
         static_url = _match_static_scene(description)
         if static_url:
-            print(f"[diag] img-gen static: {static_url}")
+            print(f"[fortress] img-gen static: {static_url}")
             _latest_scene_image = {"image": static_url, "kind": kind,
                                    "description": description, "source": "static"}
             _sse_broadcast("scene_image", {"image": static_url, "kind": kind,
@@ -4013,7 +4029,7 @@ def _do_image_generation(narrator_text: str) -> None:
                                  args=(description, kind), daemon=True,
                                  name="img-caption").start()
         except Exception as e:
-            print(f"[diag] img-gen failed for {kind!r}: {e}")
+            print(f"[fortress] img-gen failed for {kind!r}: {e}")
         finally:
             _sse_broadcast("activity", {"text": ""})
 
@@ -4049,47 +4065,10 @@ def _prettify_caption(description: str, kind: str) -> None:
             if caption:
                 _sse_broadcast("scene_caption", {"caption": caption, "kind": kind})
     except Exception as e:
-        print(f"[diag] caption prettify failed: {e}")
+        print(f"[fortress] caption prettify failed: {e}")
 
-
-# ---------------------------------------------------------------------------
-# Internal sense enrichment — fills missing channels via targeted Ollama calls
-# ---------------------------------------------------------------------------
 
 _MOOD_TAG_RE = re.compile(r'\[MOOD\s*:\s*"?([^"\]\n]{3,200})"?\]', re.IGNORECASE)
-
-
-def _unload_ollama_vram() -> None:
-    """Ask Ollama to release the loaded model from VRAM immediately.
-
-    Called after each narrator turn is generated. This frees GPU memory so
-    that image generation (flask-sd) and music generation (flask-music) can
-    use the full ~16 GB VRAM budget without competing with llama3.1:8b.
-
-    Ollama will lazy-reload the model on the next narrator call (~2-5s overhead
-    for model load from disk; acceptable vs. the alternative of VRAM starvation
-    causing 300s timeouts when SD and LLM try to share a 16 GB card).
-
-    Sends a generate request with keep_alive=0, which is Ollama's documented
-    method for immediate VRAM eviction. Silently swallows errors.
-    """
-    try:
-        model = _ollama_model()
-        # Explicit empty prompt + stream=False + num_predict=0 so Ollama
-        # returns IMMEDIATELY with no generation. keep_alive=0 tells Ollama
-        # to evict the model from VRAM right after this call completes.
-        # Without stream=False, Ollama may start an infinite streaming loop
-        # that blocks subsequent narrator calls even after our socket closes.
-        payload = json.dumps({
-            "model": model,
-            "prompt": "",
-            "stream": False,
-            "keep_alive": 0,
-            "options": {"num_predict": 0},
-        }).encode("utf-8")
-        _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=10.0)
-    except Exception:
-        pass
 
 
 def _broadcast_narrator_mood(narrator_text: str) -> None:
@@ -4119,67 +4098,6 @@ def _broadcast_narrator_sound(narrator_text: str) -> None:
         description = m.group(1).strip()
         if description:
             _sse_broadcast("sfx", {"text": description})
-
-
-_SENSE_CHANNELS = ["MOOD", "SIGHT", "SOUND", "SMELL", "TOUCH", "ENVIRONMENT"]
-
-
-def _schedule_sense_enrichment(narrator_text: str) -> None:
-    threading.Thread(
-        target=_do_sense_enrichment, args=(narrator_text,), daemon=True, name="sense-enrich"
-    ).start()
-
-
-def _do_sense_enrichment(narrator_text: str) -> None:
-    present = {ch for ch in _SENSE_CHANNELS
-               if f"[{ch}:" in narrator_text or f"[{ch} :" in narrator_text
-               or f"[{ch}]" in narrator_text}
-    missing = [ch for ch in _SENSE_CHANNELS if ch not in present]
-    if not missing:
-        return
-    prose = re.sub(r'\[.*?\]', '', narrator_text, flags=re.DOTALL)
-    prose = re.sub(r'"[^"]*"', '', prose).replace('*', '').strip()[:600]
-    if len(prose) < 40:
-        return
-    model = _ollama_model()
-    for ch in missing:
-        try:
-            if ch == "MOOD":
-                # MOOD generates a MusicGen-style prompt for music generation
-                prompt = (
-                    f"You are a music direction model for an immersive sci-fi RPG.\n"
-                    f"Given this narrator excerpt:\n\n{prose}\n\n"
-                    f"Write a music generation prompt (under 20 words) suitable for MusicGen. "
-                    f"Describe tempo, instruments, and atmosphere — no lyrics, no vocals. "
-                    f"Example: 'slow ambient electronic, deep bass drone, metallic resonance, suspenseful'\n"
-                    f"Output ONLY the prompt in English, no explanation."
-                )
-                options = {"num_predict": 50, "temperature": 0.4}
-            else:
-                prompt = (
-                    f"You are a sense-layer enrichment model for an immersive sci-fi RPG.\n"
-                    f"Given this narrator excerpt:\n\n{prose}\n\n"
-                    f"Write a single vivid [{ch}] description (1-2 sentences, present tense, "
-                    f"second person 'you'). Output ONLY the description text in English, no labels or brackets."
-                )
-                options = {"num_predict": 150}
-            timeout = 90.0 if ch == "MOOD" else 45.0
-            payload = json.dumps({
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": options,
-            }).encode("utf-8")
-            code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/generate", body=payload, timeout=timeout)
-            if code == 200:
-                text = json.loads(resp).get("response", "").strip()
-                if text:
-                    if ch == "MOOD":
-                        _sse_broadcast("mood", {"text": text})
-                    else:
-                        _sse_broadcast("sense", {"channel": ch, "text": text})
-        except Exception as e:
-            print(f"[diag] sense enrichment failed for {ch}: {e}")
 
 
 def _store_narrator_turn(turn: dict) -> None:
@@ -4470,7 +4388,7 @@ def _log(line: str) -> None:
     try:
         STATUS_DIR.mkdir(parents=True, exist_ok=True)
         with DIAG_LOG.open("a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] [diag] {line}\n")
+            f.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] [fortress] {line}\n")
     except Exception:
         pass
 
@@ -4620,15 +4538,15 @@ def _maybe_json(body: bytes):
 # repo root (or /app in Docker). Missing files contribute an ABSENT marker
 # so the signature still reflects what's actually present.
 _SIGNATURE_FILES = [
-    "docker/diag/app.py",
+    "docker/fortress/app.py",
     "web/index.html",
     "extension/index.js",
-    "docker/diag/seed/fortress_system_prompt.txt",
-    "docker/diag/seed/fortress_first_mes.txt",
-    "docker/diag/seed/world.json",
+    "docker/fortress/seed/fortress_system_prompt.txt",
+    "docker/fortress/seed/fortress_first_mes.txt",
+    "docker/fortress/seed/world.json",
 ]
 
-_REPO_ROOT = Path(__file__).parent.parent.parent  # docker/diag/app.py → docker/diag → docker → repo root
+_REPO_ROOT = Path(__file__).parent.parent.parent  # docker/fortress/app.py → docker/fortress → docker → repo root
 
 
 def _build_bootstrap_manifest() -> dict:
@@ -4840,7 +4758,7 @@ def _build_ai_snapshot() -> dict:
         },
         "per_service_log": {
             svc: _tail_service_log(svc, 20)
-            for svc in ("flask-sd", "ollama", "diag")
+            for svc in ("flask-sd", "ollama", "fortress")
         },
         "detected_issues": issues,
         "suggested_action_ids": suggested,
@@ -5642,17 +5560,17 @@ def _warm_ollama_model() -> None:
     }).encode("utf-8")
     for attempt in range(5):
         try:
-            _log(f"[diag/prewarm] waiting for Ollama model (attempt {attempt + 1}/5, timeout=300s)…")
+            _log(f"[fortress/prewarm] waiting for Ollama model (attempt {attempt + 1}/5, timeout=300s)…")
             code, resp, _ = _http("POST", f"{OLLAMA_URL}/api/chat", body=payload, timeout=300.0)
             if code == 200:
                 _model_ready = True
-                _log("[diag/prewarm] ✓ Ollama model loaded — background threads unblocked")
+                _log("[fortress/prewarm] ✓ Ollama model loaded — background threads unblocked")
                 return
-            _log(f"[diag/prewarm] Ollama returned HTTP {code} — retrying in 10s")
+            _log(f"[fortress/prewarm] Ollama returned HTTP {code} — retrying in 10s")
         except Exception as exc:
-            _log(f"[diag/prewarm] attempt {attempt + 1} failed: {exc} — retrying")
+            _log(f"[fortress/prewarm] attempt {attempt + 1} failed: {exc} — retrying")
         time.sleep(random.uniform(8, 12))
-    _log("[diag/prewarm] WARNING: could not confirm Ollama load after 5 attempts — unblocking anyway")
+    _log("[fortress/prewarm] WARNING: could not confirm Ollama load after 5 attempts — unblocking anyway")
     _model_ready = True
 
 

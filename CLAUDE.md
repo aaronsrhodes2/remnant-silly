@@ -47,7 +47,7 @@ python -X utf8 scripts/dev.py status
 | Port | Service |
 |---|---|
 | 1582 | nginx gateway (all builds) |
-| 1591 | diag sidecar |
+| 1591 | fortress (game server) |
 | 1592 | flask-sd |
 | 1593 | ollama |
 | 1594 | tts (Kokoro) |
@@ -85,7 +85,7 @@ MCP tools also available when stack is running:
 
 **Golden rule:** When the user says "permanent world asset" with any content, Claude:
 1. Identifies type: NPC / location / lore / 3D mesh / music
-2. Edits `docker/diag/seed/world.json` with the content
+2. Edits `docker/fortress/seed/world.json` with the content
 3. For images: checks `C:/Users/aaron/Downloads/` or asks for the path; reads the file and writes it to `web/assets/characters/` (NPCs) or `web/assets/locations/` (backgrounds) or `web/assets/characters/NAME-mesh.png` (3D references)
 4. Commits both the JSON and any image files
 
@@ -94,7 +94,7 @@ MCP tools also available when stack is running:
 - `web/assets/locations/` — location background art
 - `web/assets/music/` — future static music samples
 
-**Seed file:** `docker/diag/seed/world.json` — edit this to add/modify permanent locations, NPCs, and lore. Loaded at startup and after every Reset World. Restart diag to pick up changes (no Docker rebuild needed for seed files only — `app.py` changes require `docker compose build diag && docker compose up -d --no-deps diag`).
+**Seed file:** `docker/fortress/seed/world.json` — edit this to add/modify permanent locations, NPCs, and lore. Loaded at startup and after every Reset World. Restart fortress to pick up changes (no Docker rebuild needed for seed files only — `app.py` changes require `docker compose build fortress && docker compose up -d --no-deps fortress`).
 
 **3D mesh assets** — store as reference PNGs in `web/assets/characters/NAME-mesh.png`. The `physical_spec` and `sd_prompt` fields in the seed JSON lock the appearance for Stable Diffusion generation. Future: 3D awareness will be added to world entities as they are interacted with.
 

@@ -250,10 +250,10 @@ def cmd_docker(args) -> int:
         ).stdout.strip() or "unknown"
     except Exception:
         git_commit = "unknown"
-    print(f"  {_dim('building diag + nginx images…')} (commit {git_commit})")
+    print(f"  {_dim('building fortress + nginx images…')} (commit {git_commit})")
     build = subprocess.run(
         ["docker", "compose", "build",
-         "--build-arg", f"GIT_COMMIT={git_commit}", "diag", "nginx"],
+         "--build-arg", f"GIT_COMMIT={git_commit}", "fortress", "nginx"],
         cwd=ROOT, env=env,
     )
     if build.returncode != 0:

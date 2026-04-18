@@ -206,17 +206,16 @@ services:
     networks:
       - play-net
 
-  # Diagnostics sidecar — tiny stdlib-only Python service. nginx
-  # proxies host:1582/diagnostics/ai.json and /diagnostics/actions/*
-  # to this container. Attaches ONLY to play-net (no egress); reads +
-  # writes remnant-status so it can reset coordination state and
-  # append to diagnostics.log.
-  diag:
+  # fortress — core game server. Narrator pipeline, world state, SSE event
+  # bus, and Sorting Hat intent classifier. nginx proxies all game traffic
+  # (player-input, SSE events, diagnostics/*) to this container. Attaches
+  # ONLY to play-net (no egress); reads/writes remnant-status volume.
+  fortress:
     build:
       context: .
-      dockerfile: docker/diag/Dockerfile
-    image: remnant-diag:latest
-    container_name: remnant-diag
+      dockerfile: docker/fortress/Dockerfile
+    image: remnant-fortress:latest
+    container_name: remnant-fortress
     restart: unless-stopped
     expose:
       - "1591"

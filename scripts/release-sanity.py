@@ -170,7 +170,7 @@ def phase_native(args) -> tuple[int, str]:
     print(f"  {_ok('✓')} nginx up on :{PORT}")
 
     # Fetch composite (source of truth)
-    time.sleep(2)  # brief settle so diag is warm
+    time.sleep(2)  # brief settle so fortress is warm
     truth = _fetch_composite(args.base)
     if truth:
         print(f"  {_ok('✓')} truth composite: {_cyan(truth[:32])}…")

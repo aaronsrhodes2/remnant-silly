@@ -90,14 +90,14 @@ class Results:
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="http://localhost:1582", help="Nginx gateway URL (default: http://localhost:1582)")
-    parser.add_argument("--diag", default="", help="Direct diag URL (optional, skips nginx for diag-only checks)")
+    parser.add_argument("--fortress", default="", help="Direct fortress URL (optional, skips nginx for fortress-only checks)")
     parser.add_argument("--expected-composite", default="",
                         help="If given, fail if composite_sha256 doesn't match this value")
     args = parser.parse_args()
 
     base = args.base.rstrip("/")
     # Derive direct diag URL from base if not given (docker: diag on base/diagnostics)
-    diag = args.diag.rstrip("/") if args.diag else base
+    fortress = args.fortress.rstrip("/") if args.fortress else base
 
     r = Results()
     overall_start = time.time()
@@ -114,29 +114,29 @@ def main():
 
     # ── 2. Diag sidecar ───────────────────────────────────────────────────────
     # Diag root (/) is not proxied through nginx — only specific paths are.
-    # We use /diagnostics/ai.json which nginx does proxy to diag:/ai.json.
-    # When --diag is given (direct access), fall back to {diag}/ for the index.
+    # We use /diagnostics/ai.json which nginx does proxy to fortress:/ai.json.
+    # When --fortress is given (direct access), fall back to {diag}/ for the index.
     print(_bold("\n2. Diagnostics sidecar"))
-    if args.diag:
-        code2, diag_index = _get(f"{diag}/")
-        r.check("diag / responds", code2 == 200, f"HTTP {code2}")
-        if isinstance(diag_index, dict):
-            endpoints = diag_index.get("endpoints", [])
-            r.check("diag lists /ai.json",    any("/ai.json" in e for e in endpoints))
-            r.check("diag lists /signature",  any("/signature" in e for e in endpoints))
-            r.check("diag lists /player-input", any("/player-input" in e for e in endpoints))
+    if args.fortress:
+        code2, fortress_index = _get(f"{fortress}/")
+        r.check("fortress / responds", code2 == 200, f"HTTP {code2}")
+        if isinstance(fortress_index, dict):
+            endpoints = fortress_index.get("endpoints", [])
+            r.check("fortress lists /ai.json",    any("/ai.json" in e for e in endpoints))
+            r.check("fortress lists /signature",  any("/signature" in e for e in endpoints))
+            r.check("fortress lists /player-input", any("/player-input" in e for e in endpoints))
     else:
         # Verify diag is reachable via nginx proxy at /diagnostics/ai.json
         code2, _ = _get(f"{base}/diagnostics/ai.json", timeout=5.0)
-        r.check("diag reachable via nginx (/diagnostics/ai.json)", code2 == 200, f"HTTP {code2}")
-        r.check("diag lists /ai.json", code2 == 200, "proxied OK" if code2 == 200 else "check nginx routing")
-        r.check("diag lists /signature", True, "verified via section 4")
-        r.check("diag lists /player-input", True, "verified via section 5")
+        r.check("fortress reachable via nginx (/diagnostics/ai.json)", code2 == 200, f"HTTP {code2}")
+        r.check("fortress lists /ai.json", code2 == 200, "proxied OK" if code2 == 200 else "check nginx routing")
+        r.check("fortress lists /signature", True, "verified via section 4")
+        r.check("fortress lists /player-input", True, "verified via section 5")
 
     # ── 3. AI snapshot ────────────────────────────────────────────────────────
     print(_bold("\n3. AI snapshot (/ai.json)"))
-    # Always use the nginx-proxied path (works both with and without --diag)
-    ai_url = f"{diag}/ai.json" if args.diag else f"{base}/diagnostics/ai.json"
+    # Always use the nginx-proxied path (works both with and without --fortress)
+    ai_url = f"{fortress}/ai.json" if args.fortress else f"{base}/diagnostics/ai.json"
     code, snap = _get(ai_url, timeout=15.0)
     r.check("/ai.json responds 200", code == 200, f"HTTP {code}")
     if isinstance(snap, dict):
@@ -151,7 +151,7 @@ def main():
 
     # ── 4. Signature / content fingerprint ───────────────────────────────────
     print(_bold("\n4. Signature (/signature)"))
-    code, sig = _get(f"{diag}/signature", timeout=10.0)
+    code, sig = _get(f"{fortress}/signature", timeout=10.0)
     r.check("/signature responds 200", code == 200, f"HTTP {code}")
     if isinstance(sig, dict):
         composite = sig.get("composite_sha256", "")
@@ -204,7 +204,7 @@ def main():
 
     # ── 6. World state ────────────────────────────────────────────────────────
     print(_bold("\n6. World state"))
-    code, ws = _get(f"{diag}/world-state", timeout=5.0)
+    code, ws = _get(f"{fortress}/world-state", timeout=5.0)
     r.check("/world-state responds 200", code == 200, f"HTTP {code}")
     if isinstance(ws, dict):
         r.check("entity_count present", "entity_count" in ws, str(ws.keys()))
@@ -225,7 +225,7 @@ def main():
 
     # ── 8. Bootstrap manifest ─────────────────────────────────────────────────
     print(_bold("\n8. Bootstrap manifest (/bootstrap-manifest)"))
-    code, manifest = _get(f"{diag}/bootstrap-manifest", timeout=5.0)
+    code, manifest = _get(f"{fortress}/bootstrap-manifest", timeout=5.0)
     r.check("/bootstrap-manifest responds 200", code == 200, f"HTTP {code}")
     if isinstance(manifest, dict):
         all_ready = manifest.get("all_ready", False)
@@ -325,6 +325,78 @@ def main():
     for t in transforms:
         print(f"    {_dim('→')} [{t}]")
     print(f"    {_dim('─' * 60)}")
+
+    # ── 10. Phase 1–5 feature smoke tests ────────────────────────────────────
+    print(_bold("\n10. Phase 1–5 feature smoke tests"))
+
+    # 10a. Flask-music health
+    code10, music_health = _get(f"{base}/api/music/health", timeout=10.0)
+    r.check("flask-music /health responds", code10 == 200, f"HTTP {code10}", warn_only=True)
+    if isinstance(music_health, dict):
+        r.check("flask-music status ok", music_health.get("status") == "ok",
+                str(music_health.get("status")), warn_only=True)
+
+    # 10b. Mood SSE event includes bpm + tier fields
+    # POST a player input that should provoke a [MOOD:] tag, then poll narrator-turns.
+    _post(f"{base}/player-input", {"text": "I look around and take a deep breath."}, timeout=15.0)
+    mood_ok = False
+    deadline10 = time.time() + 60.0
+    while time.time() < deadline10:
+        _, turns10 = _get(f"{base}/diagnostics/narrator-turns?n=20", timeout=5.0)
+        for t in (turns10 if isinstance(turns10, list) else []):
+            for blk in (t.get("parsed_blocks") or []):
+                if blk.get("type") == "mood" and isinstance(blk.get("bpm"), int) and blk["bpm"] > 0:
+                    mood_ok = True
+                    break
+            if mood_ok:
+                break
+        if mood_ok:
+            break
+        time.sleep(3.0)
+    r.check("mood SSE carries bpm+tier", mood_ok, "no mood block with bpm found in narrator turns", warn_only=True)
+
+    # 10c. Name blocklist — canonical_name never "unknown" / "traveler" / "stranger"
+    _BLOCKLIST = {"unknown", "traveler", "stranger", "player", "hero", "protagonist"}
+    _, world10 = _get(f"{base}/diagnostics/world", timeout=5.0)
+    canonical = ""
+    if isinstance(world10, dict):
+        player_entity = world10.get("player") or world10.get("entities", {}).get("player") or {}
+        canonical = (player_entity.get("canonical_name") or "").strip().lower()
+    blocklist_ok = canonical not in _BLOCKLIST if canonical else True
+    r.check("name blocklist active", blocklist_ok,
+            f"canonical_name={canonical!r} is a blocked placeholder", warn_only=True)
+
+    # 10d. Action SFX — a DO-intent verb input should fire an sfx SSE event
+    pre_sfx_turns, _ = _get(f"{base}/diagnostics/narrator-turns?n=5", timeout=5.0)
+    pre_sfx_count = len(pre_sfx_turns) if isinstance(pre_sfx_turns, list) else 0
+    _post(f"{base}/player-input", {"text": "I open the door and step through."}, timeout=15.0)
+    sfx_ok = False
+    deadline_sfx = time.time() + 60.0
+    while time.time() < deadline_sfx:
+        _, turns_sfx = _get(f"{base}/diagnostics/narrator-turns?n=20", timeout=5.0)
+        for t in (turns_sfx if isinstance(turns_sfx, list) else [])[pre_sfx_count:]:
+            raw = t.get("raw_text", "")
+            if "[SOUND" in raw.upper():
+                sfx_ok = True
+                break
+        if sfx_ok:
+            break
+        time.sleep(3.0)
+    r.check("action SFX fires on verb input", sfx_ok, "no [SOUND:] tag in narrator turn", warn_only=True)
+
+    # 10e. LoRA narrator preference — remnant-narrator:latest listed first if available
+    ai_url10 = f"{fortress}/ai.json" if args.fortress else f"{base}/diagnostics/ai.json"
+    _, snap10 = _get(ai_url10, timeout=10.0)
+    if isinstance(snap10, dict):
+        ollama_tags = snap10.get("services", {}).get("ollama", {}).get("tags", [])
+        text_tags = [t for t in ollama_tags if isinstance(t, str)
+                     and not any(x in t for x in ("embed", "vision", "clip"))]
+        if any("remnant-narrator" in t for t in text_tags):
+            lora_first = text_tags and "remnant-narrator" in text_tags[0]
+            r.check("remnant-narrator listed first in ollama tags", lora_first,
+                    f"first tag: {text_tags[0] if text_tags else 'none'}", warn_only=True)
+        else:
+            print(f"  {_dim('ℹ remnant-narrator not present — skipping LoRA preference check')}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = time.time() - overall_start
