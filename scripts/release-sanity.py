@@ -156,9 +156,14 @@ def phase_native(args) -> tuple[int, str]:
     # Start launcher
     print(f"  {_dim('cmd:')} python -X utf8 {LAUNCHER.name} --no-browser\n")
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    # CREATE_NEW_PROCESS_GROUP isolates the launcher's process group so that
+    # send_signal(CTRL_BREAK_EVENT) in _stop_proc only kills the launcher
+    # tree, not release-sanity.py itself (Windows console signal propagation).
+    create_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     proc = subprocess.Popen(
         [sys.executable, "-X", "utf8", str(LAUNCHER), "--no-browser"],
         cwd=ROOT, env=env,
+        creationflags=create_flags,
     )
 
     # Wait for nginx
