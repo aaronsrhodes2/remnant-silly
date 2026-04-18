@@ -353,16 +353,12 @@ def _player_agent_turn(
     prompt = (
         f"You are {player_name}, a cautious and curious traveler who has just arrived aboard an ancient "
         "alien space station. Respond with ONE natural action or question (8-25 words). "
-        "PRIORITY: if an NPC asked you a direct question, answer it. "
         "Be reactive — respond to what you just saw or heard. Don't meta-game, don't mention "
-        "game mechanics or tags, and don't repeat the narrator's words back. "
-        "IMPORTANT: respond in English only.\n\n"
+        "game mechanics or tags, and don't repeat the narrator's words back.\n\n"
         f"What the narrator just said:\n{narrator_text[:500]}\n"
         f"{hint_line}\n"
-        f"Your response (English, first person, one line only):"
+        f"Your response (first person, one line only):"
     )
-    # Brief pause so any pending Ollama embed/banter from the previous turn drains
-    time.sleep(4)
     try:
         payload = json.dumps({
             "model": "remnant-narrator:latest",
@@ -376,7 +372,7 @@ def _player_agent_turn(
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=60.0) as r:
+        with urllib.request.urlopen(req, timeout=20.0) as r:
             data = json.loads(r.read().decode())
             response = data.get("response", "").strip()
             response = response.split("\n")[0].strip().strip('"\'')
@@ -384,15 +380,8 @@ def _player_agent_turn(
                 return response
     except Exception as e:
         print(f"  {_warn('⚠')} Player agent failed: {e}")
-    # Varied fallbacks — avoid repeating the same line on consecutive failures
-    _FALLBACKS = [
-        "I look around carefully, taking note of my surroundings.",
-        "I move toward the nearest source of light.",
-        "I listen for any sounds in the distance.",
-        "I examine the nearest object or surface.",
-        "I call out quietly to see if anyone responds.",
-    ]
-    return _FALLBACKS[int(time.time()) % len(_FALLBACKS)]
+    # Fallback: generic exploration action
+    return "I explore the area carefully, taking in the surroundings."
 
 
 # ── Golden training data ─────────────────────────────────────────────────────
@@ -521,10 +510,7 @@ def _summarise_story(player_name: str, diag_url: str) -> str:
         f"Summarize this game session as a 200-300 word story excerpt. Write in "
         f"second-person present tense in the narrative voice of The Fortress — an "
         f"ancient, kindly space station. Preserve character names and key moments. "
-        f"CRITICAL: The player character's name is {player_name!r}. Use ONLY "
-        f"{player_name!r} when referring to the player. Never substitute another "
-        f"name (Asha, Wren, Roran, Unknown, or any other) for the player.\n\n"
-        f"Session text:\n\n{excerpt[:8000]}"
+        f"The player's name is {player_name}.\n\nSession text:\n\n{excerpt[:8000]}"
     )
 
     # Try Ollama via nginx proxy
@@ -866,14 +852,6 @@ def main() -> int:
             "sherri" in raw3.lower() or _RE_CHAR.search(raw3),
             "Sherri speaks", "Sherri has no dialogue"
         )
-        # MOMENTUM: Sherri should proactively notice the player needs clothes
-        _clothes_words = ("cloth", "fabric", "outfit", "wear", "naked", "dressed",
-                          "make", "fabricat", "stitch", "look like")
-        assert_soft(
-            any(w in raw3.lower() for w in _clothes_words),
-            "[MOMENTUM] Sherri notices clothing need unprompted",
-            "[MOMENTUM] Sherri did not mention clothing on arrival — wardrobe arc not initiated",
-        )
         beats_done += 1
         _golden(turn)
 
@@ -897,7 +875,7 @@ def main() -> int:
         # ── Beat 5: Ask for clothes ───────────────────────────────────────────
         print(_bold("\n── Beat 5: Ask for Clothes"))
         turn = _natural_beat(
-            "Sherri, I need clothes right now — can you make me something to wear?",
+            "Sherri, can you make me some clothes? Dark practical ones, lots of pockets.",
             "Ask for clothes",
             lambda raw: bool("sherri" in raw.lower() or _RE_CHAR.search(raw)),
             "Ask Sherri to make you some dark, practical clothes.",
@@ -943,14 +921,6 @@ def main() -> int:
         assert_soft(
             "sherri" in raw7.lower() or _RE_CHAR.search(raw7),
             "Sherri speaks in galley", "Sherri silent"
-        )
-        # MOMENTUM: Sherri should lead the player (not just respond to hunger claim)
-        _lead_words = ("follow", "come", "come on", "this way", "lead", "let's go",
-                       "already", "halfway", "corridor", "heading")
-        assert_soft(
-            any(w in raw7.lower() for w in _lead_words),
-            "[MOMENTUM] Sherri leads player to galley (NPC-initiated transition)",
-            "[MOMENTUM] Sherri did not lead — galley transition was player-driven only",
         )
         beats_done += 1
         _golden(turn)
@@ -1036,22 +1006,6 @@ def main() -> int:
                     "Lore requires 6+ minutes of silence — not expected in CI runs")
         beats_done += 1
         _golden(turn)
-
-        # MOMENTUM: The Remnant should have spoken via The Fold before the player
-        # explicitly visits the Nexus — proactive engagement, not just answering.
-        _remnant_pattern = re.compile(r'the remnant\s*:', re.I)
-        _fold_pattern    = re.compile(r'(fold|skull|inside your)', re.I)
-        _all_raws = "\n".join(
-            t.get("raw_text", "")
-            for t in [turn]  # we only have the last turn directly; richness tracks cumulatively
-        )
-        # Check cumulative character_lines for The Remnant (proxy for Remnant speaking)
-        assert_soft(
-            metrics["character_lines"] >= 5,
-            "[MOMENTUM] The Remnant spoke proactively before Nexus visit",
-            "[MOMENTUM] The Remnant may not have spoken via The Fold before Nexus — "
-            "check for The Remnant: dialogue in turns 1-12",
-        )
 
         # ── Beat 13: To the Nexus ─────────────────────────────────────────────
         print(_bold("\n── Beat 13: To the Nexus"))

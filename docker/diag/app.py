@@ -710,7 +710,7 @@ _TEXT_MODEL_SKIP = ("llava", "embed", "vision", "clip", "moondream", "bakllava",
 
 # Models known to have large context windows (≥16k tokens) — preferred when
 # OLLAMA_MODEL is not explicitly set.
-_LARGE_CONTEXT_PREFER = ("qwen2.5", "qwen", "mistral", "llama3.1", "llama3.2",
+_LARGE_CONTEXT_PREFER = ("remnant-narrator", "qwen2.5", "qwen", "mistral", "llama3.1", "llama3.2",
                           "mistral-nemo", "mixtral", "command-r", "gemma2", "phi3")
 
 # ---------------------------------------------------------------------------

@@ -1568,11 +1568,11 @@ function _showRunEndOverlay(data) {
 function _startNewStory() {
   const overlay = document.getElementById('run-end-overlay');
   if (overlay) overlay.remove();
-  // Use /reset directly — /player-input is blocked while _run_ended is true
-  fetch('/reset', {
+  // Trigger world reset via player-input META:RESET
+  fetch('/player-input', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({level: 'world'}),
+    body: JSON.stringify({text: 'META:RESET world'}),
   }).catch(() => {});
 }
 
