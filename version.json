@@ -1,37 +1,37 @@
 {
-  "version": "4.0.0",
-  "composite_sha256": "a4f0332b9936c2c32f31b667359c431fc591f42b6b68b907c8ac8fa8ab5b92b2",
-  "git_commit": "cfddc50",
-  "tagged_at": "2026-04-16T04:54:57Z",
+  "version": "4.1.0",
+  "composite_sha256": "b8fc9e18dccfe2c425502265213ba1be32de71062f29331965eb2059c44688af",
+  "git_commit": "8a4415a",
+  "tagged_at": "2026-04-18T01:01:51Z",
   "files": {
-    "docker/diag/app.py": {
-      "sha256": "2f55185b84b1405a1050a1399a6d858adc4928e382304eb3e5b840f5f42a3159",
-      "size_bytes": 268257,
+    "docker/fortress/app.py": {
+      "sha256": "850450bf4e500c9d98ccab72ca3fa35737028993a914dfe2668fc846e4dc1d3d",
+      "size_bytes": 275708,
       "status": "ok"
     },
-    "docker/diag/seed/fortress_first_mes.txt": {
+    "docker/fortress/seed/fortress_first_mes.txt": {
       "sha256": "92258e61b789ccd5a8cd3e1f8ce0baaefc6259f9579c54378d2fbf216f88c5c0",
       "size_bytes": 3951,
       "status": "ok"
     },
-    "docker/diag/seed/fortress_system_prompt.txt": {
+    "docker/fortress/seed/fortress_system_prompt.txt": {
       "sha256": "3791309144772f7e8db6bf58ac342c158b866be756585847091407eda5b8fd95",
       "size_bytes": 47602,
       "status": "ok"
     },
-    "docker/diag/seed/world.json": {
-      "sha256": "c3c77b9574e74f0057b78a47ed0e089fcf08db1d0064d5eedf8d13bbf73f98f4",
-      "size_bytes": 99287,
+    "docker/fortress/seed/world.json": {
+      "sha256": "4ae76afe95b463f3b6793c9f2d4a07b6acf6c6444f27b3d9d8c00eac2e6fc1ab",
+      "size_bytes": 113131,
       "status": "ok"
     },
     "extension/index.js": {
-      "sha256": "2b630e679a359c34ac6175ca5fe3173404962990b162c4adeeabf28e11681465",
-      "size_bytes": 285353,
+      "sha256": "bcff8b2805c95f1147234dda95f548796f22cca1ea1eef96662ebcd57c9ee0cd",
+      "size_bytes": 285538,
       "status": "ok"
     },
     "web/index.html": {
-      "sha256": "ec6b931cb10873ff919209af275ffa8dd89e0f24576a5123fb32398b1c53e80c",
-      "size_bytes": 138265,
+      "sha256": "1e1613916ef2c5e03bb6b4260f5a62cd82f5fb6cbebc1cf5339a6462e33e3cbf",
+      "size_bytes": 145117,
       "status": "ok"
     }
   }
