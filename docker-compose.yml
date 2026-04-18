@@ -203,7 +203,7 @@ services:
     expose:
       - "9000"
     environment:
-      - ASR_MODEL=${WHISPER_MODEL:-base.en}
+      - ASR_MODEL=${WHISPER_MODEL:-small.en}
       - MODEL_PATH=/root/.cache/whisper
     volumes:
       - whisper-model:/root/.cache/whisper
@@ -360,7 +360,7 @@ services:
       - -c
       - |
         set -e
-        /app/.venv/bin/python -c "import whisper; whisper.load_model('${WHISPER_MODEL:-base.en}', download_root='/root/.cache/whisper')"
+        /app/.venv/bin/python -c "import whisper; whisper.load_model('${WHISPER_MODEL:-small.en}', download_root='/root/.cache/whisper')"
         touch /remnant-status/stt-ready
         echo "[bootstrap-stt] model cached, sentinel written"
     volumes:

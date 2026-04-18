@@ -2741,9 +2741,19 @@ const _STATIC_SFX = {
 };
 
 const _SFX_KEYWORDS = [
-  { id: 'hydraulic-hiss',       keys: ['hydraulic', 'steam release', 'robotic arm', 'pressurized hiss'] },
-  { id: 'magnetic-thrum',       keys: ['magnetic thrum', 'stabilizer', 'anti-gravity', 'floor vibrat'] },
-  { id: 'master-lathe',         keys: ['lathe', 'brass shaving', 'laser cut', 'metal spinning'] },
+  // hydraulic / door / hatch / airlock — catches injected "heavy door grinds open with a pneumatic hiss"
+  { id: 'hydraulic-hiss',       keys: ['hydraulic', 'steam release', 'robotic arm', 'pressurized hiss',
+                                        'pneumatic', 'door grinds', 'hatch', 'airlock', 'bulkhead',
+                                        'pressure seal', 'seal hiss', 'hiss of pressure', 'grind open'] },
+  // ambient hull machinery — catches injected ambient fallback + "distant mechanical thrumming"
+  { id: 'magnetic-thrum',       keys: ['magnetic thrum', 'stabilizer', 'anti-gravity', 'floor vibrat',
+                                        'hull vibrat', 'deep pulse', 'ancient machinery', 'steady hum',
+                                        'ambient machinery', 'mechanical thrumming', 'thrumming reverber',
+                                        'machinery hum', 'low hum', 'deep hum', 'distant hum'] },
+  // fabrication / lathe / metal work — catches "fabrication rig hums to life" + "metal object scrapes"
+  { id: 'master-lathe',         keys: ['lathe', 'brass shaving', 'laser cut', 'metal spinning',
+                                        'fabrication rig', 'rig hums', 'resonant pulse', 'metal object',
+                                        'scrapes across', 'work surface', 'metal scrape', 'grinding metal'] },
   { id: 'conveyor-rattle',      keys: ['conveyor', 'chain-link belt', 'chain link belt'] },
   { id: 'arc-weld-sizzle',      keys: ['welding', 'weld sizzle', 'arc weld', 'metal fus'] },
   { id: 'null-space-wind',      keys: ['null-space wind', 'null space wind', 'viewport wind', 'vacuum whoosh'] },
@@ -2751,11 +2761,21 @@ const _SFX_KEYWORDS = [
   { id: 'portal-ripple',        keys: ['portal ripple', 'portal open', 'dimensional door', 'hoop open'] },
   { id: 'static-discharge',     keys: ['static discharge', 'nexus static', 'lightning crack', 'pulpit crackle'] },
   { id: 'gravitational-moan',   keys: ['gravitational moan', 'chiral foam', 'structural moan', 'tectonic groan'] },
-  { id: 'automaton-footfalls',  keys: ['automaton footfall', 'sherri footstep', 'robot footstep', 'metallic footfall'] },
-  { id: 'galley-whir',          keys: ['galley whir', 'food dispenser', 'heating element', 'galley hum'] },
+  // footsteps / automaton — catches "footsteps ring out on the metal floor" + Sherri movement
+  { id: 'automaton-footfalls',  keys: ['automaton footfall', 'sherri footstep', 'robot footstep', 'metallic footfall',
+                                        'footstep', 'footsteps ring', 'metal floor', 'steps on metal',
+                                        'bronze joint', 'whirr and click', 'servo whirr', 'joints whirr',
+                                        'sherri\'s bronze', 'clank', 'mechanical step'] },
+  // galley / food — catches "synth-protein stew bubbles"
+  { id: 'galley-whir',          keys: ['galley whir', 'food dispenser', 'heating element', 'galley hum',
+                                        'synth-protein', 'stew bubble', 'bubbles softly', 'pot bubble',
+                                        'galley', 'food prep', 'protein stew'] },
   { id: 'fabric-rustle',        keys: ['fabric rustle', 'linen fold', 'linen rustl', 'cloth fold'] },
   { id: 'echoing-drip',         keys: ['echoing drip', 'condensation drip', 'corridor drip', 'pipe drip'] },
-  { id: 'barrier-warning',      keys: ['barrier warning', 'anti-matter barrier', 'equilibrium warning', 'barrier pulse'] },
+  // alarm / warning — catches "distant alarm tone pulses through the hull"
+  { id: 'barrier-warning',      keys: ['barrier warning', 'anti-matter barrier', 'equilibrium warning', 'barrier pulse',
+                                        'alarm tone', 'alarm pulse', 'warning tone', 'klaxon', 'alert tone',
+                                        'tone pulses', 'distant alarm', 'warning pulse'] },
   { id: 'data-terminal-chatter',keys: ['terminal chatter', 'data terminal', 'terravore data', 'station ai chatter'] },
 ];
 
@@ -3359,7 +3379,7 @@ function _sttMime() {
 let   _vadThreshold  = 0.008;  // RMS energy to count as speech — calibrated on init
 const VAD_ONSET_MS   = 60;     // speech must persist this long before we start recording
 const VAD_ONSET_GAP  = 120;    // ms of quiet tolerated mid-onset before resetting timer
-const VAD_SILENCE_MS = 1400;   // silence after speech before we stop and transcribe
+const VAD_SILENCE_MS = 1800;   // silence after speech before we stop and transcribe
 
 let _vadStream       = null;
 let _vadAnalyser     = null;
@@ -3385,6 +3405,13 @@ function _vadTick() {
   // Don't capture while TTS is speaking or during post-TTS echo cooldown
   if (_ttsSource || Date.now() < _ttsEchoCooldownUntil) {
     _vadSpeaking = false; _vadSpeechStart = null; _vadOnsetSilStart = null; _vadSilStart = null; return;
+  }
+  // Don't capture when this window/tab is not focused — prevents picking up
+  // audio from other apps or continuing to record while the player alt-tabs.
+  if (document.hidden || !document.hasFocus()) {
+    if (_vadSpeaking) _vadEndRecord();
+    else { _vadSpeechStart = null; _vadOnsetSilStart = null; }
+    return;
   }
   // Don't overwrite if user is actively typing
   if (document.activeElement === inputEl && inputEl.value.trim()) return;
