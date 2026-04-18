@@ -4331,6 +4331,8 @@ function _renderDrawer(channel) {
     const narratorName = (characters && this_chid !== undefined && characters[this_chid])
         ? (characters[this_chid].name || '—')
         : '—';
+    const _pProfile = initSettings().player && initSettings().player.profile;
+    const playerLabel = (_pProfile && _pProfile.named && _pProfile.name) ? _pProfile.name : 'You';
 
     // Render oldest-first (reading order). Newest entry is last in DOM.
     // scrollTop to scrollHeight pins the view to the bottom so new entries
@@ -4343,7 +4345,7 @@ function _renderDrawer(channel) {
         if (e.isPlayer) cls += ' is-player';
         // Newest entry = last in DOM — animate arrival
         if (i === display.length - 1) cls += ' arriving';
-        const speakerLabel = e.isPlayer ? 'You' : narratorName;
+        const speakerLabel = e.isPlayer ? playerLabel : narratorName;
         const $row = $(`<div class="img-gen-drawer-entry ${cls}"><span class="img-gen-drawer-speaker"></span><span class="img-gen-drawer-text"></span></div>`);
         $row.find('.img-gen-drawer-speaker').text(speakerLabel);
         $row.find('.img-gen-drawer-text').text(e.text);
