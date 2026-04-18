@@ -1,8 +1,8 @@
 {
-  "version": "4.1.2",
+  "version": "4.1.3",
   "composite_sha256": "72aeaf2b4a1c3209dff96c063b03afd68cf54d684ba4fadf9bd4d4381f8d951f",
-  "git_commit": "e180bf8",
-  "tagged_at": "2026-04-18T04:19:49Z",
+  "git_commit": "2bcdb2e",
+  "tagged_at": "2026-04-18T04:55:55Z",
   "files": {
     "docker/fortress/app.py": {
       "sha256": "850450bf4e500c9d98ccab72ca3fa35737028993a914dfe2668fc846e4dc1d3d",
