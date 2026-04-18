@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.1.3] — 2026-04-18
+
+### Features
+- **Christmas lights status bar** — 3-light consolidated bar (story/image/audio) replaced with 12 individual service lights in 3 visual groups: `gate|conn` / `narr|llm|img|musc|tts|stt` / `gpu|vram|cpu|ram`. Each light is wired to its specific event source: SSE streams drive busy/active states in real time; 3s poll restores idle/off.
+- **Fortress generation state** — Poll now calls `/ready` in parallel with `/diagnostics/ai.json`. Returns `idle`/`generating`/`classifying`, so `narr` and `llm` lights reflect actual model activity even when no SSE events are in flight.
+- **Deep Ollama health check** — `/diagnostics/ai.json` probes Ollama via `/api/tags` (model list); `llm` light `off` means Ollama didn't respond to a real request, not just a TCP ping.
+- **Crisis simulator** — `_testCrisis()` / `_testCrisisReset()` callable from browser console cycles 6 test scenarios (ALL SYSTEMS GO → LLM STORM → IMAGE CRUNCH → FULL CRISIS → FORTRESS DOWN → STT LISTENING) for diagnostic testing without needing a live failure.
+- **Toggle groups** — Clicking `musc` or `tts` light toggles the whole audio sense (both lights dim together). `img` light toggles image sense as before. Right-click `musc` skips to next track.
+
 ## [4.1.2] — 2026-04-18
 
 ### Fixes
