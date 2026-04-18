@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.1.1] — 2026-04-18
+
+### Fixes
+- **Voice input (STT) now works end-to-end.** The `onerahmet/openai-whisper-asr-webservice` container was crash-looping on startup because play-net (runtime network) has no egress and the image tried to download the Whisper model from `openaipublic.azureedge.net` on every boot.
+  - Added `whisper-model` named Docker volume to cache the model between restarts.
+  - Added `bootstrap-stt` service (profile: `bootstrap`) on `bootstrap-net` that pre-downloads `base.en` (139 MB) once and stamps `/remnant-status/stt-ready`.
+  - Fixed JS endpoint: was calling `/api/stt/v1/audio/transcriptions` (OpenAI API format); the service only exposes `/asr`. Updated to `/api/stt/asr?task=transcribe&output=json` with `audio_file` field.
+
+---
+
 ## [4.1.0] — 2026-04-17
 
 ### Architecture
@@ -24,7 +34,7 @@
 - **Narrator stage directions**: DO channel occasionally echoes NPC tone descriptors on consecutive turns (cosmetic).
 - **Music on CPU**: ~30–40 s/clip vs 1–5 s on GPU; music lags narrative on CPU-only configs.
 - **ChromaDB semantic memory**: disabled in current Docker build; falls back to static world seed.
-- **STT**: VAD present but not yet the primary input path.
+- **STT**: VAD wired up but server crash-loop made it non-functional. Fixed in 4.1.1.
 
 ---
 
