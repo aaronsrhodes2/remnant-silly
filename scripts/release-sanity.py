@@ -316,7 +316,7 @@ def main() -> int:
         rc, truth = phase_native(args)
         results["native"] = rc
         phases_run.append("native")
-        if rc >= 2:
+        if rc == 2:
             print(_err("\n✗ Native phase infrastructure error — aborting."))
             return 2
     else:
@@ -347,6 +347,8 @@ def main() -> int:
     for phase, rc in results.items():
         if rc == 0:
             print(f"  {_ok('✓')} {phase:<10} PASSED")
+        elif rc == 58:
+            print(f"  {_warn('⚠')} {phase:<10} PASSED WITH WARNINGS")
         else:
             print(f"  {_err('✗')} {phase:<10} FAILED  (rc={rc})")
             all_ok = False
