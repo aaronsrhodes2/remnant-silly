@@ -1,8 +1,8 @@
 {
-  "version": "4.1.1",
-  "composite_sha256": "b8fc9e18dccfe2c425502265213ba1be32de71062f29331965eb2059c44688af",
-  "git_commit": "8a4415a",
-  "tagged_at": "2026-04-18T01:01:51Z",
+  "version": "4.1.2",
+  "composite_sha256": "72aeaf2b4a1c3209dff96c063b03afd68cf54d684ba4fadf9bd4d4381f8d951f",
+  "git_commit": "e180bf8",
+  "tagged_at": "2026-04-18T04:19:49Z",
   "files": {
     "docker/fortress/app.py": {
       "sha256": "850450bf4e500c9d98ccab72ca3fa35737028993a914dfe2668fc846e4dc1d3d",
@@ -30,8 +30,8 @@
       "status": "ok"
     },
     "web/index.html": {
-      "sha256": "1e1613916ef2c5e03bb6b4260f5a62cd82f5fb6cbebc1cf5339a6462e33e3cbf",
-      "size_bytes": 145117,
+      "sha256": "189f5671cbddc74c2bad4ee5f94d486b82f0a719de5416dc496e994a4eda2534",
+      "size_bytes": 149789,
       "status": "ok"
     }
   }
