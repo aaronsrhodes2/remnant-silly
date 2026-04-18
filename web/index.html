@@ -2142,6 +2142,7 @@ function connect() {
   es.onopen = () => {
     _setLight('gate', 'idle');
     _setLight('conn', 'active');
+    _setNarratorState('ready');
     loadLatestSceneImage();
     _pollServiceStatus();
     _pollSystemMetrics();
@@ -2155,6 +2156,7 @@ function connect() {
   es.onerror = () => {
     _setLight('conn', 'off');
     _setLight('narr', 'off');
+    _setNarratorState('');
     es.close();
     setTimeout(connect, 3000);
   };
@@ -3262,6 +3264,7 @@ async function sendInput(overrideText) {
   feed.scrollTop = feed.scrollHeight;
   _pendingPlayerTexts.add(wrapped);
 
+  const _prevNarrState = inputEl.dataset.narrator;
   try {
     const res = await fetch('/player-input', {
       method: 'POST',
@@ -3296,6 +3299,12 @@ async function sendInput(overrideText) {
       _thinkTimer = setTimeout(_removeThinking, 90000);
       _setLight('narr', 'busy');   // narr light pulses while thinking
       _setThinking(true);          // player-mode thinking bar
+      if (_prevNarrState === 'busy') {
+        _setNarratorState('queued');
+        setTimeout(() => { if (inputEl.dataset.narrator === 'queued') _setNarratorState('busy'); }, 1500);
+      } else {
+        _setNarratorState('busy');
+      }
     }
   } catch (_) {}
   _sending = false;

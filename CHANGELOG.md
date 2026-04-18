@@ -1,5 +1,32 @@
 # Changelog
 
+## [4.1.6] — 2026-04-18
+
+### Features
+- **Narrator-state input bar** — `#player-input` border color signals narrator readiness at a glance: green glow when idle (response will be immediate), amber when busy (will be queued), amber pulse animation when input is submitted while narrator is mid-turn. VAD speaking state (pulsing orange) overrides via CSS cascade.
+- **Status bar "Ready" glow** — status dot now shows a breathing green animation and green text label when the game is idle and waiting for player input; replaces the near-invisible white ghost it showed before.
+- **`/ready` poll fix** — narrator/llm lights now correctly reflect live generation state. Previous code read `rd.state` (always `undefined`); fixed to `rd.generating` / `rd.classifying` boolean fields.
+- **Server-queued turn indicator** — when the fortress fires a queued narrator turn server-side (bypassing `sendInput()`), the `· · ·` thinking indicator is now injected automatically on the first `chunk` SSE event.
+
+### Upgrade
+- **STT model `medium.en`** — Whisper upgraded from `small.en` (461 MB) to `medium.en` (~1.5 GB) for substantially better transcription accuracy. Requires one-time bootstrap: `docker compose --profile bootstrap up bootstrap-stt`.
+
+---
+
+## [4.1.5] — 2026-04-18
+
+### Fixes
+- **TTS/STT lights no longer go black** — lights show their color at dormant glow when the service key is absent from the health snapshot, rather than going dark. Only a confirmed down service triggers the dark `off` state.
+
+### Features (4.1.3 → 4.1.5)
+- **12-light status bar** — gate|conn / narr|llm|img|musc|tts|stt / gpu|vram|cpu|ram in three visual groups with separators. Each light wired to its specific event source (SSE for real-time busy/active, 3s poll for idle/off).
+- **Fortress generation state** — `/ready` endpoint polled in parallel; narr/llm lights show `generating` or `classifying` state between SSE events.
+- **Deep service health** — `/diagnostics/ai.json` probes Ollama via `/api/tags`, TTS via `/health`, STT via root reachability. `reachable=false` means the service didn't answer a real request.
+- **Crisis simulator** — `_testCrisis()` / `_testCrisisReset()` in browser console cycles 6 diagnostic scenarios.
+- **Toggle groups** — clicking `musc` or `tts` toggles the whole audio sense together. Right-click `musc` skips to next track.
+
+---
+
 ## [4.1.2] — 2026-04-18
 
 ### Fixes
