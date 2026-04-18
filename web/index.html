@@ -1790,17 +1790,45 @@ function _lightIsBusy(id) {
 }
 
 async function _pollServiceStatus() {
-  // Gate: nginx /health (lightweight, no auth)
-  try {
-    const gateRes = await fetch('/health');
-    _setLight('gate', gateRes.ok ? 'idle' : 'off', gateRes.ok ? 'nginx ok' : `nginx ${gateRes.status}`);
-  } catch(_) { _setLight('gate', 'off', 'unreachable'); }
+  // Run gate + fortress-ready + full service health in parallel
+  const [gateResult, readyResult, aiResult] = await Promise.allSettled([
+    fetch('/health'),
+    fetch('/ready'),
+    fetch('/diagnostics/ai.json'),
+  ]);
 
-  // Services: /diagnostics/ai.json
+  // Gate: nginx liveness
+  if (gateResult.status === 'fulfilled') {
+    const r = gateResult.value;
+    _setLight('gate', r.ok ? 'idle' : 'off', r.ok ? 'nginx ok' : `nginx ${r.status}`);
+  } else {
+    _setLight('gate', 'off', 'unreachable');
+  }
+
+  // Narr + LLM: fortress /ready gives us the actual generation state.
+  // /diagnostics/ai.json probes Ollama via /api/tags — reachable = model responded.
+  // So "ollama.reachable" IS a "did the model respond" check, not just HTTP pong.
+  if (readyResult.status === 'fulfilled' && readyResult.value.ok) {
+    try {
+      const rd = await readyResult.value.json();
+      const state = rd.state || 'idle';   // 'idle' | 'generating' | 'classifying'
+      if (state === 'generating') {
+        _setLight('narr', 'busy', 'Fortress · generating…');
+        if (!_lightIsBusy('llm')) _setLight('llm', 'busy', 'Ollama · generating…');
+      } else if (state === 'classifying') {
+        _setLight('narr', 'active', 'Fortress · classifying intent…');
+        if (!_lightIsBusy('llm')) _setLight('llm', 'active', 'Ollama · classifying…');
+      } else {
+        _setLight('narr', 'idle', 'Fortress · ready');
+      }
+    } catch(_) {}
+  } else {
+    _setLight('narr', 'off', 'Fortress · unreachable');
+  }
+
+  if (aiResult.status !== 'fulfilled' || !aiResult.value.ok) return;
   try {
-    const res = await fetch('/diagnostics/ai.json');
-    if (!res.ok) return;
-    const data = await res.json();
+    const data = await aiResult.value.json();
     const svcs = data.services || {};
     const ollamaModel = (data.environment || {}).OLLAMA_MODEL || 'llm';
 
@@ -1817,11 +1845,6 @@ async function _pollServiceStatus() {
     const tts    = _svcState('tts');
     const stt    = _svcState('stt');
 
-    // narr: fortress is always reachable if we got this far (it serves the endpoint)
-    _setLight('narr', 'idle',
-      `Fortress · narrator · ${ollamaModel}`);
-
-    // llm: only update if not mid-stream (chunk events own the busy state)
     if (!_lightIsBusy('llm'))
       _setLight('llm', ollama.reachable ? 'idle' : 'off',
         `Ollama · ${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
