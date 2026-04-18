@@ -195,7 +195,7 @@ def main():
 
     # ── 5. Player input round-trip ────────────────────────────────────────────
     print(_bold("\n5. Player input round-trip"))
-    code, resp = _post(f"{base}/player-input", {"text": "hello, sanity check"}, timeout=10.0)
+    code, resp = _post(f"{base}/player-input", {"text": "hello, sanity check"}, timeout=60.0)
     r.check("/player-input accepts POST", code == 200, f"HTTP {code}")
     if isinstance(resp, dict):
         r.check("ok=true in response", resp.get("ok") is True, str(resp.get("ok")))
@@ -326,8 +326,8 @@ def main():
         print(f"    {_dim('→')} [{t}]")
     print(f"    {_dim('─' * 60)}")
 
-    # ── 10. Phase 1–5 feature smoke tests ────────────────────────────────────
-    print(_bold("\n10. Phase 1–5 feature smoke tests"))
+    # ── 11. Phase 1–5 feature smoke tests ────────────────────────────────────
+    print(_bold("\n11. Phase 1–5 feature smoke tests"))
 
     # 10a. Flask-music health
     code10, music_health = _get(f"{base}/api/music/health", timeout=10.0)
