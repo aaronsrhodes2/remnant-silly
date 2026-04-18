@@ -88,6 +88,8 @@ services:
         mkdir -p /remnant-status
         touch /remnant-status/flask-sd-ready
         touch /remnant-status/ollama-ready
+        touch /remnant-status/flask-music-ready
+        touch /remnant-status/stt-ready
         echo "[warm-bootstrap] sentinels stamped"
     volumes:
       - remnant-status:/remnant-status

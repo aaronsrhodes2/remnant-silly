@@ -3673,11 +3673,9 @@ async function _vadProcess() {
   const ext  = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : 'webm';
   const blob = new Blob(_vadChunks, {type: mime});
   const form = new FormData();
-  form.append('file', new File([blob], `rec.${ext}`, {type: mime}));
-  form.append('model', 'whisper-1');
-  form.append('response_format', 'json');
+  form.append('audio_file', new File([blob], `rec.${ext}`, {type: mime}));
   try {
-    const res  = await fetch('/api/stt/v1/audio/transcriptions', {method: 'POST', body: form});
+    const res  = await fetch('/api/stt/asr?task=transcribe&output=json', {method: 'POST', body: form});
     if (!res.ok) throw new Error(`STT ${res.status}`);
     const data = await res.json();
     const text = (data.text || '').trim();

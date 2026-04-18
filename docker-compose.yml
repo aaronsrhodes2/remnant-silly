@@ -193,8 +193,9 @@ services:
   # ── STT (Whisper) ──────────────────────────────────────────────────────
   # OpenAI Whisper wrapped in a REST API. Accepts audio POSTs, returns
   # transcription JSON. Exposed via nginx /api/stt/ route.
-  # Game integration (mic → text input) is deferred; the service is
-  # reachable now so the feature can be wired in without a stack restart.
+  # Model is pre-downloaded by bootstrap-stt into the whisper-model volume
+  # (stored at /root/.cache/whisper). The runtime service mounts the same
+  # volume so it never needs egress — it finds the model on disk at startup.
   stt:
     image: onerahmet/openai-whisper-asr-webservice:latest
     container_name: remnant-stt
@@ -203,6 +204,9 @@ services:
       - "9000"
     environment:
       - ASR_MODEL=${WHISPER_MODEL:-base.en}
+      - MODEL_PATH=/root/.cache/whisper
+    volumes:
+      - whisper-model:/root/.cache/whisper
     networks:
       - play-net
 
@@ -346,6 +350,28 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
+  bootstrap-stt:
+    profiles: ["bootstrap"]
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    container_name: remnant-bootstrap-stt
+    entrypoint: []
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        /app/.venv/bin/python -c "import whisper; whisper.load_model('${WHISPER_MODEL:-base.en}', download_root='/root/.cache/whisper')"
+        touch /remnant-status/stt-ready
+        echo "[bootstrap-stt] model cached, sentinel written"
+    volumes:
+      - whisper-model:/root/.cache/whisper
+      - remnant-status:/remnant-status
+    environment:
+      - MODEL_PATH=/root/.cache/whisper
+    networks:
+      - bootstrap-net
+    restart: "no"
+
 networks:
   bootstrap-net:
     driver: bridge
@@ -373,3 +399,7 @@ volumes:
   remnant-status:     # Shared status JSON + sentinels (persistent).
   chroma-db:          # ChromaDB vector index — narrator turn embeddings for
                       # semantic memory retrieval (RAG). Grows with play history.
+  whisper-model:      # OpenAI Whisper model cache (base.en / medium.en).
+                      # Populated once by bootstrap-stt on bootstrap-net;
+                      # mounted read-only by the runtime stt service so it
+                      # never needs egress after first boot.
