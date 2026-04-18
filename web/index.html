@@ -1832,37 +1832,43 @@ async function _pollServiceStatus() {
     const svcs = data.services || {};
     const ollamaModel = (data.environment || {}).OLLAMA_MODEL || 'llm';
 
+    // known = key exists in snapshot; reachable = service actually responded.
+    // Missing key → null (dormant glow) so the light shows its color.
+    // Present but down → 'off' (dark) so the light signals a real failure.
     const _svcState = (svc) => {
-      const probe = (svcs[svc] || {}).probe || {};
-      const sf    = (svcs[svc] || {}).status_file || {};
-      const phase = sf.phase || (probe.reachable ? 'ready' : 'down');
-      return { phase, probe, reachable: !!probe.reachable, lat: probe.latency_ms };
+      const exists = svc in svcs;
+      const probe  = (svcs[svc] || {}).probe || {};
+      const sf     = (svcs[svc] || {}).status_file || {};
+      const phase  = sf.phase || (probe.reachable ? 'ready' : 'down');
+      return { exists, phase, reachable: !!probe.reachable, lat: probe.latency_ms };
     };
+    const _svcLight = (s) => !s.exists ? null : (s.reachable ? 'idle' : 'off');
 
     const ollama = _svcState('ollama');
     const sd     = _svcState('flask-sd');
     const music  = _svcState('flask-music');
-    const tts    = _svcState('tts');
+    // fortress adds 'flask-tts' and 'stt' once rebuilt; fall back to dormant until then
+    const tts    = _svcState('flask-tts');
     const stt    = _svcState('stt');
 
     if (!_lightIsBusy('llm'))
-      _setLight('llm', ollama.reachable ? 'idle' : 'off',
+      _setLight('llm', _svcLight(ollama),
         `Ollama · ${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
 
     if (!_lightIsBusy('img'))
-      _setLight('img', sd.reachable ? 'idle' : 'off',
+      _setLight('img', _svcLight(sd),
         `flask-sd · ${sd.phase}` + (sd.lat ? ` · ${Math.round(sd.lat)}ms` : ''));
 
     if (!_lightIsBusy('musc'))
-      _setLight('musc', music.reachable ? 'idle' : 'off',
+      _setLight('musc', _svcLight(music),
         `MusicGen · ${music.phase}` + (music.lat ? ` · ${Math.round(music.lat)}ms` : ''));
 
     if (!_lightIsBusy('tts'))
-      _setLight('tts', tts.reachable ? 'idle' : 'off',
+      _setLight('tts', _svcLight(tts),
         `TTS · Kokoro · ${tts.phase}` + (tts.lat ? ` · ${Math.round(tts.lat)}ms` : ''));
 
     if (!_lightIsBusy('stt'))
-      _setLight('stt', stt.reachable ? 'idle' : 'off',
+      _setLight('stt', _svcLight(stt),
         `STT · Whisper · ${stt.phase}` + (stt.lat ? ` · ${Math.round(stt.lat)}ms` : ''));
 
   } catch(_) {}

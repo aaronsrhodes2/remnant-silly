@@ -210,9 +210,11 @@ def _sse_broadcast(event_type: str, data: object) -> None:
         _sse_clients.difference_update(dead)
 
 STATUS_DIR = Path(os.environ.get("STATUS_DIR", "/remnant-status"))
-FLASK_SD_URL = os.environ.get("FLASK_SD_URL", "http://flask-sd:1592").rstrip("/")
-FLASK_MUSIC_URL = os.environ.get("FLASK_MUSIC_URL", "http://localhost:1596").rstrip("/")
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:1593").rstrip("/")
+FLASK_SD_URL    = os.environ.get("FLASK_SD_URL",    "http://flask-sd:1592").rstrip("/")
+FLASK_MUSIC_URL = os.environ.get("FLASK_MUSIC_URL", "http://flask-music:1596").rstrip("/")
+OLLAMA_URL      = os.environ.get("OLLAMA_URL",      "http://ollama:1593").rstrip("/")
+FLASK_TTS_URL   = os.environ.get("FLASK_TTS_URL",   "http://tts:8880").rstrip("/")
+STT_URL         = os.environ.get("STT_URL",          "http://stt:9000").rstrip("/")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "1591"))
 
 # Serialise all Ollama inference calls (generate/chat/embed) to prevent concurrent
@@ -4720,11 +4722,25 @@ def _build_ai_snapshot() -> dict:
         "reachable": fm_code == 200,
         "latency_ms": round(fm_lat * 1000, 1) if fm_lat else None,
     }
+    # TTS: Kokoro FastAPI /health endpoint
+    tts_code, _, tts_lat = _http("GET", f"{FLASK_TTS_URL}/health", timeout=2.0)
+    tts_probe = {
+        "reachable": tts_code == 200,
+        "latency_ms": round(tts_lat * 1000, 1) if tts_lat else None,
+    }
+    # STT: Whisper ASR — any non-connection-error response means the service is up
+    stt_code, _, stt_lat = _http("GET", f"{STT_URL}/", timeout=2.0)
+    stt_probe = {
+        "reachable": stt_code > 0,  # any real HTTP response (even 404) = service up
+        "latency_ms": round(stt_lat * 1000, 1) if stt_lat else None,
+    }
 
     services = {
-        "flask-sd": {"status_file": flask_sd_status, "probe": flask_sd_probe},
-        "ollama": {"status_file": ollama_status, "probe": ollama_probe},
+        "flask-sd":    {"status_file": flask_sd_status, "probe": flask_sd_probe},
+        "ollama":      {"status_file": ollama_status,   "probe": ollama_probe},
         "flask-music": {"probe": fm_probe},
+        "flask-tts":   {"probe": tts_probe},
+        "stt":         {"probe": stt_probe},
     }
 
     sentinels = _sentinels()
