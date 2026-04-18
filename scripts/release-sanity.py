@@ -210,8 +210,19 @@ def phase_docker(truth: str, args) -> int:
             print(_err(f"✗ Port {PORT} occupied — cannot start docker"))
             return 2
 
-    print(f"  {_dim('cmd:')} docker compose up -d\n")
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+    # Rebuild images that bake in source files (nginx bakes web/, fortress bakes app.py)
+    print(f"  {_dim('cmd:')} docker compose build nginx fortress\n")
+    build_result = subprocess.run(
+        ["docker", "compose", "build", "nginx", "fortress"],
+        cwd=ROOT, env=env,
+    )
+    if build_result.returncode != 0:
+        print(_err("✗ docker compose build failed"))
+        return 2
+
+    print(f"  {_dim('cmd:')} docker compose up -d\n")
     result = subprocess.run(
         ["docker", "compose", "up", "-d"],
         cwd=ROOT, env=env,
