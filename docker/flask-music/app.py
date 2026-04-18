@@ -6,7 +6,7 @@ Meta's MusicGen (via HuggingFace transformers). Returns base64-encoded WAV.
 Environment:
   LISTEN_PORT     default 1596
   MUSICGEN_MODEL  default facebook/musicgen-small  (small/medium/large)
-  MAX_DURATION    default 30 (seconds, capped at 60)
+  MAX_DURATION    default 60 (seconds, capped at 60)
 
 Endpoints:
   GET  /health          — service health check
@@ -32,7 +32,7 @@ app = Flask(__name__)
 
 LISTEN_PORT    = int(os.environ.get("LISTEN_PORT", "1596"))
 MUSICGEN_MODEL = os.environ.get("MUSICGEN_MODEL", "facebook/musicgen-small")
-MAX_DURATION   = int(os.environ.get("MAX_DURATION", "30"))
+MAX_DURATION   = int(os.environ.get("MAX_DURATION", "60"))
 
 # MusicGen EnCodec frame rate: 50 tokens/second
 _FRAME_RATE = 50
@@ -177,7 +177,8 @@ def generate_sfx():
                       "rumble", "running", "spinning", "rotating", "continuous",
                       "constant", "loop", "idling", "ventilation", "vent",
                       "machinery", "generator", "turbine", "air", "wind",
-                      "robotic arm", "fabricator")
+                      "robotic arm", "fabricator", "hydraulic", "coolant",
+                      "power", "station", "ambient", "background", "thrumming")
     should_loop = any(kw in prompt.lower() for kw in _LOOP_KEYWORDS)
 
     # Steer MusicGen toward sound design, not melodic music
