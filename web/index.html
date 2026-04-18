@@ -181,15 +181,28 @@ html, body {
   50%      { box-shadow: 0 0 16px 5px var(--lc); opacity: 1.0; }
 }
 
-/* Per-light brand colors */
-#light-story    { --lc: #4488ff; }
-#light-image    { --lc: #cc44cc; }
-#light-audio    { --lc: #ff8844; }
+/* Per-light brand colors — 3 groups: gateway | services | resources */
+#light-gate     { --lc: #6fa86a; }  /* nginx gateway — green */
+#light-conn     { --lc: #44bb88; }  /* SSE connection — teal */
+#light-narr     { --lc: #4488ff; }  /* fortress narrator — blue */
+#light-llm      { --lc: #66aaff; }  /* ollama inference — light blue */
+#light-img      { --lc: #cc44cc; }  /* flask-sd image — purple */
+#light-musc     { --lc: #ff8844; }  /* MusicGen ambient — orange */
+#light-tts      { --lc: #ffaa44; }  /* TTS speech — amber */
+#light-stt      { --lc: #44cc88; }  /* STT recognition — teal-green */
 #light-gpu      { --lc: #ff4444; }
 #light-vram     { --lc: #ff7744; }
 #light-cpu      { --lc: #ffcc44; }
 #light-ram      { --lc: #44bbcc; }
-#light-conn     { --lc: #6fa86a; }
+
+/* Group separators in the light bar */
+.light-group { display: flex; gap: 7px; align-items: center; }
+.light-group-sep {
+  width: 1px; height: 18px;
+  background: rgba(255,255,255,0.12);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
 
 /* Turn counter — sits right of the light cluster, clearly readable */
 .light-turn-count {
@@ -1036,22 +1049,41 @@ html, body {
     <!-- Dev face: star trek lights + hide button -->
     <div id="status-dev">
       <div class="light-cluster" id="all-lights">
-        <div class="light-wrap" id="light-story" data-tip="Story — Ollama · diag · always on">
-          <div class="light-dot"></div><span class="light-label">story</span></div>
-        <div class="light-wrap toggleable" id="light-image" data-tip="Image — SD scenes &amp; portraits · click to toggle">
-          <div class="light-dot"></div><span class="light-label">image</span></div>
-        <div class="light-wrap toggleable" id="light-audio" data-tip="Audio — MusicGen, TTS, STT · click to toggle">
-          <div class="light-dot"></div><span class="light-label">audio</span></div>
-        <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
-          <div class="light-dot"></div><span class="light-label">gpu</span></div>
-        <div class="light-wrap" id="light-vram" data-tip="VRAM usage">
-          <div class="light-dot"></div><span class="light-label">vram</span></div>
-        <div class="light-wrap" id="light-cpu"  data-tip="CPU utilisation">
-          <div class="light-dot"></div><span class="light-label">cpu</span></div>
-        <div class="light-wrap" id="light-ram"  data-tip="System RAM">
-          <div class="light-dot"></div><span class="light-label">ram</span></div>
-        <div class="light-wrap" id="light-conn" data-tip="SSE connection">
-          <div class="light-dot"></div><span class="light-label">conn</span></div>
+        <!-- Group 1: Gateway -->
+        <div class="light-group">
+          <div class="light-wrap" id="light-gate" data-tip="nginx gateway">
+            <div class="light-dot"></div><span class="light-label">gate</span></div>
+          <div class="light-wrap" id="light-conn" data-tip="SSE connection">
+            <div class="light-dot"></div><span class="light-label">conn</span></div>
+        </div>
+        <div class="light-group-sep"></div>
+        <!-- Group 2: AI services -->
+        <div class="light-group">
+          <div class="light-wrap" id="light-narr" data-tip="Fortress — narrator pipeline">
+            <div class="light-dot"></div><span class="light-label">narr</span></div>
+          <div class="light-wrap" id="light-llm" data-tip="Ollama — LLM inference">
+            <div class="light-dot"></div><span class="light-label">llm</span></div>
+          <div class="light-wrap toggleable" id="light-img" data-tip="flask-sd — image generation · click to toggle">
+            <div class="light-dot"></div><span class="light-label">img</span></div>
+          <div class="light-wrap toggleable" id="light-musc" data-tip="MusicGen — ambient music · click to toggle · right-click to skip">
+            <div class="light-dot"></div><span class="light-label">musc</span></div>
+          <div class="light-wrap toggleable" id="light-tts" data-tip="TTS — speech synthesis · click to toggle">
+            <div class="light-dot"></div><span class="light-label">tts</span></div>
+          <div class="light-wrap" id="light-stt" data-tip="STT — speech recognition">
+            <div class="light-dot"></div><span class="light-label">stt</span></div>
+        </div>
+        <div class="light-group-sep"></div>
+        <!-- Group 3: System resources -->
+        <div class="light-group">
+          <div class="light-wrap" id="light-gpu"  data-tip="GPU utilisation">
+            <div class="light-dot"></div><span class="light-label">gpu</span></div>
+          <div class="light-wrap" id="light-vram" data-tip="VRAM usage">
+            <div class="light-dot"></div><span class="light-label">vram</span></div>
+          <div class="light-wrap" id="light-cpu"  data-tip="CPU utilisation">
+            <div class="light-dot"></div><span class="light-label">cpu</span></div>
+          <div class="light-wrap" id="light-ram"  data-tip="System RAM">
+            <div class="light-dot"></div><span class="light-label">ram</span></div>
+        </div>
         <span class="light-turn-count" id="narrator-turn-count" title="narrator turns this session">T0</span>
       </div>
       <button id="hide-dev-btn" title="Back to status view">hide the madness</button>
@@ -1238,7 +1270,8 @@ function _setLight(id, state, tipSuffix) {
   const el = document.getElementById('light-' + id);
   if (!el) return;
   // Lock to 'off' when the sense for this light is disabled by the user
-  if ((id === 'audio' && !_sense.audio) || (id === 'image' && !_sense.image)) {
+  const _audioLights = new Set(['musc','tts','stt']);
+  if ((_audioLights.has(id) && !_sense.audio) || (id === 'img' && !_sense.image)) {
     state = 'off';
   }
   // Use classList so we preserve extra classes (toggleable, sense-off, etc.)
@@ -1340,7 +1373,8 @@ function _removeThinking() {
   const el = document.getElementById('thinking-indicator');
   if (el) el.remove();
   if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
-  _setLight('story', 'idle');
+  _setLight('narr', 'idle');
+  _setLight('llm', 'idle');
   _setThinking(false);
 }
 
@@ -1744,13 +1778,25 @@ function _skipToNextTrack() {
   _currentMoodText = next;
   _onMoodEvent(next);
 }
-document.getElementById('light-audio').addEventListener('contextmenu', e => {
+document.getElementById('light-musc').addEventListener('contextmenu', e => {
   e.preventDefault();
   _skipToNextTrack();
 });
 
 // ── Topbar polling ──
+function _lightIsBusy(id) {
+  const el = document.getElementById('light-' + id);
+  return el && el.classList.contains('busy');
+}
+
 async function _pollServiceStatus() {
+  // Gate: nginx /health (lightweight, no auth)
+  try {
+    const gateRes = await fetch('/health');
+    _setLight('gate', gateRes.ok ? 'idle' : 'off', gateRes.ok ? 'nginx ok' : `nginx ${gateRes.status}`);
+  } catch(_) { _setLight('gate', 'off', 'unreachable'); }
+
+  // Services: /diagnostics/ai.json
   try {
     const res = await fetch('/diagnostics/ai.json');
     if (!res.ok) return;
@@ -1762,27 +1808,40 @@ async function _pollServiceStatus() {
       const probe = (svcs[svc] || {}).probe || {};
       const sf    = (svcs[svc] || {}).status_file || {};
       const phase = sf.phase || (probe.reachable ? 'ready' : 'down');
-      return { phase, probe, reachable: probe.reachable, lat: probe.latency_ms };
+      return { phase, probe, reachable: !!probe.reachable, lat: probe.latency_ms };
     };
 
     const ollama = _svcState('ollama');
-    const st     = _svcState('sillytavern');
     const sd     = _svcState('flask-sd');
+    const music  = _svcState('flask-music');
+    const tts    = _svcState('tts');
+    const stt    = _svcState('stt');
 
-    // story = any text processing service reachable (Ollama, SillyTavern)
-    _setLight('story', ollama.reachable ? 'idle' : 'off',
-              `Story · ${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
-    _setLight('image', sd.reachable ? 'idle' : 'off',
-              `Image · SD · ${sd.phase}` + (sd.lat ? ` · ${Math.round(sd.lat)}ms` : ''));
-    // audio = tts + stt + music consolidated
-    const music = _svcState('flask-music');
-    const audioUp = svcs['tts'] || svcs['stt'] || music.reachable;
-    const audioTip = [
-      svcs['tts']      ? 'TTS'           : null,
-      svcs['stt']      ? 'STT'           : null,
-      music.reachable  ? 'MusicGen'      : null,
-    ].filter(Boolean).join(', ') || 'none';
-    _setLight('audio', audioUp ? 'idle' : 'off', `Audio · ${audioTip}`);
+    // narr: fortress is always reachable if we got this far (it serves the endpoint)
+    _setLight('narr', 'idle',
+      `Fortress · narrator · ${ollamaModel}`);
+
+    // llm: only update if not mid-stream (chunk events own the busy state)
+    if (!_lightIsBusy('llm'))
+      _setLight('llm', ollama.reachable ? 'idle' : 'off',
+        `Ollama · ${ollamaModel} · ${ollama.phase}` + (ollama.lat ? ` · ${Math.round(ollama.lat)}ms` : ''));
+
+    if (!_lightIsBusy('img'))
+      _setLight('img', sd.reachable ? 'idle' : 'off',
+        `flask-sd · ${sd.phase}` + (sd.lat ? ` · ${Math.round(sd.lat)}ms` : ''));
+
+    if (!_lightIsBusy('musc'))
+      _setLight('musc', music.reachable ? 'idle' : 'off',
+        `MusicGen · ${music.phase}` + (music.lat ? ` · ${Math.round(music.lat)}ms` : ''));
+
+    if (!_lightIsBusy('tts'))
+      _setLight('tts', tts.reachable ? 'idle' : 'off',
+        `TTS · Kokoro · ${tts.phase}` + (tts.lat ? ` · ${Math.round(tts.lat)}ms` : ''));
+
+    if (!_lightIsBusy('stt'))
+      _setLight('stt', stt.reachable ? 'idle' : 'off',
+        `STT · Whisper · ${stt.phase}` + (stt.lat ? ` · ${Math.round(stt.lat)}ms` : ''));
+
   } catch(_) {}
 }
 
@@ -1836,6 +1895,7 @@ function connect() {
         _ttsActive = false;
         // Note: _ttsSource is intentionally NOT stopped — current word plays to completion.
       }
+      _setLight('llm', 'busy');
       _ttsEnqueue(text, 'am_michael', undefined, null, 0.55);
     } catch (_) {}
   });
@@ -1879,6 +1939,8 @@ function connect() {
         _narratorTurnCount++;
         _updateNarratorCount();
         _musicOnActivity();
+        _setLight('llm', 'idle');
+        _setLight('narr', 'idle');
         // Reset per-turn sense completion tracking for green border
         _turnState = { imageReady: false, ttsReady: false, musicReady: false, pendingMoodPrompt: null };
       }
@@ -1932,20 +1994,21 @@ function connect() {
       const lc = text.toLowerCase();
       if (lc.includes('image') || lc.includes('render') || lc.includes('scene') ||
           lc.includes('portrait') || lc.includes('sketch') || lc.includes('paint') || lc.includes('repaint')) {
-        _setLight('image', text ? 'busy' : 'idle');
+        _setLight('img', text ? 'busy' : 'idle');
         _setStatus('painting', !!text);
         galleryStatus.textContent = text || '';
-      } else if (lc.includes('thinking') || lc.includes('narrator') || lc.includes('continuing') ||
-                 lc.includes('music') || lc.includes('mood') || lc.includes('tts') || lc.includes('speech')) {
-        _setLight('story', text ? 'busy' : 'idle');
-        if (lc.includes('music') || lc.includes('mood') || lc.includes('tts') || lc.includes('speech')) {
-          _setLight('audio', text ? 'busy' : 'idle');
-        }
+      } else if (lc.includes('thinking') || lc.includes('narrator') || lc.includes('continuing')) {
+        _setLight('narr', text ? 'busy' : 'idle');
+      } else if (lc.includes('music') || lc.includes('mood')) {
+        if (!_lightIsBusy('musc')) _setLight('musc', text ? 'busy' : 'idle');
+      } else if (lc.includes('tts') || lc.includes('speech')) {
+        if (!_lightIsBusy('tts')) _setLight('tts', text ? 'busy' : 'idle');
       }
       if (!text) {
-        _setLight('image', 'idle');
-        _setLight('story', 'idle');
-        _setLight('audio', 'idle');
+        _setLight('img',  'idle');
+        _setLight('narr', 'idle');
+        _setLight('musc', 'idle');
+        _setLight('tts',  'idle');
         _setStatus('painting', false);
         galleryStatus.textContent = '';
       }
@@ -2035,6 +2098,7 @@ function connect() {
     try {
       const data = JSON.parse(e.data);
       if (!data.text) return;
+      _setLight('musc', 'busy');
       // GPU scheduling: buffer mood prompt until image generation is done.
       // flask-sd (image) and flask-music both need GPU; run them sequentially.
       _turnState.pendingMoodPrompt = data.text;
@@ -2053,6 +2117,7 @@ function connect() {
   });
 
   es.onopen = () => {
+    _setLight('gate', 'idle');
     _setLight('conn', 'active');
     loadLatestSceneImage();
     _pollServiceStatus();
@@ -2065,9 +2130,46 @@ function connect() {
   };
 
   es.onerror = () => {
-    _setLight('conn', 'busy');
+    _setLight('conn', 'off');
+    _setLight('narr', 'off');
     es.close();
     setTimeout(connect, 3000);
+  };
+
+  // ── Crisis simulator — callable from browser console for testing ───────────
+  // Usage: _testCrisis()  ×6 to cycle all scenarios; _testCrisisReset() to reset.
+  let _crisisIdx = 0;
+  const _CRISIS_SCENARIOS = [
+    { label: 'ALL SYSTEMS GO',
+      lights: { gate:'idle', conn:'active', narr:'idle', llm:'idle', img:'idle',
+                musc:'active', tts:'idle', stt:'idle' } },
+    { label: 'LLM INFERENCE STORM',
+      lights: { gate:'idle', conn:'active', narr:'busy', llm:'busy', img:'idle',
+                musc:'active', tts:'busy', stt:'idle' } },
+    { label: 'IMAGE GENERATION CRUNCH',
+      lights: { gate:'idle', conn:'active', narr:'idle', llm:'idle', img:'busy',
+                musc:'idle', tts:'idle', stt:'idle' } },
+    { label: 'FULL CRISIS — all AI busy',
+      lights: { gate:'idle', conn:'active', narr:'busy', llm:'busy', img:'busy',
+                musc:'busy', tts:'busy', stt:'busy' } },
+    { label: 'FORTRESS DOWN',
+      lights: { gate:'off', conn:'off', narr:'off', llm:'off', img:'off',
+                musc:'off', tts:'off', stt:'off' } },
+    { label: 'STT LISTENING',
+      lights: { gate:'idle', conn:'active', narr:'idle', llm:'idle', img:'idle',
+                musc:'active', tts:'idle', stt:'active' } },
+  ];
+  window._testCrisis = () => {
+    const s = _CRISIS_SCENARIOS[_crisisIdx % _CRISIS_SCENARIOS.length];
+    console.log(`[crisis] scenario ${_crisisIdx + 1}/${_CRISIS_SCENARIOS.length}: ${s.label}`);
+    Object.entries(s.lights).forEach(([id, state]) => _setLight(id, state));
+    _crisisIdx++;
+  };
+  window._testCrisisReset = () => {
+    _crisisIdx = 0;
+    _pollServiceStatus();
+    _pollSystemMetrics();
+    console.log('[crisis] reset — polling live state');
   };
 }
 
@@ -2100,14 +2202,18 @@ function _initLightToggles() {
   const hideBtn = document.getElementById('hide-dev-btn');
   if (hideBtn) hideBtn.addEventListener('click', _flipToSimple);
 
-  function _toggleSense(id, key) {
-    const el = document.getElementById('light-' + id);
+  function _toggleSense(ids, key) {
+    const idList = Array.isArray(ids) ? ids : [ids];
+    // All lights in the group share the same click handler on the first light
+    const el = document.getElementById('light-' + idList[0]);
     if (!el) return;
     el.addEventListener('click', () => {
       _sense[key] = !_sense[key];
-      el.classList.toggle('sense-off', !_sense[key]);
+      idList.forEach(id => {
+        const light = document.getElementById('light-' + id);
+        if (light) light.classList.toggle('sense-off', !_sense[key]);
+      });
       if (!_sense[key]) {
-        // Disabling — kill any in-flight activity
         if (key === 'audio') {
           if (_ttsAbort)  { _ttsAbort.abort();  _ttsAbort  = null; }
           if (_ttsSource) { try { _ttsSource.stop(); } catch (_) {} _ttsSource = null; }
@@ -2120,15 +2226,19 @@ function _initLightToggles() {
           _setStatus('speaking', false);
           _setStatus('composing', false);
         }
-        _setLight(id, 'off');   // _setLight will lock to 'off' while sense is false
+        idList.forEach(id => _setLight(id, 'off'));
       } else {
-        // Re-enabling — let service status restore naturally on next poll
-        _setLight(id, 'idle');
+        idList.forEach(id => _setLight(id, 'idle'));
       }
     });
+    // Wire remaining lights in group to the same toggle
+    idList.slice(1).forEach(id => {
+      const light = document.getElementById('light-' + id);
+      if (light) light.addEventListener('click', () => el.click());
+    });
   }
-  _toggleSense('audio', 'audio');
-  _toggleSense('image', 'image');
+  _toggleSense(['musc', 'tts'], 'audio');
+  _toggleSense('img', 'image');
 }
 
 // ── System status widget (always-on — culmination of all activity) ──
@@ -2333,9 +2443,9 @@ function _speakTTS(text, voice = 'am_michael', speed = 1.0, volume = 0.85) {
   return new Promise(resolve => {
     const ctrl = new AbortController();
     _ttsAbort = ctrl;
-    _setLight('audio', 'busy');
+    _setLight('tts', 'busy');
     _setStatus('speaking', true);
-    const done = () => { _setLight('audio', 'idle'); _setStatus('speaking', false); resolve(); };
+    const done = () => { _setLight('tts', 'idle'); _setStatus('speaking', false); resolve(); };
 
     // Hard timeout: scales with text length so CPU-mode Kokoro (slow) doesn't
     // silently drop long narrator sentences. Minimum 20s; add 120ms per char.
@@ -2572,6 +2682,7 @@ function _playMusicBuffer(audioBuffer) {
   }
   _musicSource = src;
   _musicGain   = newGain;
+  _setLight('musc', 'active');
   _musicOnActivity(); // reset idle fade timer whenever a new track starts
 }
 
@@ -2693,7 +2804,7 @@ async function _onMoodEvent(moodText) {
     return;
   }
 
-  _setLight('audio', 'busy');
+  _setLight('musc', 'busy');
   _setStatus('composing', true);
 
   const oldMood = _currentMoodText;
@@ -2743,7 +2854,7 @@ async function _onMoodEvent(moodText) {
       _playMusicBuffer(buffer);
     }
 
-    _setLight('audio', 'idle');
+    _setLight('musc', 'idle');
     _setStatus('composing', false);
     _turnState.musicReady = true;
     _checkTurnComplete();
@@ -2762,7 +2873,7 @@ async function _onMoodEvent(moodText) {
 
   } catch (e) {
     console.warn('[music]', e);
-    _setLight('audio', 'off');
+    _setLight('musc', 'off');
     _setStatus('composing', false);
     _turnState.musicReady = true;
     _checkTurnComplete();
@@ -3160,7 +3271,7 @@ async function sendInput(overrideText) {
       feed.appendChild(thinkEl);
       feed.scrollTop = feed.scrollHeight;
       _thinkTimer = setTimeout(_removeThinking, 90000);
-      _setLight('story', 'busy');  // story light pulses while thinking
+      _setLight('narr', 'busy');   // narr light pulses while thinking
       _setThinking(true);          // player-mode thinking bar
     }
   } catch (_) {}
@@ -3521,6 +3632,7 @@ function _vadBeginRecord() {
   _vadRecorder.start();
   inputEl.dataset.vadState = 'speaking';
   inputEl.placeholder = 'Listening…';
+  _setLight('stt', 'active', 'listening…');
   _setStatus('listening', true);
 }
 
@@ -3530,6 +3642,7 @@ function _vadEndRecord() {
   if (_vadRecorder && _vadRecorder.state === 'recording') _vadRecorder.stop();
   inputEl.dataset.vadState = 'processing';
   inputEl.placeholder = 'Transcribing…';
+  _setLight('stt', 'busy', 'transcribing…');
   _setStatus('listening', false);
   _setStatus('transcribing', true);
 }
@@ -3807,6 +3920,7 @@ async function _vadProcess() {
     inputEl.dataset.vadState = '';
   } finally {
     inputEl.placeholder = _DEFAULT_PLACEHOLDER;
+    _setLight('stt', 'idle');
     _setStatus('transcribing', false);
   }
 }
