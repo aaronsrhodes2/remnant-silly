@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.1.5] — 2026-04-18
+
+### Fixes
+- **TTS/STT lights no longer go black** — lights show their color at dormant glow when the service key is absent from the health snapshot, rather than going dark. Only a confirmed down service triggers the dark `off` state.
+
+### Features (4.1.3 → 4.1.5)
+- **12-light status bar** — gate|conn / narr|llm|img|musc|tts|stt / gpu|vram|cpu|ram in three visual groups with separators. Each light wired to its specific event source (SSE for real-time busy/active, 3s poll for idle/off).
+- **Fortress generation state** — `/ready` endpoint polled in parallel; narr/llm lights show `generating` or `classifying` state between SSE events.
+- **Deep service health** — `/diagnostics/ai.json` probes Ollama via `/api/tags`, TTS via `/health`, STT via root reachability. `reachable=false` means the service didn't answer a real request.
+- **Crisis simulator** — `_testCrisis()` / `_testCrisisReset()` in browser console cycles 6 diagnostic scenarios.
+- **Toggle groups** — clicking `musc` or `tts` toggles the whole audio sense together. Right-click `musc` skips to next track.
+
 ## [4.1.3] — 2026-04-18
 
 ### Features
