@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.1.2] — 2026-04-18
+
+### Fixes
+- **Feed display bugs** — `DRESSED` and `AVATAR [base64]` no longer appear as raw text entries in the chat feed. `player_dressed` and `player_portrait` meta events are now silent (side effects still run: portrait map updated, avatar `img` tags backfilled).
+- **Player name in feed** — Optimistic player input entries now show the known player name (e.g. `RONNY`) instead of the hardcoded `YOU`.
+
+### Features
+- **Music inactivity fade** — After 2 minutes of no player/narrator activity the ambient music fades to silence over 3 minutes, then the audio source is stopped. On the next activity (player input or narrator response) music fades back up over 8 seconds; if the source had been fully stopped the current mood track restarts automatically.
+- **STT accuracy** — Upgraded Whisper model from `base.en` (74 MB) to `small.en` (461 MB). Requires one-time `docker compose --profile bootstrap up bootstrap-stt` to pull the new model.
+- **VAD focus gate** — Microphone no longer records speech when the game window does not have browser focus.
+- **VAD trailing silence** — Silence window extended from 1 400 ms to 1 800 ms; fewer clipped words at the end of utterances.
+- **SFX keyword coverage** — Static SFX library keywords dramatically expanded to cover injected fallback descriptions (hydraulic hiss, automaton footfalls, ambient machinery hum, galley sounds, alarm pulses, etc.).
+
+---
+
 ## [4.1.1] — 2026-04-18
 
 ### Fixes

@@ -1610,7 +1610,10 @@ function renderMetaEvent(data) {
       img.src = data.url;
       img.classList.remove('hidden');
     });
+    return; // silent — no visible feed entry
   }
+
+  if (data.type === 'player_dressed') return; // silent — side effect only
 
   if (data.type === 'reset' && (data.level === 'world' || data.level === 'all')) {
     // World reset — clear discovery note session state so entities can re-fire
@@ -1875,6 +1878,7 @@ function connect() {
       } else {
         _narratorTurnCount++;
         _updateNarratorCount();
+        _musicOnActivity();
         // Reset per-turn sense completion tracking for green border
         _turnState = { imageReady: false, ttsReady: false, musicReady: false, pendingMoodPrompt: null };
       }
@@ -2389,6 +2393,53 @@ let _musicGain   = null;
 let _currentMoodText  = null;   // track active mood for bridge generation
 let _startupDone      = false;  // true after startup sequence completes/skips
 
+// ── Music inactivity fade ─────────────────────────────────────────────────
+// After _MUSIC_IDLE_MS of no player/narrator activity, fade music to silence
+// over _MUSIC_FADE_DOWN_MS. On next activity, fade back up to normal volume.
+const _MUSIC_IDLE_MS      = 2 * 60 * 1000;   // 2 min quiet before fade starts
+const _MUSIC_FADE_DOWN_MS = 3 * 60 * 1000;   // 3 min to reach silence
+const _MUSIC_FADE_UP_MS   = 8 * 1000;        // 8 s to restore on activity
+const _MUSIC_NORMAL_VOL   = 0.72;
+let _musicIdleTimer = null;
+let _musicStopTimer = null;
+let _musicFadedOut  = false;   // true when source was stopped due to inactivity
+
+function _musicStartFade() {
+  _musicIdleTimer = null;
+  if (!_musicGain || !_audioCtx) return;
+  const ctx = _audioCtx;
+  _musicGain.gain.cancelScheduledValues(ctx.currentTime);
+  _musicGain.gain.setValueAtTime(_musicGain.gain.value, ctx.currentTime);
+  _musicGain.gain.linearRampToValueAtTime(0, ctx.currentTime + _MUSIC_FADE_DOWN_MS / 1000);
+  _musicStopTimer = setTimeout(() => {
+    _musicStopTimer = null;
+    if (_musicSource) { try { _musicSource.stop(); } catch (_) {} _musicSource = null; }
+    _musicGain = null;
+    _musicFadedOut = true;
+  }, _MUSIC_FADE_DOWN_MS);
+}
+
+function _musicOnActivity() {
+  if (_musicIdleTimer) { clearTimeout(_musicIdleTimer); _musicIdleTimer = null; }
+  if (_musicStopTimer) { clearTimeout(_musicStopTimer); _musicStopTimer = null; }
+
+  if (_musicFadedOut) {
+    _musicFadedOut = false;
+    if (_currentMoodText) {
+      _fetchMusicBuffer(_currentMoodText, 30)
+        .then(({buffer}) => _playMusicBuffer(buffer))
+        .catch(() => {});
+    }
+  } else if (_musicGain && _audioCtx) {
+    const ctx = _audioCtx;
+    _musicGain.gain.cancelScheduledValues(ctx.currentTime);
+    _musicGain.gain.setValueAtTime(_musicGain.gain.value, ctx.currentTime);
+    _musicGain.gain.linearRampToValueAtTime(_MUSIC_NORMAL_VOL, ctx.currentTime + _MUSIC_FADE_UP_MS / 1000);
+  }
+
+  _musicIdleTimer = setTimeout(_musicStartFade, _MUSIC_IDLE_MS);
+}
+
 // SFX channel — looping SFX sources keyed by description (for dedup + stop)
 const _sfxSources = new Map();
 
@@ -2521,6 +2572,7 @@ function _playMusicBuffer(audioBuffer) {
   }
   _musicSource = src;
   _musicGain   = newGain;
+  _musicOnActivity(); // reset idle fade timer whenever a new track starts
 }
 
 // Play a once-only clip (bridge or SFX), returns a Promise that resolves when done.
@@ -3055,6 +3107,7 @@ async function sendInput(overrideText) {
   if (!text) return;
   _sending = true;
   _clearTimers();
+  _musicOnActivity();
   // Cancel any pending banter — player has something to say
   clearTimeout(_banterIdleTimer);
   _banterIdleTimer = null;
@@ -3068,7 +3121,7 @@ async function sendInput(overrideText) {
   optimEl.dataset.pending = 'true';
   optimEl.innerHTML =
     '<img class="entry-avatar hidden" alt="">' +
-    '<span class="entry-speaker">You</span>' +
+    '<span class="entry-speaker">' + esc(_playerName || 'You') + '</span>' +
     '<span class="entry-text">' + esc(wrapped) + '</span>';
   feed.appendChild(optimEl);
   emptyMsg.style.display = 'none';
